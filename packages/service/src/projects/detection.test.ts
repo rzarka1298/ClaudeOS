@@ -12,6 +12,8 @@ import {
   CLAUDE_CANDIDATE_PATHS,
   createDetector,
   DETECTION_QUERY_PATTERN,
+  PROBE_MDFIND_TIMEOUT_MS,
+  PROBE_PLUTIL_TIMEOUT_MS,
 } from "./detection.js";
 import { resolveGit } from "./git-runner.js";
 
@@ -430,7 +432,7 @@ describe("Detector.probeBundle (D-49)", () => {
     const [find, read] = runner.calls;
     expect(find?.file).toBe(MDFIND);
     expect(find?.args).toEqual([PROBE_QUERY]);
-    expect(find?.options.timeoutMs).toBe(1500);
+    expect(find?.options.timeoutMs).toBe(1100);
     expect(find?.options.env).toEqual(RUN_ENV);
     expect(find?.options.signal).toBe(controller.signal);
     expect(read?.file).toBe(PLUTIL);
@@ -442,7 +444,7 @@ describe("Detector.probeBundle (D-49)", () => {
       "-",
       `${APP}/Contents/Info.plist`,
     ]);
-    expect(read?.options.timeoutMs).toBeLessThanOrEqual(500);
+    expect(read?.options.timeoutMs).toBeLessThanOrEqual(400);
     expect(read?.options.timeoutMs).toBeGreaterThan(0);
     expect(read?.options.env).toEqual(RUN_ENV);
     expect(read?.options.signal).toBe(controller.signal);
@@ -461,7 +463,7 @@ describe("Detector.probeBundle (D-49)", () => {
     expect(runner.calls.every((call) => call.file === MDFIND || call.file === PLUTIL)).toBe(true);
   });
 
-  it("MINOR 7: checks the second target hit when the first names another bundle, within one 500 ms plutil budget", async () => {
+  it("MINOR 7: checks the second target hit when the first names another bundle, within one 400 ms plutil budget", async () => {
     const SECOND = "/Applications/Elsewhere/Antigravity.app";
     const { detector, runner } = probeSetup([
       probeFind([APP, SECOND, "/Applications/Third.app"]),
@@ -474,9 +476,9 @@ describe("Detector.probeBundle (D-49)", () => {
       `${APP}/Contents/Info.plist`,
       `${SECOND}/Contents/Info.plist`,
     ]);
-    // Both reads together stay inside the 500 ms plutil cap.
-    expect(reads[0]?.options.timeoutMs).toBeLessThanOrEqual(500);
-    expect(reads[1]?.options.timeoutMs).toBeLessThanOrEqual(500);
+    // Both reads together stay inside the 400 ms plutil cap.
+    expect(reads[0]?.options.timeoutMs).toBeLessThanOrEqual(400);
+    expect(reads[1]?.options.timeoutMs).toBeLessThanOrEqual(400);
   });
 
   it("MINOR 7: two target hits that both name another bundle are indeterminate, and a third is never read", async () => {
@@ -509,7 +511,13 @@ describe("Detector.probeBundle (D-49)", () => {
     }
   });
 
-  it("an infinite or huge budget is clamped to the 1500 ms mdfind cap", async () => {
+  it("FIX2A m8: the whole probe budget leaves headroom inside the health probe's 2 s cap (1.1 s mdfind + 0.4 s shared plutil)", () => {
+    expect(PROBE_MDFIND_TIMEOUT_MS).toBe(1100);
+    expect(PROBE_PLUTIL_TIMEOUT_MS).toBe(400);
+    expect(PROBE_MDFIND_TIMEOUT_MS + PROBE_PLUTIL_TIMEOUT_MS).toBeLessThanOrEqual(1500);
+  });
+
+  it("an infinite or huge budget is clamped to the 1100 ms mdfind cap", async () => {
     const { detector, runner } = probeSetup([
       probeFind([APP]),
       plist(APP, "CFBundleIdentifier", BUNDLE_ID),
@@ -517,7 +525,7 @@ describe("Detector.probeBundle (D-49)", () => {
     expect(await detector.probeBundle(BUNDLE_ID, { timeoutMs: Number.POSITIVE_INFINITY })).toBe(
       "found",
     );
-    expect(runner.calls[0]?.options.timeoutMs).toBe(1500);
+    expect(runner.calls[0]?.options.timeoutMs).toBe(1100);
   });
 
   it("Test 2: control present and target absent is not-found, with no plutil call and no folder scan", async () => {

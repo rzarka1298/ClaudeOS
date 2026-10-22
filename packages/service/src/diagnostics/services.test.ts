@@ -10,7 +10,11 @@ import {
 import { initializeVault } from "@ccc/vault-repo";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PER_PROBE_CAP_MS, type Probe, type ProbeLogEntry } from "./run-probes.js";
-import { createDiagnosticsServices, type DiagnosticsPorts } from "./services.js";
+import {
+  createDiagnosticsServices,
+  type DiagnosticsPorts,
+  type DiagnosticsServiceFacts,
+} from "./services.js";
 
 /**
  * Plan 08-07 Task 2 (D-05, T-08-16): the services around the capped runner. Concurrent requests
@@ -288,5 +292,146 @@ describe("Test 5: the salted vault fingerprint and the display paths (D-36)", ()
     const response = await build().check("reconnect");
     expect(response.paths.runtimeDir).toBe("~/.example-runtime");
     expect(response.paths.socket).toBe("~/.example-runtime/svc.sock");
+  });
+});
+
+describe("FIX2A F9: one bad input does not turn every health call into a failure", () => {
+  const facts = (overrides: Partial<DiagnosticsServiceFacts> = {}): DiagnosticsServiceFacts => ({
+    version: "0.1.0",
+    startedAt: "2026-10-22T08:00:00.000Z",
+    storeSchemaVersion: () => 12,
+    homeDir: HOME,
+    runtimeDir: `${HOME}/.example-runtime`,
+    socketPath: `${HOME}/.example-runtime/svc.sock`,
+    ...overrides,
+  });
+
+  it("a store that throws on the schema version reads null, and the response is still the strict one", async () => {
+    class SqliteError extends Error {
+      override name = "SqliteError";
+    }
+    const response = await build({
+      serviceFacts: facts({
+        storeSchemaVersion: () => {
+          throw new SqliteError("SQLITE_BUSY: database is locked: /Users/USERNAME/store.db");
+        },
+      }),
+    }).check("reconnect");
+    expect(response.service.storeSchemaVersion).toBeNull();
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+    expect(JSON.stringify(response)).not.toContain("SQLITE_BUSY");
+  });
+
+  it("a 607-character vault path gets a schema-valid fallback display path instead of failing the response", async () => {
+    const root = `${HOME}/${"v".repeat(591)}`;
+    expect(root.length).toBe(607);
+    const response = await build({ vault: { readRoot: () => root } }).check("reconnect");
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+    expect(response.paths.vault).not.toBeNull();
+    expect((response.paths.vault ?? "").length).toBeLessThanOrEqual(512);
+    expect(response.paths.vault?.startsWith("~/…/v")).toBe(true);
+    expect(response.vaultFingerprint).not.toBeNull();
+  });
+
+  it("a runtime folder or socket path that is too long falls back too, and the rest of the response stands", async () => {
+    const long = `${HOME}/${"r".repeat(700)}/svc.sock`;
+    const response = await build({
+      serviceFacts: facts({ runtimeDir: `${HOME}/${"r".repeat(700)}`, socketPath: long }),
+    }).check("reconnect");
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+    expect(response.paths.socket).toBe("~/…/svc.sock");
+    expect(response.paths.runtimeDir.length).toBeLessThanOrEqual(512);
+  });
+
+  it("a readRoot that throws reads the vault row probe-error, with no root, no fingerprint and no message, and the others still answer", async () => {
+    const hooks: Probe = () => Promise.resolve(HOOKS_OK);
+    const response = await build({
+      hooks,
+      vault: {
+        readRoot: () => {
+          throw new Error("SqliteError: database is locked at /Users/USERNAME/store.db");
+        },
+      },
+    }).check("reconnect");
+    expect(response.rows[0]).toMatchObject({
+      id: "vault",
+      status: "unknown",
+      reasonCode: "probe-error",
+    });
+    expect(response.rows[1]).toMatchObject({ id: "hooks", status: "ok" });
+    expect(response.paths.vault).toBeNull();
+    expect(response.vaultFingerprint).toBeNull();
+    expect(JSON.stringify(response)).not.toContain("locked");
+  });
+
+  it("reads the persisted root once per check, so the row, the path and the fingerprint describe one value", async () => {
+    let reads = 0;
+    const root = `${HOME}/vault`;
+    await build({
+      vault: {
+        readRoot: () => {
+          reads += 1;
+          return root;
+        },
+      },
+    }).check("reconnect");
+    expect(reads).toBe(1);
+  });
+});
+
+describe("FIX2A m1: the result cache runs on a monotonic clock", () => {
+  it("a wall-clock step back does not freeze a stale result, and a step forward does not expire a fresh one", async () => {
+    let runs = 0;
+    const hooks: Probe = () => {
+      runs += 1;
+      return Promise.resolve(HOOKS_OK);
+    };
+    let wall = Date.parse("2026-10-22T09:00:00.000Z");
+    let monotonic = 1000;
+    const services = build({
+      hooks,
+      now: () => new Date(wall),
+      monotonicNowMs: () => monotonic,
+    });
+    await services.check("reconnect");
+    expect(runs).toBe(1);
+
+    // The wall clock jumps back an hour; 500 ms really passed: still cached.
+    wall -= 60 * 60_000;
+    monotonic += 500;
+    await services.check("reconnect");
+    expect(runs).toBe(1);
+
+    // Now 2.5 s really passed, whatever the wall clock says (it is still an hour back): recompute.
+    monotonic += 2000;
+    await services.check("reconnect");
+    expect(runs).toBe(2);
+
+    // The wall clock jumps forward a day; 100 ms really passed: not expired.
+    wall += 24 * 60 * 60_000;
+    monotonic += 100;
+    await services.check("reconnect");
+    expect(runs).toBe(2);
+  });
+
+  it("defaults to the process's monotonic clock, not the injected wall clock", async () => {
+    let runs = 0;
+    const hooks: Probe = () => {
+      runs += 1;
+      return Promise.resolve(HOOKS_OK);
+    };
+    // A wall clock that goes backwards on every read would make a wall-clock TTL serve cached results for ever.
+    let wall = Date.parse("2026-10-22T09:00:00.000Z");
+    const services = build({
+      hooks,
+      now: () => {
+        wall -= 10 * 60_000;
+        return new Date(wall);
+      },
+    });
+    await services.check("reconnect");
+    await vi.advanceTimersByTimeAsync(3000);
+    await services.check("reconnect");
+    expect(runs).toBe(2);
   });
 });

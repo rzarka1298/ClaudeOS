@@ -4,7 +4,7 @@ import {
   DiagnosticsHealthResponseSchema,
   type HealthTrigger,
   type ProbeOutcome,
-  toDisplayPath,
+  toBoundedDisplayPath,
 } from "@ccc/domain";
 import { logger } from "../logging.js";
 import {
@@ -47,8 +47,9 @@ export interface DiagnosticsServiceFacts {
 
 export interface DiagnosticsPorts {
   /**
-   * The persisted vault root, read fresh on each check (null when no vault has been set up), plus
-   * the probe's optional file-system, forbidden-root and plan ports for tests. `salt` fixes the
+   * The persisted vault root, read fresh on each check (null when no vault has been set up; a throw reads
+   * `probe-error`, FIX2A F9), plus
+   * the probe's optional file-system and forbidden-root ports for tests. `salt` fixes the
    * fingerprint salt; by default one is drawn at random once per service.
    */
   readonly vault: VaultProbePorts & { readonly salt?: string | undefined };
@@ -60,6 +61,12 @@ export interface DiagnosticsPorts {
   readonly now: () => Date;
   /** Hears probes that did not answer (code and error class name only). Defaults to the service log. */
   readonly log?: ((entry: ProbeLogEntry) => void) | undefined;
+  /**
+   * A monotonic clock in milliseconds for the 2 second result cache (FIX2A m1). The wall clock can be
+   * stepped (NTP, sleep, a manual change); a TTL measured on it can freeze a stale result for hours.
+   * Defaults to `performance.now()`.
+   */
+  readonly monotonicNowMs?: (() => number) | undefined;
 }
 
 export interface DiagnosticsServices {
@@ -79,10 +86,19 @@ function logProbe(entry: ProbeLogEntry): void {
   logger.warn(entry, "diagnostics probe did not answer");
 }
 
+/** The store's schema version, or null when the store cannot say (a throw is not an invented number). */
+function storeSchemaVersionOrNull(facts: DiagnosticsServiceFacts): number | null {
+  try {
+    return facts.storeSchemaVersion();
+  } catch {
+    return null;
+  }
+}
+
 export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsServices {
   const { serviceFacts } = ports;
   const log = ports.log ?? logProbe;
-  const cache = createHealthCache({ nowMs: () => ports.now().getTime() });
+  const cache = createHealthCache({ nowMs: ports.monotonicNowMs ?? (() => performance.now()) });
 
   // One salt per service process (D-36): a fingerprint observed in one process says nothing
   // about another, and the salt never leaves the machine except inside the response.
@@ -93,19 +109,35 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
     run: probe ?? (() => Promise.resolve(notWired(id))),
   });
 
+  /**
+   * One read of the persisted root per check, kept for the row, the display path and the fingerprint
+   * (they must describe the same value). A throw is remembered, not propagated (FIX2A F9): the vault
+   * probe reads it through {@link rootForProbe} and answers `probe-error`; the path and the
+   * fingerprint are then null.
+   */
+  const readRootOnce = (): { readonly ok: true; readonly root: string | null } | { ok: false } => {
+    try {
+      return { ok: true, root: ports.vault.readRoot() };
+    } catch {
+      return { ok: false };
+    }
+  };
+
   const compute = async (trigger: HealthTrigger): Promise<DiagnosticsHealthResponse> => {
-    // The persisted root is read once per check so the vault row, the display path and the
-    // fingerprint always describe the same value.
-    const root = ports.vault.readRoot();
+    const read = readRootOnce();
+    const root = read.ok ? read.root : null;
+    const rootForProbe = (): string | null => {
+      if (!read.ok) throw new Error("the persisted vault root could not be read");
+      return read.root;
+    };
     const rows = await runProbes(
       [
         wired("vault", (signal) =>
           probeVault(
             {
-              readRoot: () => root,
+              readRoot: rootForProbe,
               fs: ports.vault.fs,
               isForbiddenRoot: ports.vault.isForbiddenRoot,
-              plan: ports.vault.plan,
             },
             signal,
           ),
@@ -118,8 +150,9 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
       trigger,
       { now: ports.now, log },
     );
+    // A path too long for the schema gets its last segment, not a failed response (FIX2A F9).
     const display = (path: string): string =>
-      toDisplayPath(path, serviceFacts.homeDir) ?? "…/unknown";
+      toBoundedDisplayPath(path, serviceFacts.homeDir) ?? "…/unknown";
     // The strict parse is the last guard: a response that does not parse is an internal error
     // (closed 500), never a body with a stray field.
     return DiagnosticsHealthResponseSchema.parse({
@@ -127,12 +160,12 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
       service: {
         version: serviceFacts.version,
         startedAt: serviceFacts.startedAt,
-        storeSchemaVersion: serviceFacts.storeSchemaVersion(),
+        storeSchemaVersion: storeSchemaVersionOrNull(serviceFacts),
       },
       rows,
       keychain: { installSecret: "unknown", researchKey: "unknown" },
       paths: {
-        vault: root === null ? null : display(root),
+        vault: root === null ? null : toBoundedDisplayPath(root, serviceFacts.homeDir),
         runtimeDir: display(serviceFacts.runtimeDir),
         socket: display(serviceFacts.socketPath),
       },

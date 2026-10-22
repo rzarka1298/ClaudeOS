@@ -2,6 +2,7 @@ import { HOOK_SILENT_THRESHOLD_MS } from "@ccc/domain";
 import { describe, expect, it, vi } from "vitest";
 import { claudeStatus, isValidRow } from "../test-support/diagnostics-probe-fixtures.js";
 import { type HooksProbePorts, probeHooks } from "./hooks-probe.js";
+import { type NamedProbe, runProbes } from "./run-probes.js";
 
 /**
  * Plan 08-08 Task 1 (D-04, D-35; T-08-19): the hooks row is a pure projection of the Claude
@@ -24,7 +25,7 @@ function ports(
 ): HooksProbePorts & { refreshed: number } {
   const recorded = {
     refreshed: 0,
-    refreshSettingsFacts: () => {
+    refreshSettingsFacts: async () => {
       recorded.refreshed += 1;
       return claudeStatus(overrides);
     },
@@ -203,9 +204,8 @@ describe("Test 2b: what the probe is allowed to do and to return", () => {
   it("reads probe-error, with no message, when the settings read throws", async () => {
     const outcome = await probeHooks(
       {
-        refreshSettingsFacts: () => {
-          throw new Error("EACCES: /Users/USERNAME/.claude/settings.json");
-        },
+        refreshSettingsFacts: () =>
+          Promise.reject(new Error("EACCES: /Users/USERNAME/.claude/settings.json")),
         now: () => NOW,
       },
       SIGNAL,
@@ -214,7 +214,7 @@ describe("Test 2b: what the probe is allowed to do and to return", () => {
   });
 
   it("does not read at all when the signal has already aborted, and reads probe-timeout", async () => {
-    const read = vi.fn(() => claudeStatus({}));
+    const read = vi.fn(async () => claudeStatus({}));
     const controller = new AbortController();
     controller.abort();
     const outcome = await probeHooks(
@@ -223,5 +223,61 @@ describe("Test 2b: what the probe is allowed to do and to return", () => {
     );
     expect(outcome).toEqual({ id: "hooks", status: "unknown", reasonCode: "probe-timeout" });
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe("FIX2A F1: the settings read is asynchronous and bounded by the signal", () => {
+  it("hands the probe's own signal to the port", async () => {
+    let seen: AbortSignal | undefined;
+    const controller = new AbortController();
+    await probeHooks(
+      {
+        refreshSettingsFacts: async (signal) => {
+          seen = signal;
+          return claudeStatus({});
+        },
+        now: () => NOW,
+      },
+      controller.signal,
+    );
+    expect(seen).toBe(controller.signal);
+  });
+
+  it("a read that never settles reads probe-timeout when the cap fires, while timers keep running", async () => {
+    vi.useFakeTimers();
+    try {
+      const probe: NamedProbe = {
+        id: "hooks",
+        run: (signal) =>
+          probeHooks(
+            { refreshSettingsFacts: () => new Promise(() => undefined), now: () => NOW },
+            signal,
+          ),
+      };
+      const done = runProbes([probe], "reconnect", { now: () => new Date(Date.now()) });
+      await vi.advanceTimersByTimeAsync(2000);
+      const [row] = await done;
+      expect(row).toMatchObject({
+        id: "hooks",
+        status: "unknown",
+        reasonCode: "probe-timeout",
+        freshness: "unavailable",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("FIX2A F5: a fresh install (no settings.json) is hooks-not-installed with the copy action", async () => {
+    const outcome = await probeHooks(
+      ports({ hooks: "not-installed", statusLine: "not-installed", disableAllHooks: false }),
+      SIGNAL,
+    );
+    expect(outcome).toEqual({
+      id: "hooks",
+      status: "setup-needed",
+      reasonCode: "hooks-not-installed",
+      setupAction: { kind: "copy-command", command: "claude-hooks-install" },
+    });
   });
 });

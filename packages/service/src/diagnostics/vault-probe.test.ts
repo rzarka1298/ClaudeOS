@@ -206,7 +206,7 @@ describe("Test 2: every state against temporary folders", () => {
   });
 });
 
-describe("Test 3: the abort signal and the synchronous plan", () => {
+describe("Test 3: the abort signal and the asynchronous managed-tree check (FIX2A F1)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -214,7 +214,17 @@ describe("Test 3: the abort signal and the synchronous plan", () => {
     vi.useRealTimers();
   });
 
-  it("an aborted signal during the root stat yields the runner's timeout row and the plan is never called", async () => {
+  /** A file system whose every answer is ready, except what `override` replaces. */
+  function readyFs(root: string, override: Partial<VaultFsPorts> = {}): VaultFsPorts {
+    return {
+      stat: () => Promise.resolve({ isDirectory: () => true }),
+      access: () => Promise.resolve(),
+      realpath: () => Promise.resolve(root),
+      ...override,
+    };
+  }
+
+  it("an aborted signal during the root stat yields the runner's timeout row and no managed folder is checked", async () => {
     const root = readyVault();
     const order: string[] = [];
     const fs: VaultFsPorts = {
@@ -222,13 +232,9 @@ describe("Test 3: the abort signal and the synchronous plan", () => {
       access: () => note(order, "access", Promise.resolve()),
       realpath: () => note(order, "realpath", Promise.resolve(root)),
     };
-    const plan = vi.fn(() => {
-      order.push("plan");
-      throw new Error("must not be called");
-    });
     const probe: NamedProbe = {
       id: "vault",
-      run: (signal) => probeVault(ports(root, { fs, plan }), signal),
+      run: (signal) => probeVault(ports(root, { fs }), signal),
     };
     const done = runProbes([probe], "reconnect", { now: () => new Date(Date.now()) });
     await vi.advanceTimersByTimeAsync(2000);
@@ -240,10 +246,39 @@ describe("Test 3: the abort signal and the synchronous plan", () => {
       freshness: "unavailable",
     });
     expect(order).toEqual(["stat"]);
-    expect(plan).not.toHaveBeenCalled();
   });
 
-  it("an already-aborted signal answers probe-timeout without calling the file system", async () => {
+  it("F1: a managed folder whose stat never resolves (a symlink into a stalled mount) reads probe-timeout at the cap, and timers keep firing", async () => {
+    const root = readyVault();
+    const fs = readyFs(root, {
+      // The root and the marker answer; the first managed folder hangs for ever.
+      stat: (path) =>
+        path === root || path === join(root, ".obsidian")
+          ? Promise.resolve({ isDirectory: () => true })
+          : new Promise(() => undefined),
+    });
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks += 1;
+    }, 100);
+    const probe: NamedProbe = {
+      id: "vault",
+      run: (signal) => probeVault(ports(root, { fs }), signal),
+    };
+    const done = runProbes([probe], "reconnect", { now: () => new Date(Date.now()) });
+    await vi.advanceTimersByTimeAsync(2000);
+    const [row] = await done;
+    clearInterval(timer);
+    expect(row).toMatchObject({
+      id: "vault",
+      status: "unknown",
+      reasonCode: "probe-timeout",
+      freshness: "unavailable",
+    });
+    expect(ticks).toBeGreaterThanOrEqual(19);
+  });
+
+  it("F1: an already-aborted signal answers probe-timeout without calling the file system", async () => {
     const calls: string[] = [];
     const fs: VaultFsPorts = {
       stat: () => note(calls, "stat", Promise.resolve({ isDirectory: () => true })),
@@ -257,32 +292,92 @@ describe("Test 3: the abort signal and the synchronous plan", () => {
     expect(calls).toEqual([]);
   });
 
-  it("calls the file system in the documented order and the plan last, only after the root answered", async () => {
+  it("calls the file system in the documented order, the managed folders last, one after another, only after the root answered", async () => {
     const root = readyVault();
     const order: string[] = [];
     const real = await import("node:fs/promises");
     const fs: VaultFsPorts = {
-      stat: (path) => note(order, path === root ? "stat-root" : "stat-marker", real.stat(path)),
+      stat: (path) =>
+        note(
+          order,
+          path === root
+            ? "stat-root"
+            : path === join(root, ".obsidian")
+              ? "stat-marker"
+              : "stat-folder",
+          real.stat(path),
+        ),
       access: (path, mode) => note(order, `access-${mode}`, real.access(path, mode)),
       realpath: (path) => note(order, "realpath", real.realpath(path)),
     };
-    const plan = vi.fn((r: string) => {
-      order.push("plan");
-      return { vaultRoot: r, entries: [] };
+    expect(await probeVault(ports(root, { fs }), SIGNAL)).toMatchObject({
+      reasonCode: "vault-ready",
     });
-    await probeVault(ports(root, { fs, plan }), SIGNAL);
-    expect(order[0]).toBe("stat-root");
-    expect(order.at(-1)).toBe("plan");
-    expect(order.indexOf("realpath")).toBeLessThan(order.indexOf("plan"));
-    expect(order.filter((step) => step === "plan")).toHaveLength(1);
+    expect(order.slice(0, 5)).toEqual([
+      "stat-root",
+      "realpath",
+      "access-5",
+      "access-2",
+      "stat-marker",
+    ]);
+    const folders = order.slice(5);
+    expect(folders.length).toBeGreaterThan(5);
+    expect(new Set(folders)).toEqual(new Set(["stat-folder"]));
   });
 
-  it("aborts between the async checks and the plan: a signal that fires after the marker check skips the plan", async () => {
+  it("stops at the first missing managed folder (one stat is enough to call the tree incomplete)", async () => {
+    const root = readyVault();
+    let folderStats = 0;
+    const fs = readyFs(root, {
+      stat: (path) => {
+        if (path === root || path === join(root, ".obsidian")) {
+          return Promise.resolve({ isDirectory: () => true });
+        }
+        folderStats += 1;
+        return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
+      },
+    });
+    expect(await probeVault(ports(root, { fs }), SIGNAL)).toMatchObject({
+      status: "degraded",
+      reasonCode: "managed-tree-incomplete",
+    });
+    expect(folderStats).toBe(1);
+  });
+
+  it("a managed folder that is a file instead of a folder reads managed-tree-incomplete", async () => {
+    const root = readyVault();
+    const fs = readyFs(root, {
+      stat: (path) =>
+        Promise.resolve({
+          isDirectory: () => path === root || path === join(root, ".obsidian"),
+        }),
+    });
+    expect(await probeVault(ports(root, { fs }), SIGNAL)).toMatchObject({
+      reasonCode: "managed-tree-incomplete",
+    });
+  });
+
+  it("an errno that is not 'not there' on a managed folder reads probe-error, never a guess", async () => {
+    const root = readyVault();
+    const fs = readyFs(root, {
+      stat: (path) =>
+        path === root || path === join(root, ".obsidian")
+          ? Promise.resolve({ isDirectory: () => true })
+          : Promise.reject(Object.assign(new Error(`EIO at ${root}`), { code: "EIO" })),
+    });
+    const outcome = await probeVault(ports(root, { fs }), SIGNAL);
+    expect(outcome).toEqual({ id: "vault", status: "unknown", reasonCode: "probe-error" });
+    outcomeIsClosed(outcome, root);
+  });
+
+  it("aborts between the marker check and the managed folders: a signal that fires after the marker check checks no folder", async () => {
     const root = readyVault();
     const controller = new AbortController();
     const real = await import("node:fs/promises");
+    let folderStats = 0;
     const fs: VaultFsPorts = {
       stat: async (path) => {
+        if (path !== root && !path.endsWith(".obsidian")) folderStats += 1;
         const result = await real.stat(path);
         if (path.endsWith(".obsidian")) controller.abort();
         return result;
@@ -290,15 +385,37 @@ describe("Test 3: the abort signal and the synchronous plan", () => {
       access: (path, mode) => real.access(path, mode),
       realpath: (path) => real.realpath(path),
     };
-    const plan = vi.fn(() => ({ vaultRoot: root, entries: [] }));
-    const outcome = await probeVault(ports(root, { fs, plan }), controller.signal);
+    const outcome = await probeVault(ports(root, { fs }), controller.signal);
     expect(outcome).toEqual({ id: "vault", status: "unknown", reasonCode: "probe-timeout" });
-    expect(plan).not.toHaveBeenCalled();
+    expect(folderStats).toBe(0);
+  });
+});
+
+describe("FIX2A F9: the root is read inside the probe", () => {
+  it("a throwing readRoot reads probe-error, with no message, and touches no file system", async () => {
+    const calls: string[] = [];
+    const fs: VaultFsPorts = {
+      stat: () => note(calls, "stat", Promise.reject(new Error("no"))),
+      access: () => note(calls, "access", Promise.reject(new Error("no"))),
+      realpath: () => note(calls, "realpath", Promise.reject(new Error("no"))),
+    };
+    const outcome = await probeVault(
+      {
+        readRoot: () => {
+          throw new Error(`SqliteError: database is locked at ${ROOT_IS_NOT_A_PATH}`);
+        },
+        fs,
+      },
+      SIGNAL,
+    );
+    expect(outcome).toEqual({ id: "vault", status: "unknown", reasonCode: "probe-error" });
+    expect(calls).toEqual([]);
+    outcomeIsClosed(outcome, ROOT_IS_NOT_A_PATH);
   });
 });
 
 describe("Test 4: no path and no errno message in any result", () => {
-  it("never echoes a path or an error message that the file system or the plan carried", async () => {
+  it("never echoes a path or an error message that the file system carried", async () => {
     const root = ROOT_IS_NOT_A_PATH;
     const leaky = (code: string): VaultFsPorts => ({
       stat: () =>
@@ -315,16 +432,16 @@ describe("Test 4: no path and no errno message in any result", () => {
       expect(text, code).not.toContain(code);
       expect(Object.keys(outcome).sort(), code).toEqual(["id", "reasonCode", "status"]);
     }
-    const throwingPlan: VaultProbePorts["plan"] = () => {
-      throw new Error(`plan failed for ${root}`);
-    };
-    const readyFs: VaultFsPorts = {
-      stat: () => Promise.resolve({ isDirectory: () => true }),
+    const failingFolder: VaultFsPorts = {
+      stat: (path) =>
+        path === root || path.endsWith(".obsidian")
+          ? Promise.resolve({ isDirectory: () => true })
+          : Promise.reject(Object.assign(new Error(`EIO: failed on '${path}'`), { code: "EIO" })),
       access: () => Promise.resolve(),
       realpath: () => Promise.resolve(root),
     };
     const outcome = await probeVault(
-      ports(root, { fs: readyFs, plan: throwingPlan, isForbiddenRoot: () => false }),
+      ports(root, { fs: failingFolder, isForbiddenRoot: () => false }),
       SIGNAL,
     );
     expect(outcome).toEqual({ id: "vault", status: "unknown", reasonCode: "probe-error" });

@@ -90,17 +90,19 @@ export async function readBoundedRegularFileAsync(
   signal?: AbortSignal,
 ): Promise<BoundedRead> {
   let handle: FileHandle | undefined;
+  // A function, not a flag: the signal can fire between the awaits below.
+  const aborted = (): boolean => signal?.aborted === true;
   try {
-    if (signal?.aborted === true) return UNREADABLE;
+    if (aborted()) return UNREADABLE;
     handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-    if (signal?.aborted === true) return UNREADABLE;
+    if (aborted()) return UNREADABLE;
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > maxBytes) return UNREADABLE;
     const chunks: Buffer[] = [];
     let total = 0;
     const chunk = Buffer.allocUnsafe(Math.min(maxBytes + 1, 64 * 1024));
     for (;;) {
-      if (signal?.aborted === true) return UNREADABLE;
+      if (aborted()) return UNREADABLE;
       const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
       if (bytesRead === 0) break;
       total += bytesRead;

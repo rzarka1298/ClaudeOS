@@ -105,7 +105,11 @@ async function boot(withProjects: boolean, withClaude: boolean): Promise<string>
     db: store.db,
     bus,
     pipeline,
-    poller: { setStatusLineSink() {}, dropCount: () => 0 },
+    poller: {
+      setStatusLineSink() {},
+      dropCount: () => 0,
+      dropFacts: async () => ({ count: 0, lastDropAt: null }),
+    },
     logger,
     env: {},
     now: () => new Date(),

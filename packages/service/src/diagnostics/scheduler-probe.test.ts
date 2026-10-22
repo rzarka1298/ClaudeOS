@@ -1,6 +1,3 @@
-import http from "node:http";
-import https from "node:https";
-import net from "node:net";
 import {
   type HealthTrigger,
   type ResearchStatusResponse,
@@ -11,11 +8,44 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isValidRow, partsOf } from "../test-support/diagnostics-probe-fixtures.js";
 import {
+  installFetchDouble,
+  NETWORK_DOUBLE_MODULES,
+  networkCalls,
+} from "../test-support/no-network.js";
+import {
   createKeyPresenceCheck,
   type KeyPresence,
   probeScheduler,
   type SchedulerProbePorts,
 } from "./scheduler-probe.js";
+
+vi.mock("node:http", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:http"),
+);
+vi.mock("node:https", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:https"),
+);
+vi.mock("node:http2", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:http2"),
+);
+vi.mock("node:net", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:net"),
+);
+vi.mock("node:tls", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:tls"),
+);
+vi.mock("node:dgram", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:dgram"),
+);
+vi.mock("node:dns", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:dns"),
+);
+vi.mock("node:dns/promises", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:dns/promises"),
+);
+vi.mock("node:child_process", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:child_process"),
+);
 
 /**
  * Plan 08-08 Task 2 (D-04, D-05, ADR-0013; T-08-19, T-08-20, T-08-22b; Amendment A1): the
@@ -260,6 +290,40 @@ describe("Test 2b: the presence check keeps its gesture result in memory (Amendm
     });
   });
 
+  it("FIX2A m3: a fresh install on a reconnect, before any gesture, reads the row unknown (not setup-needed), with the key part research-key-not-checked and the key store never touched", async () => {
+    const hasResearchKey = vi.fn(() => Promise.resolve("present" as const));
+    const check = createKeyPresenceCheck({ hasResearchKey });
+    const outcome = await probeScheduler(
+      { status: () => status(), keyPresence: check, overrideTransportActive: false },
+      SIGNAL,
+      "reconnect",
+    );
+    expect(outcome).toMatchObject({
+      id: "scheduler",
+      status: "unknown",
+      reasonCode: "research-key-not-checked",
+    });
+    expect(part(outcome, "last-run")).toMatchObject({
+      status: "setup-needed",
+      reasonCode: "never-run",
+    });
+    expect(part(outcome, "research-key")).toMatchObject({
+      status: "unknown",
+      reasonCode: "research-key-not-checked",
+    });
+    expect(hasResearchKey).not.toHaveBeenCalled();
+    expect(isValidRow(outcome)).toBe(true);
+
+    // The owner's gesture is what finds out; the row then reads the truth, and a later reconnect keeps it.
+    const gesture = await probeScheduler(
+      { status: () => status(), keyPresence: check, overrideTransportActive: false },
+      SIGNAL,
+      "gesture",
+    );
+    expect(part(gesture, "research-key")).toMatchObject({ reasonCode: "research-key-present" });
+    expect(hasResearchKey).toHaveBeenCalledTimes(1);
+  });
+
   it("a gesture calls it once and stores the result, later reconnects reuse it without a call", async () => {
     const hasResearchKey = vi.fn(() => Promise.resolve("absent" as const));
     const check = createKeyPresenceCheck({ hasResearchKey });
@@ -436,19 +500,39 @@ describe("Test 7 (W2): bounded and offline", () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it("makes no fetch, http(s) request or net connect while it runs", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const httpSpy = vi.spyOn(http, "request");
-    const httpsSpy = vi.spyOn(https, "request");
-    const connectSpy = vi.spyOn(net, "connect");
-    await probeScheduler(
-      ports(status({ lastSuccess: success(T_OLD) }), "present"),
-      SIGNAL,
-      "gesture",
-    );
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(httpSpy).not.toHaveBeenCalled();
-    expect(httpsSpy).not.toHaveBeenCalled();
-    expect(connectSpy).not.toHaveBeenCalled();
+  describe("makes no network or process call while it runs (module doubles that throw, FIX2A F7)", () => {
+    let undoFetch: () => void = () => undefined;
+    beforeEach(() => {
+      networkCalls.length = 0;
+      undoFetch = installFetchDouble();
+    });
+    afterEach(() => {
+      undoFetch();
+      networkCalls.length = 0;
+    });
+
+    it("the doubles are live: a call into any of them, or fetch, throws and is recorded", async () => {
+      for (const name of NETWORK_DOUBLE_MODULES) {
+        const module = (await import(/* @vite-ignore */ name)) as Record<string, unknown>;
+        const member = Object.entries(module).find(
+          ([key, value]) => key !== "default" && typeof value === "function",
+        );
+        const call = member?.[1] as (() => void) | undefined;
+        expect(call, name).toBeDefined();
+        expect(() => call?.(), name).toThrow();
+      }
+      expect(() => fetch("https://example.invalid/")).toThrow();
+      expect(networkCalls.length).toBe(NETWORK_DOUBLE_MODULES.length + 1);
+      networkCalls.length = 0;
+    });
+
+    it("runs to its answer without touching any of them", async () => {
+      await probeScheduler(
+        ports(status({ lastSuccess: success(T_OLD) }), "present"),
+        SIGNAL,
+        "gesture",
+      );
+      expect(networkCalls).toEqual([]);
+    });
   });
 });

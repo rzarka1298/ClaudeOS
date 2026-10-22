@@ -337,7 +337,11 @@ describe("buildIntegrationStatus (Test 3, D-12, D-15, SESS-18)", () => {
       db: store.db,
       bus,
       pipeline,
-      poller: { setStatusLineSink() {}, dropCount: () => 0 },
+      poller: {
+        setStatusLineSink() {},
+        dropCount: () => 0,
+        dropFacts: async () => ({ count: 0, lastDropAt: null }),
+      },
       logger: silent,
       env: {},
       now: () => new Date(),

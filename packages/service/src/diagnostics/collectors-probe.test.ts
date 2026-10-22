@@ -14,8 +14,9 @@ import {
 } from "../test-support/diagnostics-probe-fixtures.js";
 import {
   type CollectorsProbePorts,
-  createSpoolDropTracker,
   probeCollectors,
+  SPOOL_DROP_WINDOW_MS,
+  type SpoolFacts,
 } from "./collectors-probe.js";
 
 /**
@@ -26,7 +27,6 @@ import {
  */
 
 const NOW = new Date("2026-10-22T09:00:00.000Z");
-const LATER = new Date("2026-10-22T09:05:00.000Z");
 const SIGNAL = new AbortController().signal;
 
 function ports(
@@ -35,7 +35,8 @@ function ports(
   extra: Partial<CollectorsProbePorts> = {},
 ): CollectorsProbePorts {
   return {
-    integration: () => claudeStatus(claude),
+    integration: async () => claudeStatus(claude),
+    spoolFacts: async () => ({ count: 0, lastDropAt: null }),
     // Only a `status()` read exists on the port; anything else is a failure of the test.
     codexStatus: new Proxy(
       { status: () => codex },
@@ -46,7 +47,6 @@ function ports(
         },
       },
     ),
-    spoolTracker: createSpoolDropTracker(),
     minimumClaudeVersion: "2.1.214",
     now: () => NOW,
     ...extra,
@@ -210,74 +210,109 @@ describe("Test 3b: status line and transcript analysis", () => {
   });
 });
 
-describe("Test 4 (spool, D-37)", () => {
-  it("the tracker reads clean for zero, degraded when the count rose, ok again for the same count, and keeps the first time", () => {
-    const tracker = createSpoolDropTracker();
-    const t0 = new Date("2026-10-22T09:00:00.000Z");
-    const t1 = new Date("2026-10-22T09:01:00.000Z");
-    const t2 = new Date("2026-10-22T09:02:00.000Z");
-    const t3 = new Date("2026-10-22T09:03:00.000Z");
-    expect(tracker.observe(0, t0)).toEqual({ count: 0, rose: false, since: null });
-    expect(tracker.observe(40, t1)).toEqual({ count: 40, rose: true, since: t1.toISOString() });
-    expect(tracker.observe(40, t2)).toEqual({ count: 40, rose: false, since: t1.toISOString() });
-    expect(tracker.observe(90, t3)).toEqual({ count: 90, rose: true, since: t1.toISOString() });
-  });
+describe("Test 4 (spool, D-37a): stateless and independent of the trigger", () => {
+  const HOUR = 60 * 60_000;
+  const ago = (ms: number): string => new Date(NOW.getTime() - ms).toISOString();
+  const spoolOf = async (facts: SpoolFacts, at: Date = NOW) =>
+    byId(
+      await probeCollectors(
+        ports({}, codexStatus(), { spoolFacts: async () => facts, now: () => at }),
+        SIGNAL,
+      ),
+      "spool",
+    );
 
-  it("treats the first observation as the baseline, whatever it is", () => {
-    const tracker = createSpoolDropTracker();
-    const at = new Date("2026-10-22T09:00:00.000Z");
-    expect(tracker.observe(500, at)).toEqual({ count: 500, rose: false, since: at.toISOString() });
-    expect(tracker.observe(500, new Date("2026-10-22T09:09:00.000Z"))).toMatchObject({
-      rose: false,
-    });
-  });
-
-  it("a shrinking count (the file was emptied) is not a rise, and zero reads clean", () => {
-    const tracker = createSpoolDropTracker();
-    tracker.observe(100, NOW);
-    expect(tracker.observe(10, LATER)).toMatchObject({ count: 10, rose: false });
-    expect(tracker.observe(0, LATER)).toMatchObject({ count: 0, rose: false });
-  });
-
-  it("through the probe: clean for none, degraded with dropCount and dropsSince on a rise, ok with the count kept the next time", async () => {
-    const tracker = createSpoolDropTracker();
-    let count = 0;
-    let at = NOW;
-    const make = () =>
-      ports({}, codexStatus(), {
-        spoolTracker: tracker,
-        integration: () => claudeStatus({ spoolDropCount: count }),
-        now: () => at,
-      });
-
-    const clean = await probeCollectors(make(), SIGNAL);
-    expect(byId(clean, "spool")).toEqual({
+  it("reads clean, with no facts, when nothing was dropped", async () => {
+    expect(await spoolOf({ count: 0, lastDropAt: null })).toEqual({
       partId: "spool",
       status: "ok",
       reasonCode: "spool-clean",
     });
+  });
 
-    count = 12;
-    at = LATER;
-    const rose = await probeCollectors(make(), SIGNAL);
-    expect(byId(rose, "spool")).toEqual({
+  it("drops made while the service was down read degraded on the very first probe (no baseline to consume)", async () => {
+    expect(await spoolOf({ count: 40, lastDropAt: ago(2 * HOUR) })).toEqual({
       partId: "spool",
       status: "degraded",
       reasonCode: "spool-dropped-records",
-      facts: { dropCount: 12, dropsSince: LATER.toISOString() },
+      facts: { dropCount: 40, lastDropAt: ago(2 * HOUR) },
     });
-    expect(rose).toMatchObject({ status: "degraded", reasonCode: "spool-dropped-records" });
-    expect(isValidRow(rose)).toBe(true);
+  });
 
-    at = new Date("2026-10-22T09:09:00.000Z");
-    const same = await probeCollectors(make(), SIGNAL);
-    expect(byId(same, "spool")).toEqual({
+  it("a second probe, a reconnect or a restart does not consume it: the same file reads the same", async () => {
+    const facts = { count: 40, lastDropAt: ago(HOUR) };
+    const first = await spoolOf(facts);
+    const second = await spoolOf(facts, new Date(NOW.getTime() + 5 * 60_000));
+    expect(second).toEqual(first);
+    expect(second).toMatchObject({ status: "degraded", reasonCode: "spool-dropped-records" });
+  });
+
+  it("the window is 24 hours: 24 hours exactly is still degraded, a millisecond more reads clean with the count kept", async () => {
+    expect(SPOOL_DROP_WINDOW_MS).toBe(24 * HOUR);
+    expect(await spoolOf({ count: 7, lastDropAt: ago(24 * HOUR) })).toMatchObject({
+      status: "degraded",
+      reasonCode: "spool-dropped-records",
+    });
+    expect(await spoolOf({ count: 7, lastDropAt: ago(25 * HOUR) })).toEqual({
       partId: "spool",
       status: "ok",
       reasonCode: "spool-clean",
-      facts: { dropCount: 12, dropsSince: LATER.toISOString() },
+      facts: { dropCount: 7, lastDropAt: ago(25 * HOUR) },
     });
-    expect(isValidRow(same)).toBe(true);
+    expect(await spoolOf({ count: 7, lastDropAt: ago(24 * HOUR + 1) })).toMatchObject({
+      reasonCode: "spool-clean",
+    });
+  });
+
+  it("a drop stamped in the future (clock skew) is not hidden", async () => {
+    expect(
+      await spoolOf({ count: 3, lastDropAt: new Date(NOW.getTime() + HOUR).toISOString() }),
+    ).toMatchObject({ reasonCode: "spool-dropped-records" });
+  });
+
+  it("a non-empty file with no usable time cannot be said to be recent: clean, with the count kept", async () => {
+    expect(await spoolOf({ count: 9, lastDropAt: null })).toEqual({
+      partId: "spool",
+      status: "ok",
+      reasonCode: "spool-clean",
+      facts: { dropCount: 9 },
+    });
+    expect(await spoolOf({ count: 9, lastDropAt: "not a time" })).toMatchObject({
+      reasonCode: "spool-clean",
+      facts: { dropCount: 9 },
+    });
+  });
+
+  it("the degraded spool lifts the row to degraded; rows built from it are valid rows", async () => {
+    const outcome = await probeCollectors(
+      ports({}, codexStatus(), {
+        spoolFacts: async () => ({ count: 12, lastDropAt: ago(HOUR) }),
+      }),
+      SIGNAL,
+    );
+    expect(outcome).toMatchObject({ status: "degraded", reasonCode: "spool-dropped-records" });
+    expect(isValidRow(outcome)).toBe(true);
+  });
+
+  it("a spool read that fails reads probe-error on the spool part only, with no message", async () => {
+    const outcome = await probeCollectors(
+      ports({}, codexStatus(), {
+        spoolFacts: () => Promise.reject(new Error("EACCES: /Users/USERNAME/spool")),
+      }),
+      SIGNAL,
+    );
+    expect(byId(outcome, "spool")).toEqual({
+      partId: "spool",
+      status: "unknown",
+      reasonCode: "probe-error",
+    });
+    expect(JSON.stringify(outcome)).not.toContain("USERNAME");
+    expect(isValidRow(outcome)).toBe(true);
+  });
+
+  it("the module keeps no baseline between probes (no tracker is exported)", async () => {
+    const module = await import("./collectors-probe.js");
+    expect(Object.keys(module)).not.toContain("createSpoolDropTracker");
   });
 });
 
@@ -447,15 +482,14 @@ describe("Test 5: the Codex parts", () => {
 
 describe("what the collectors probe is allowed to do", () => {
   it("reads the integration status once and reads probe-error, with no message, when it throws", async () => {
-    const read = vi.fn(() => claudeStatus({}));
+    const read = vi.fn(async () => claudeStatus({}));
     await probeCollectors(ports({}, codexStatus(), { integration: read }), SIGNAL);
     expect(read).toHaveBeenCalledTimes(1);
 
     const outcome = await probeCollectors(
       ports({}, codexStatus(), {
-        integration: () => {
-          throw new Error("EACCES: /Users/USERNAME/.claude/settings.json");
-        },
+        integration: () =>
+          Promise.reject(new Error("EACCES: /Users/USERNAME/.claude/settings.json")),
       }),
       SIGNAL,
     );
@@ -463,7 +497,7 @@ describe("what the collectors probe is allowed to do", () => {
   });
 
   it("reads probe-timeout without reading anything when the signal has already aborted", async () => {
-    const read = vi.fn(() => claudeStatus({}));
+    const read = vi.fn(async () => claudeStatus({}));
     const controller = new AbortController();
     controller.abort();
     const outcome = await probeCollectors(

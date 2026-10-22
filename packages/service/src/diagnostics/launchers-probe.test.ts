@@ -1,15 +1,45 @@
-import http from "node:http";
-import https from "node:https";
-import net from "node:net";
 import { LAUNCHER_PART_IDS } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { isValidRow, partsOf } from "../test-support/diagnostics-probe-fixtures.js";
+import {
+  installFetchDouble,
+  NETWORK_DOUBLE_MODULES,
+  networkCalls,
+} from "../test-support/no-network.js";
 import {
   type BundleProbeAnswer,
   type LauncherRow,
   type LaunchersProbePorts,
   probeLaunchers,
 } from "./launchers-probe.js";
+
+vi.mock("node:http", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:http"),
+);
+vi.mock("node:https", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:https"),
+);
+vi.mock("node:http2", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:http2"),
+);
+vi.mock("node:net", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:net"),
+);
+vi.mock("node:tls", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:tls"),
+);
+vi.mock("node:dgram", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:dgram"),
+);
+vi.mock("node:dns", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:dns"),
+);
+vi.mock("node:dns/promises", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:dns/promises"),
+);
+vi.mock("node:child_process", async () =>
+  (await import("../test-support/no-network.js")).networkDouble("node:child_process"),
+);
 
 /**
  * Plan 08-08 Task 2 (D-04, D-05, D-49; T-08-19, T-08-20, T-08-21, T-08-22b): the launchers row
@@ -399,18 +429,38 @@ describe("Test 7 (W2): bounded and offline", () => {
     expect(p.fileCalls).toEqual([]);
   });
 
-  it("makes no fetch, http(s) request or net connect while it runs", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const httpSpy = vi.spyOn(http, "request");
-    const httpsSpy = vi.spyOn(https, "request");
-    const connectSpy = vi.spyOn(net, "connect");
-    await probeLaunchers(
-      ports([antigravity(true), claude(true, customTerminal), codex(true)]),
-      SIGNAL,
-    );
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(httpSpy).not.toHaveBeenCalled();
-    expect(httpsSpy).not.toHaveBeenCalled();
-    expect(connectSpy).not.toHaveBeenCalled();
+  describe("makes no network or process call while it runs (module doubles that throw, FIX2A F7)", () => {
+    let undoFetch: () => void = () => undefined;
+    beforeEach(() => {
+      networkCalls.length = 0;
+      undoFetch = installFetchDouble();
+    });
+    afterEach(() => {
+      undoFetch();
+      networkCalls.length = 0;
+    });
+
+    it("the doubles are live: a call into any of them, or fetch, throws and is recorded", async () => {
+      for (const name of NETWORK_DOUBLE_MODULES) {
+        const module = (await import(/* @vite-ignore */ name)) as Record<string, unknown>;
+        const member = Object.entries(module).find(
+          ([key, value]) => key !== "default" && typeof value === "function",
+        );
+        const call = member?.[1] as (() => void) | undefined;
+        expect(call, name).toBeDefined();
+        expect(() => call?.(), name).toThrow();
+      }
+      expect(() => fetch("https://example.invalid/")).toThrow();
+      expect(networkCalls.length).toBe(NETWORK_DOUBLE_MODULES.length + 1);
+      networkCalls.length = 0;
+    });
+
+    it("runs to its answer without touching any of them", async () => {
+      await probeLaunchers(
+        ports([antigravity(true), claude(true, customTerminal), codex(true)]),
+        SIGNAL,
+      );
+      expect(networkCalls).toEqual([]);
+    });
   });
 });

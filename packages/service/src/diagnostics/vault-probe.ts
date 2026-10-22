@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { access, constants, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { ProbeOutcome } from "@ccc/domain";
-import { planVaultSetup, type VaultSetupPlan } from "@ccc/vault-repo";
+import { MANAGED_FOLDERS } from "@ccc/vault-repo";
 import { isForbiddenRoot } from "../vault-root-policy.js";
 
 /**
@@ -13,14 +13,17 @@ import { isForbiddenRoot } from "../vault-root-policy.js";
  * 2. `realpath` it and refuse a forbidden location (the same rule setup applies);
  * 3. `access` for read and search, then for write: `access(2)` writes nothing;
  * 4. `stat` the `.obsidian` marker;
- * 5. only then the synchronous managed-tree plan, which uses `existsSync`; by now the root has
- *    answered quickly, and a signal that fired in the meantime skips the plan.
+ * 5. only then the managed tree: one asynchronous `stat` per managed folder, one after another,
+ *    each raced against the signal. Nothing here is synchronous (FIX2A F1): a managed folder may be a
+ *    symlink into a stalled network mount, and a synchronous `existsSync` on it would hold the event
+ *    loop past the 2 s and 5 s caps. A hung `stat` holds a thread-pool thread while the timers fire,
+ *    and the probe reads `probe-timeout`.
  *
  * Every file-system error is mapped to a code by its `errno` code; the error message, which can
  * name the path, is never read. The result carries a reason code and nothing else.
  */
 
-/** The three file-system calls the probe may make. There is no write member to inject. */
+/** The file-system calls the probe may make, all asynchronous. There is no write member to inject. */
 export interface VaultFsPorts {
   stat(path: string): Promise<{ isDirectory(): boolean }>;
   access(path: string, mode: number): Promise<void>;
@@ -28,13 +31,14 @@ export interface VaultFsPorts {
 }
 
 export interface VaultProbePorts {
-  /** The persisted vault root, or null when none has been set up. */
+  /**
+   * The persisted vault root, or null when none has been set up. The probe calls it itself (FIX2A
+   * F9): a throw reads `probe-error` for this row and never fails the whole response.
+   */
   readonly readRoot: () => string | null;
   readonly fs?: VaultFsPorts | undefined;
   /** Whether a realpath'd root is a location this service never adopts (defaults to the setup rule). */
   readonly isForbiddenRoot?: ((resolved: string) => boolean) | undefined;
-  /** The synchronous managed-tree plan (defaults to the vault repository's). */
-  readonly plan?: ((root: string) => VaultSetupPlan) | undefined;
 }
 
 const DEFAULT_FS: VaultFsPorts = {
@@ -130,18 +134,28 @@ function isUsableRootString(root: string): boolean {
   return root.length > 0 && isAbsolute(root) && !root.includes("\u0000");
 }
 
+/** Whether an errno says "there is nothing there": the only errors that mean a managed folder is missing. */
+function isNotThere(error: unknown): boolean {
+  const code = errnoOf(error);
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 export async function probeVault(
   ports: VaultProbePorts,
   signal: AbortSignal,
 ): Promise<ProbeOutcome> {
-  const root = ports.readRoot();
+  let root: string | null;
+  try {
+    root = ports.readRoot();
+  } catch {
+    return outcomes.error;
+  }
   if (root === null) return outcomes.notSetUp;
   if (!isUsableRootString(root)) return outcomes.refused;
   if (signal.aborted) return outcomes.timeout;
 
   const fs = ports.fs ?? DEFAULT_FS;
   const forbidden = ports.isForbiddenRoot ?? isForbiddenRoot;
-  const plan = ports.plan ?? planVaultSetup;
 
   try {
     // 1. The root exists and is a directory.
@@ -189,15 +203,22 @@ export async function probeVault(
       return outcomeForRootError(error, false);
     }
 
-    // 5. The managed tree, with the one synchronous call, only now that the root has answered.
-    if (signal.aborted) return outcomes.timeout;
-    const entries = plan(root).entries;
-    return entries.some((entry) => entry.kind === "folder" && !entry.exists)
-      ? outcomes.incomplete
-      : outcomes.ready;
-  } catch (error) {
-    // The plan reports a root that vanished in the meantime by name; anything else is unexpected.
-    if (error instanceof Error && error.name === "VaultRootMissingError") return outcomes.missing;
+    // 5. The managed folders, asynchronously, one after another (FIX2A F1). A missing or
+    // non-folder entry makes the tree incomplete and ends the walk; an error that is not "not
+    // there" is not a verdict about the tree, so it reads probe-error.
+    for (const folder of MANAGED_FOLDERS) {
+      if (signal.aborted) return outcomes.timeout;
+      let info: Awaited<ReturnType<VaultFsPorts["stat"]>>;
+      try {
+        info = await abortable(fs.stat(join(root, ...folder.split("/"))), signal);
+      } catch (error) {
+        if (error instanceof ProbeAborted) return outcomes.timeout;
+        return isNotThere(error) ? outcomes.incomplete : outcomes.error;
+      }
+      if (!info.isDirectory()) return outcomes.incomplete;
+    }
+    return outcomes.ready;
+  } catch {
     return outcomes.error;
   }
 }

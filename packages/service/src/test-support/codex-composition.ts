@@ -279,7 +279,11 @@ export async function startCodexComposition(
       db: store.db,
       bus,
       pipeline,
-      poller: { setStatusLineSink: () => undefined, dropCount: () => 0 },
+      poller: {
+        setStatusLineSink: () => undefined,
+        dropCount: () => 0,
+        dropFacts: async () => ({ count: 0, lastDropAt: null }),
+      },
       logger,
       env: {},
       now: () => new Date(),

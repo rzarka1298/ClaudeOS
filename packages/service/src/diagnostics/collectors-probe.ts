@@ -27,46 +27,34 @@ import {
  * (which would publish events), no doctor (the owner runs it; its 60 s cap exceeds this probe's
  * 2 s) and nothing that starts a process. No part returns a path, a Codex version, a doctor check
  * id or a timestamp; versions appear only as dotted facts and the spool only as a count and the
- * instant it was first seen in this service process.
+ * instant the dropped-records file was last written.
  */
-
-export interface SpoolObservation {
-  readonly count: number;
-  /** True when this count is higher than the previous observation in this process. */
-  readonly rose: boolean;
-  /** The instant a non-zero count was first seen in this process, or null while none has been. */
-  readonly since: string | null;
-}
 
 /**
- * Remembers the dropped-record count between probes (D-37). The count is the size of a file
- * nothing ever clears, so "any drop ever" would read `degraded` forever; instead a drop is news
- * only when the count rose since the previous probe in this service process. The first observation
- * is the baseline (a historic file is not a fresh drop). Memory only: a restart starts over.
+ * The dropped-records file as a fact (FIX2A F6, D-37a): its byte count and the instant it was last
+ * written, as a UTC instant (null when the file is absent, empty or has no usable time). It comes from
+ * the file's size and mtime, so it does not depend on when this service started or on any earlier
+ * probe.
  */
-export interface SpoolDropTracker {
-  observe(count: number, at: Date): SpoolObservation;
+export interface SpoolFacts {
+  readonly count: number;
+  readonly lastDropAt: string | null;
 }
 
-export function createSpoolDropTracker(): SpoolDropTracker {
-  let previous: number | null = null;
-  let since: string | null = null;
-  return {
-    observe(count, at) {
-      const rose = previous !== null && count > previous;
-      if (count > 0 && since === null) since = isoInstant(at) ?? null;
-      previous = count;
-      return { count, rose, since };
-    },
-  };
-}
+/** A drop counts as news for this long after the file was last written (D-37a). */
+export const SPOOL_DROP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface CollectorsProbePorts {
-  /** Re-reads Claude's settings facts and answers the status (the same read the hooks probe uses). */
-  readonly integration: () => ClaudeIntegrationStatus;
+  /**
+   * Re-reads Claude's settings facts and answers the status (the same read the hooks probe uses).
+   * Asynchronous since FIX2A F1: it receives the probe's signal and must make no synchronous
+   * file-system call.
+   */
+  readonly integration: (signal: AbortSignal) => Promise<ClaudeIntegrationStatus>;
+  /** The dropped-records file's count and last-write instant, read asynchronously (FIX2A F6). */
+  readonly spoolFacts: (signal: AbortSignal) => Promise<SpoolFacts>;
   /** The cached Codex integration status. Only this read exists on the port. */
   readonly codexStatus: { status(): CodexIntegrationStatus };
-  readonly spoolTracker: SpoolDropTracker;
   /** The oldest Claude Code version the usage tracking supports, as a dotted string. */
   readonly minimumClaudeVersion: string;
   readonly now: () => Date;
@@ -118,15 +106,20 @@ function transcriptPart(status: ClaudeIntegrationStatus): Part {
     : partOf(TABLE, "transcript-analysis", "analysis-off", { setupAction: GO_SECURITY });
 }
 
-function spoolPart(observation: SpoolObservation): Part {
-  if (observation.count === 0) return partOf(TABLE, "spool", "spool-clean");
-  // A count kept as a fact whether or not it just rose; only a rise is news (D-37).
-  const facts = {
-    dropCount: observation.count,
-    ...(observation.since === null ? {} : { dropsSince: observation.since }),
-  };
-  return partOf(TABLE, "spool", observation.rose ? "spool-dropped-records" : "spool-clean", {
-    facts,
+/**
+ * The spool part (D-37a). Stateless: `degraded` while the dropped-records file is non-empty AND was
+ * written within the last 24 hours, otherwise `ok` with the count kept as a fact. No first-seen
+ * baseline, no trigger: drops made while the service was down read degraded on the first probe, a
+ * reconnect consumes nothing, and a day-old drop stops being news without anyone clearing the file.
+ * A time in the future (clock skew) counts as recent, so a drop is never hidden by it.
+ */
+function spoolPart(facts: SpoolFacts, now: Date): Part {
+  if (facts.count === 0) return partOf(TABLE, "spool", "spool-clean");
+  const lastDropAt = facts.lastDropAt === null ? undefined : isoInstant(new Date(facts.lastDropAt));
+  const recent =
+    lastDropAt !== undefined && now.getTime() - Date.parse(lastDropAt) <= SPOOL_DROP_WINDOW_MS;
+  return partOf(TABLE, "spool", recent ? "spool-dropped-records" : "spool-clean", {
+    facts: { dropCount: facts.count, ...(lastDropAt === undefined ? {} : { lastDropAt }) },
   });
 }
 
@@ -192,20 +185,23 @@ export async function probeCollectors(
   ports: CollectorsProbePorts,
   signal: AbortSignal,
 ): Promise<ProbeOutcome> {
-  const claude = await bounded(signal, () => ports.integration());
+  const claude = await bounded(signal, () => ports.integration(signal));
   if (claude.kind === "timeout") return noAnswer("collectors", "probe-timeout");
   if (claude.kind === "error") return noAnswer("collectors", "probe-error");
   const codex = await bounded(signal, () => ports.codexStatus.status());
   if (codex.kind === "timeout") return noAnswer("collectors", "probe-timeout");
   if (codex.kind === "error") return noAnswer("collectors", "probe-error");
+  const spool = await bounded(signal, () => ports.spoolFacts(signal));
+  if (spool.kind === "timeout") return noAnswer("collectors", "probe-timeout");
 
   const status = claude.value;
-  const observation = ports.spoolTracker.observe(status.spoolDropCount, ports.now());
   const parts: Part[] = [
     telemetryPart(status, ports.minimumClaudeVersion),
     statusLinePart(status),
     transcriptPart(status),
-    spoolPart(observation),
+    spool.kind === "error"
+      ? partOf(TABLE, "spool", "probe-error")
+      : spoolPart(spool.value, ports.now()),
     ...codexParts(codex.value),
   ];
   return rowOfParts("collectors", parts, COLLECTORS_PASSIVE_PART_IDS);

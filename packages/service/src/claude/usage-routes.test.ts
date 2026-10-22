@@ -182,6 +182,7 @@ beforeEach(async () => {
         spooledSink = sink;
       },
       dropCount: () => 0,
+      dropFacts: async () => ({ count: 0, lastDropAt: null }),
     },
     logger,
     env: {},
