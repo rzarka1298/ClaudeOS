@@ -216,7 +216,7 @@ const installed = {
   telemetry: { kind: "ok" },
 } as const;
 const hookState = (patch: Record<string, unknown>): HookInput =>
-  ({ ...installed, ...patch }) as unknown as HookInput;
+  Object.assign({}, installed, patch);
 const ago = (ms: number): string => new Date(NOW - ms).toISOString();
 
 describe("hookStatusText and statusLineStatusText keep their outputs (Test 1)", () => {
