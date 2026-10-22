@@ -1,5 +1,5 @@
 import { execFile as nodeExecFileCallback } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { parseClaudeVersionOutput, supportStatus } from "@ccc/collectors";
 import type {
@@ -7,11 +7,12 @@ import type {
   IntegrationInstallState,
   TelemetryStatus,
 } from "@ccc/domain";
+import { readBoundedRegularFile } from "./bounded-read.js";
 import type { PipelineHealth } from "./pipeline.js";
 
 /**
  * The Claude integration status (PR-24, D-12, D-15, SESS-18). Everything
- * here READS: Claude Code's `settings.json` through `readFileSync` and
+ * here READS: Claude Code's `settings.json` through a bounded regular-file read and
  * `JSON.parse`, the installer's `<runtime>/hooks/install.json`, and the
  * installed binary's `--version`. No fs write API is imported (a source
  * scan in the test enforces it): the service never edits the owner's
@@ -110,8 +111,11 @@ export function readClaudeSettingsFacts(
 ): ClaudeSettingsFacts {
   let settings: unknown;
   try {
-    if (statSync(settingsPath).size > MAX_SETTINGS_BYTES) return UNKNOWN_SETTINGS;
-    settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    // A regular file under a byte cap, read through one descriptor (FIX1A MINOR 6):
+    // a FIFO or a device behind a symlink is unreadable, never a hang.
+    const text = readBoundedRegularFile(settingsPath, MAX_SETTINGS_BYTES);
+    if (text === null) return UNKNOWN_SETTINGS;
+    settings = JSON.parse(text);
   } catch {
     return UNKNOWN_SETTINGS;
   }
@@ -142,8 +146,9 @@ export function readInstallRecord(runtimeDir: string): InstallRecord | null {
   const path = join(runtimeDir, "hooks", "install.json");
   let parsed: unknown;
   try {
-    if (statSync(path).size > MAX_INSTALL_RECORD_BYTES) return null;
-    parsed = JSON.parse(readFileSync(path, "utf8"));
+    const text = readBoundedRegularFile(path, MAX_INSTALL_RECORD_BYTES);
+    if (text === null) return null;
+    parsed = JSON.parse(text);
   } catch {
     return null;
   }
