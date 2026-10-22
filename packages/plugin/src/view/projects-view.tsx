@@ -8,7 +8,7 @@ import {
   projectsReceivedAt,
   projectsSnapshot,
 } from "../projects/projects-state.js";
-import { applyScanState, scanState } from "../projects/scan-state.js";
+import { scanState } from "../projects/scan-state.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
 import type { DestinationId } from "./destinations.js";
@@ -18,6 +18,7 @@ import { RegisterFlow } from "./register-flow.js";
 import { AddScanFolderFlow, ScanFolders } from "./scan-folders.js";
 import { launchersNeedSetup, SetupCallout } from "./setup-callout.js";
 import type { LeaveGuard } from "./tasks-workspace.js";
+import { useScanState } from "./use-scan-state.js";
 
 /**
  * The S3 Projects destination (Task 1: the grid of cards; Task 2: the full
@@ -117,19 +118,9 @@ export function ProjectsView({
   }
 
   // The scan state is read once when the destination opens and again each
-  // time the service comes back (a restart forgets every suggestion, D-07).
-  // Never on a timer: scans themselves run only on the owner's request.
-  // `scanActions` is a stable host-built object, not a dependency to track.
-  useEffect(() => {
-    if (connection.kind !== "live") return;
-    let cancelled = false;
-    void scanActions.listScanState().then((outcome) => {
-      if (!cancelled && outcome.kind === "state") applyScanState(outcome.state);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [connection.kind]);
+  // time the service comes back (a restart forgets every suggestion, D-07),
+  // by the hook the Settings Projects section shares. Never on a timer.
+  useScanState(scanActions, connection);
 
   // Focus follows a newly registered project, a duplicate, or the next card
   // after a removal onto the dashboard only once its row actually settles in

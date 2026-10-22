@@ -287,12 +287,18 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
     launchersSession,
     settingsHost,
     settingsSession,
+    projectsActions,
+    scanActions,
+    pickFolder,
   }) => (
     <SettingsDestination
       settingsHost={settingsHost}
       settingsSession={settingsSession}
       launchersActions={launchersActions}
       launchersSession={launchersSession}
+      projectsActions={projectsActions}
+      scanActions={scanActions}
+      pickFolder={pickFolder}
       connection={connection}
       now={now}
     />

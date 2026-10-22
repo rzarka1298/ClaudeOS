@@ -166,6 +166,12 @@ function StatusRegion({ line }: { readonly line: StatusLine }): VNode {
 export interface AddScanFolderFlowProps {
   readonly actions: ScanActions;
   readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
+  /**
+   * Set while the companion service is away (plan 08-11): the controls that start or submit an
+   * add become `aria-disabled`, described by the visible reason element with this id, and do
+   * nothing. The caller renders the reason once; the native `disabled` attribute is never used.
+   */
+  readonly unavailable?: { readonly reasonId: string } | undefined;
 }
 
 type AddStep =
@@ -178,7 +184,15 @@ type AddStep =
  * flow, with the S5 titles. The chosen path goes to the service once, in the
  * add request, and is never shown in any message (D-43).
  */
-export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProps): VNode {
+export function AddScanFolderFlow({
+  actions,
+  pickFolder,
+  unavailable,
+}: AddScanFolderFlowProps): VNode {
+  const blocked = unavailable !== undefined;
+  const blockedAttrs = blocked
+    ? ({ "aria-disabled": "true", "aria-describedby": unavailable.reasonId } as const)
+    : {};
   const [step, setStep] = useState<AddStep>({ kind: "idle" });
   const [typedPath, setTypedPath] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -231,7 +245,7 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
   }
 
   async function handleTriggerClick(): Promise<void> {
-    if (busyRef.current) return;
+    if (busyRef.current || blocked) return;
     setBusy(true);
     let pick: FolderPick;
     try {
@@ -261,7 +275,7 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
 
   async function handleSubmit(event: Event): Promise<void> {
     event.preventDefault();
-    if (busyRef.current) return;
+    if (busyRef.current || blocked) return;
     const error = validateTypedPath(typedPath);
     if (error !== null) {
       setValidationError(error);
@@ -285,6 +299,7 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
           ref={openerRef}
           className="ccc-connect-button"
           aria-disabled={busy ? "true" : undefined}
+          {...blockedAttrs}
           onClick={() => void handleTriggerClick()}
         >
           Add a scan folder
@@ -293,7 +308,9 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
           type="button"
           className="ccc-list-more"
           aria-label="Type a path instead for a scan folder"
+          {...blockedAttrs}
           onClick={() => {
+            if (blocked) return;
             setValidationError(null);
             setStatus(NO_STATUS);
             setStep({ kind: "form", notice: null });
@@ -332,6 +349,7 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
                 type="submit"
                 className="ccc-connect-button"
                 aria-disabled={busy ? "true" : undefined}
+                {...blockedAttrs}
               >
                 Add scan folder
               </button>
@@ -359,8 +377,9 @@ export function AddScanFolderFlow({ actions, pickFolder }: AddScanFolderFlowProp
               type="button"
               className="ccc-connect-button"
               aria-disabled={busy ? "true" : undefined}
+              {...blockedAttrs}
               onClick={() => {
-                if (step.kind === "protected" && !busyRef.current) {
+                if (step.kind === "protected" && !busyRef.current && !blocked) {
                   void attemptAdd(step.path, true);
                 }
               }}

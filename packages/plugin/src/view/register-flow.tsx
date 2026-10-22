@@ -24,6 +24,13 @@ export interface RegisterFlowProps {
   /** An already-registered duplicate: the caller focuses that existing card. */
   readonly onDuplicate: (projectId: ProjectId) => void;
   readonly openerRef?: Ref<HTMLButtonElement> | undefined;
+  /**
+   * Set while the companion service is away (plan 08-11, 08-UI-SPEC S2 Projects): every control
+   * that would start or submit a registration becomes `aria-disabled`, described by the visible
+   * reason element with this id, and activating it does nothing. The caller renders the reason
+   * text once; the flow never uses the native `disabled` attribute, so focus stays reachable.
+   */
+  readonly unavailable?: { readonly reasonId: string } | undefined;
 }
 
 type Step =
@@ -84,7 +91,12 @@ export function RegisterFlow({
   onRegistered,
   onDuplicate,
   openerRef,
+  unavailable,
 }: RegisterFlowProps): VNode {
+  const blocked = unavailable !== undefined;
+  const blockedAttrs = blocked
+    ? ({ "aria-disabled": "true", "aria-describedby": unavailable.reasonId } as const)
+    : {};
   const [step, setStep] = useState<Step>({ kind: "idle" });
   const [typedPath, setTypedPath] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -192,7 +204,7 @@ export function RegisterFlow({
   }
 
   async function handleTriggerClick(): Promise<void> {
-    if (busyRef.current) return;
+    if (busyRef.current || blocked) return;
     // Busy while the dialog is open, so a second activation cannot open a
     // second picker behind the first.
     setBusy(true);
@@ -218,6 +230,7 @@ export function RegisterFlow({
   }
 
   function openTypedForm(): void {
+    if (blocked) return;
     setValidationError(null);
     setStatus("");
     setStep({ kind: "form", notice: null });
@@ -233,7 +246,7 @@ export function RegisterFlow({
 
   async function handleFormSubmit(event: Event): Promise<void> {
     event.preventDefault();
-    if (busyRef.current) return;
+    if (busyRef.current || blocked) return;
     const error = validateTypedPath(typedPath);
     if (error !== null) {
       setValidationError(error);
@@ -250,7 +263,7 @@ export function RegisterFlow({
   }
 
   async function handleProtectedRegister(): Promise<void> {
-    if (step.kind !== "protected" || busyRef.current) return;
+    if (step.kind !== "protected" || busyRef.current || blocked) return;
     await attemptRegister(step.path, true);
   }
 
@@ -270,11 +283,18 @@ export function RegisterFlow({
           ref={assignOpenerRef}
           className="ccc-connect-button"
           aria-disabled={busy ? "true" : undefined}
+          {...blockedAttrs}
           onClick={() => void handleTriggerClick()}
         >
           Register a project
         </button>
-        <button type="button" ref={typeLinkRef} className="ccc-list-more" onClick={openTypedForm}>
+        <button
+          type="button"
+          ref={typeLinkRef}
+          className="ccc-list-more"
+          {...blockedAttrs}
+          onClick={openTypedForm}
+        >
           Type a path instead
         </button>
       </div>
@@ -310,6 +330,7 @@ export function RegisterFlow({
                 type="submit"
                 className="ccc-connect-button"
                 aria-disabled={busy ? "true" : undefined}
+                {...blockedAttrs}
               >
                 Register folder
               </button>
@@ -337,6 +358,7 @@ export function RegisterFlow({
               type="button"
               className="ccc-connect-button"
               aria-disabled={busy ? "true" : undefined}
+              {...blockedAttrs}
               onClick={() => void handleProtectedRegister()}
             >
               Register folder

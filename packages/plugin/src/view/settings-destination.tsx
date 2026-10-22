@@ -2,9 +2,12 @@ import { type Signal, signal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useCallback, useEffect, useId, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
+import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
+import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import { type LaunchersSession, LaunchersSettings } from "./launchers-settings.js";
 import type { SettingsHost } from "./settings-host.js";
+import { ProjectsSettings } from "./settings-projects.js";
 import {
   SETTINGS_SECTION_LABELS,
   SETTINGS_SECTIONS,
@@ -42,6 +45,10 @@ export interface SettingsSectionProps {
   readonly notify: (message: string) => void;
   readonly launchersActions: LaunchersActions;
   readonly launchersSession: LaunchersSession;
+  /** The Projects destination's own bound actions, shared with the Projects section. */
+  readonly projectsActions: ProjectsActions;
+  readonly scanActions: ScanActions;
+  readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
 }
 
 export type SettingsSectionView = (props: SettingsSectionProps) => VNode;
@@ -52,7 +59,16 @@ export type SettingsSectionView = (props: SettingsSectionProps) => VNode;
  * Security) and 08-18 (Paths, Schedules) each add theirs. Every nav item is a real section.
  */
 export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionView>> = {
-  projects: () => <ProjectsSection />,
+  projects: ({ connection, now, notify, projectsActions, scanActions, pickFolder }) => (
+    <ProjectsSettings
+      connection={connection}
+      now={now}
+      notify={notify}
+      projectsActions={projectsActions}
+      scanActions={scanActions}
+      pickFolder={pickFolder}
+    />
+  ),
   launchers: ({ connection, now, launchersActions, launchersSession }) => (
     <LaunchersSettings
       actions={launchersActions}
@@ -62,15 +78,6 @@ export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionVie
     />
   ),
 };
-
-function ProjectsSection(): VNode {
-  return (
-    <section className="ccc-settings-section">
-      <h3 tabIndex={-1}>Projects</h3>
-      <p>Register project folders and choose folders to scan for projects.</p>
-    </section>
-  );
-}
 
 /** The sections that have a view, in nav order. */
 function registeredSections(): SettingsSectionId[] {
@@ -95,9 +102,25 @@ export interface SettingsDestinationProps {
   readonly settingsSession?: SettingsSession | undefined;
   readonly launchersActions: LaunchersActions;
   readonly launchersSession: LaunchersSession;
+  readonly projectsActions: ProjectsActions;
+  /** Absent in a partial composition: the Projects section then resolves `failed` for every scan. */
+  readonly scanActions?: ScanActions | undefined;
+  readonly pickFolder: (options: PickFolderOptions) => Promise<FolderPick>;
   readonly connection: ConnectionState;
   readonly now: number;
 }
+
+/** Resolves `failed` for every scan action, so the section renders honestly without a host. */
+const FAILED_SCAN = (): Promise<{ kind: "failed" }> => Promise.resolve({ kind: "failed" });
+const NO_SCAN_ACTIONS: ScanActions = {
+  addScanRoot: FAILED_SCAN,
+  removeScanRoot: FAILED_SCAN,
+  rescan: FAILED_SCAN,
+  listScanState: FAILED_SCAN,
+  registerSuggestion: FAILED_SCAN,
+  dismissSuggestion: FAILED_SCAN,
+  suggestionsPage: FAILED_SCAN,
+};
 
 /** Where the destination starts: a pending deep link, else the last visit, else the first section. */
 function initialSection(session: SettingsSession | undefined): SettingsSectionId {
@@ -132,6 +155,9 @@ export function SettingsDestination({
   settingsSession,
   launchersActions,
   launchersSession,
+  projectsActions,
+  scanActions = NO_SCAN_ACTIONS,
+  pickFolder,
   connection,
   now,
 }: SettingsDestinationProps): VNode {
@@ -226,6 +252,9 @@ export function SettingsDestination({
               notify={setStatus}
               launchersActions={launchersActions}
               launchersSession={launchersSession}
+              projectsActions={projectsActions}
+              scanActions={scanActions}
+              pickFolder={pickFolder}
             />
           )}
         </div>
