@@ -257,3 +257,65 @@ describe("footer sources", () => {
     ]);
   });
 });
+
+describe("a source that is not part of this version (plan 08-14, UI-SPEC R-12)", () => {
+  const NOT_IN_VERSION_KEY: DataDependencyKey = {
+    key: "calendar.today",
+    transport: "service",
+    sourceLabel: "Google Calendar",
+    availability: "not-in-version",
+  };
+
+  it("is reported not-in-version whatever missingSources holds", () => {
+    for (const missingSources of [[], ["GitHub"], ["Google Calendar", "GitHub"]]) {
+      const presentation = resolveCardPresentation(
+        ready({ partiality: { partial: true, missingSources } }),
+        LIVE,
+        [SERVICE_KEY, NOT_IN_VERSION_KEY],
+      );
+      if (presentation.kind !== "ready") throw new Error("wrong kind");
+      expect(presentation.footer.sources[1]).toEqual({
+        label: "Google Calendar",
+        status: "not-in-version",
+      });
+    }
+  });
+
+  it("keeps a failed feed as missing, so `no response` still means an attempt that failed", () => {
+    const presentation = resolveCardPresentation(
+      ready({ partiality: { partial: true, missingSources: ["GitHub"] } }),
+      LIVE,
+      [SERVICE_KEY, NOT_IN_VERSION_KEY],
+    );
+    if (presentation.kind !== "ready") throw new Error("wrong kind");
+    expect(presentation.footer.sources).toEqual([
+      { label: "GitHub", status: "missing" },
+      { label: "Google Calendar", status: "not-in-version" },
+    ]);
+  });
+
+  it("stays not-in-version, not disconnected, while the transport is down", () => {
+    const presentation = resolveCardPresentation(ready(), DOWN, [SERVICE_KEY, NOT_IN_VERSION_KEY]);
+    if (presentation.kind !== "disconnected") throw new Error("wrong kind");
+    expect(presentation.lastGood?.sources).toEqual([
+      { label: "GitHub", status: "disconnected" },
+      { label: "Google Calendar", status: "not-in-version" },
+    ]);
+  });
+
+  it("stays not-in-version in the error, unavailable and permission-required footers too", () => {
+    const keys = [SERVICE_KEY, NOT_IN_VERSION_KEY];
+    const error = resolveCardPresentation({ kind: "error", message: "x" }, LIVE, keys);
+    const unavailable = resolveCardPresentation({ kind: "unavailable" }, LIVE, keys);
+    for (const presentation of [error, unavailable]) {
+      if (presentation.kind !== "error" && presentation.kind !== "unavailable") {
+        throw new Error("wrong kind");
+      }
+      expect(presentation.footer.sources[1]).toEqual({
+        label: "Google Calendar",
+        status: "not-in-version",
+      });
+      expect(presentation.footer.sources[0]?.status).not.toBe("not-in-version");
+    }
+  });
+});

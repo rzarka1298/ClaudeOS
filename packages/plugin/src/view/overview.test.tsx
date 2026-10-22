@@ -9,7 +9,7 @@ import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import { configureOverviewZone, resetOverviewFeeds } from "../overview/overview-feeds.js";
 import { configureResearch, type ResearchApi } from "../research/api.js";
-import { configureTasksApi, type TasksApi } from "../tasks/api.js";
+import { configureTasksApi } from "../tasks/api.js";
 import { fakeTasksApi } from "../test-support/tasks-api-fake.js";
 import { nowTick } from "../widgets/clock.js";
 import type { WidgetState } from "../widgets/contract.js";
@@ -611,7 +611,7 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
 
   function configureDue(response: TaskDueTodayResponse): ReturnType<typeof fakeTasksApi> {
     const fake = fakeTasksApi([], { dueToday: vi.fn(() => Promise.resolve(response)) });
-    configureTasksApi(fake as unknown as TasksApi);
+    configureTasksApi(fake);
     return fake;
   }
 
@@ -719,7 +719,7 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
     renderToday();
     expect(fake.dueToday).not.toHaveBeenCalled();
 
-    act(() => {
+    void act(() => {
       connectionState.value = { kind: "live" };
     });
     expect(fake.dueToday).toHaveBeenCalledTimes(1);
@@ -732,7 +732,7 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
     const { unmount } = renderToday();
     expect(fake.dueToday).toHaveBeenCalledTimes(1);
     unmount();
-    act(() => {
+    void act(() => {
       connectionState.value = { kind: "disconnected", reason: "x" };
       connectionState.value = { kind: "live" };
     });
@@ -766,7 +766,7 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
   it("Task 2, Test 3: a rejected tasks fetch reads `Due tasks unavailable.` while the automation block renders", async () => {
     connectionState.value = { kind: "live" };
     const fake = fakeTasksApi([], { dueToday: vi.fn(() => Promise.reject(new Error("down"))) });
-    configureTasksApi(fake as unknown as TasksApi);
+    configureTasksApi(fake);
     configureStatus(() => Promise.resolve(NO_RUNS));
     const { container } = renderToday();
 
@@ -781,7 +781,7 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
   it("Task 2, Test 3: both feeds rejected while connected is the frame error with the diagnostics follow-up", async () => {
     connectionState.value = { kind: "live" };
     const fake = fakeTasksApi([], { dueToday: vi.fn(() => Promise.reject(new Error("down"))) });
-    configureTasksApi(fake as unknown as TasksApi);
+    configureTasksApi(fake);
     configureStatus(() => Promise.reject(new Error("down")));
     const { container } = renderToday();
 
@@ -821,5 +821,46 @@ describe("Task 1 (tracer, plan 08-14): a task due today appears on the Today car
     await screen.findByRole("button", { name: "Open task: Plan the Q4 review, Next due Oct 25" });
     expect(container.textContent).toContain("Next open task");
     expect(container.textContent).toContain("Nothing is due today.");
+  });
+
+  it("Task 3: the Source panel and the Partial chip say Calendar and Gmail are not part of this version", async () => {
+    connectionState.value = { kind: "live" };
+    configureDue(DUE_RESPONSE);
+    const { container } = renderToday();
+    await screen.findByRole("button", { name: /^Open task: Review release notes/ });
+
+    const rows = [...container.querySelectorAll(".ccc-source-row")].map((row) => row.textContent);
+    expect(rows).toEqual([
+      "Google Calendar — not part of this version",
+      "Gmail — not part of this version",
+      "Managed task store — ok",
+      "Automation runs — ok",
+    ]);
+    const chip = container.querySelector('.ccc-badge[data-badge="partial"]');
+    expect(chip?.querySelector(".ccc-badge-label")?.textContent).toBe("Partial");
+    expect(chip?.textContent).toContain(
+      "Partial — Google Calendar and Gmail aren't part of this version",
+    );
+    expect(container.textContent).not.toContain("no response");
+    expect(container.textContent).not.toContain("didn't respond");
+  });
+
+  it("Task 3: a failed feed is `no response` in the Source panel and named in the chip", async () => {
+    connectionState.value = { kind: "live" };
+    configureDue(DUE_RESPONSE);
+    configureStatus(() => Promise.reject(new Error("down")));
+    const { container } = renderToday();
+    await screen.findByText("Automation failure status unavailable.");
+
+    const rows = [...container.querySelectorAll(".ccc-source-row")].map((row) => row.textContent);
+    expect(rows).toEqual([
+      "Google Calendar — not part of this version",
+      "Gmail — not part of this version",
+      "Managed task store — ok",
+      "Automation runs — no response",
+    ]);
+    expect(container.querySelector('.ccc-badge[data-badge="partial"]')?.textContent).toContain(
+      "Google Calendar and Gmail aren't part of this version; Automation runs didn't respond",
+    );
   });
 });

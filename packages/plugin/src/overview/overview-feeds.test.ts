@@ -265,7 +265,7 @@ describe("refreshDueToday and the feed (Task 1)", () => {
 
   function use(api: Partial<TasksApi>): ReturnType<typeof fakeTasksApi> {
     const fake = fakeTasksApi([], api);
-    configureTasksApi(fake as unknown as TasksApi);
+    configureTasksApi(fake);
     return fake;
   }
 
@@ -329,7 +329,7 @@ describe("the triggers: mount, going live, tasks.changed and the shared tick (Ta
     const fake = fakeTasksApi([], {
       dueToday: vi.fn(() => Promise.resolve({ due: [], overdue: [] })),
     });
-    configureTasksApi(fake as unknown as TasksApi);
+    configureTasksApi(fake);
 
     const stop = startOverviewFeeds();
     expect(fake.dueToday).not.toHaveBeenCalled();
@@ -354,7 +354,7 @@ describe("the triggers: mount, going live, tasks.changed and the shared tick (Ta
     const fake = fakeTasksApi([], {
       dueToday: vi.fn(() => Promise.resolve({ due: [], overdue: [] })),
     });
-    configureTasksApi(fake as unknown as TasksApi);
+    configureTasksApi(fake);
     connectionState.value = LIVE;
     const stop = startOverviewFeeds();
     expect(fake.dueToday).toHaveBeenCalledTimes(1);
@@ -370,7 +370,7 @@ describe("the triggers: mount, going live, tasks.changed and the shared tick (Ta
     const fake = fakeTasksApi([], {
       dueToday: vi.fn(() => Promise.resolve({ due: [], overdue: [] })),
     });
-    configureTasksApi(fake as unknown as TasksApi);
+    configureTasksApi(fake);
 
     refreshOnTick();
     expect(fake.dueToday).not.toHaveBeenCalled();
@@ -665,7 +665,7 @@ describe("Task 2: the automation feed and the triggers (Test 6)", () => {
     const tasks = fakeTasksApi([], {
       dueToday: vi.fn(() => Promise.resolve({ due: [], overdue: [] })),
     });
-    configureTasksApi(tasks as unknown as TasksApi);
+    configureTasksApi(tasks);
     return { status, dueToday: tasks.dueToday };
   }
 
@@ -713,5 +713,37 @@ describe("Task 2: the automation feed and the triggers (Test 6)", () => {
   it("an unconfigured research API leaves the automation feed failed and the card never ready alone", async () => {
     await refreshAutomation();
     expect(automationFeed.value).toMatchObject({ settled: true, value: null, failed: true });
+  });
+});
+
+describe("Task 3: Today's partiality says what is not part of this version", () => {
+  const SUMMARY = "Google Calendar and Gmail aren't part of this version";
+  const empty = feed({ due: [], overdue: [], nextOpen: null });
+
+  it("always partial; Calendar and Gmail are not in missingSources, they are declared not-in-version", () => {
+    const state = ready(empty);
+    expect(state.partiality).toEqual({ partial: true, missingSources: [], summary: SUMMARY });
+  });
+
+  it("extends the summary with the names of the real feeds that did not respond", () => {
+    const tasksDown = ready({ settled: true, value: null, fetchedAt: null, failed: true });
+    expect(tasksDown.partiality).toEqual({
+      partial: true,
+      missingSources: ["Managed task store"],
+      summary: `${SUMMARY}; Managed task store didn't respond`,
+    });
+    const both = ready(
+      { settled: true, value: null, fetchedAt: null, failed: true },
+      autoFeed(NO_RUNS, { failed: true }),
+    );
+    expect(both.partiality.summary).toBe(
+      `${SUMMARY}; Managed task store and Automation runs didn't respond`,
+    );
+    expect(both.partiality.missingSources).toEqual(["Managed task store", "Automation runs"]);
+  });
+
+  it("is plain and slash-free (PRIV-04)", () => {
+    const state = ready(empty, autoFeed(NO_RUNS, { failed: true }));
+    expect(state.partiality.summary).not.toMatch(/[\\/]/);
   });
 });

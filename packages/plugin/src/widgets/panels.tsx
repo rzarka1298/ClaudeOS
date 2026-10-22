@@ -20,20 +20,23 @@ import { WidgetHostContext } from "./widget-host.js";
 /**
  * The seven PRD §7.1 panels, in the PRD's own desktop ordering.
  *
- * None of them is backed by data in this phase — Today and GitHub discoveries
- * render `permission-required`, the other five render `unavailable` (ADR-0023
- * "Panel state assignment"). That is deliberate and structural rather than a
- * placeholder: `widget-data.ts` holds their states as CONSTANTS, so there is
- * no code path through which fixture data could reach a plugin card at all.
- * A card that looks real must be real (`D-17`); fixtures live in the harness
- * and the prototypes only.
+ * Most are backed by data by now. Today is service-fed from the Overview feeds
+ * (`overview/overview-feeds.ts`, plan 08-14) and always partial: Calendar and
+ * Gmail are not part of this version and are named as such, never read as zero.
+ * Active sessions, Project shortcuts, Claude usage, Codex and Quick actions read
+ * live signals. GitHub discoveries renders `permission-required` and Technology
+ * and market intelligence renders `unavailable` (ADR-0023 "Panel state
+ * assignment"); their states are CONSTANTS in `widget-data.ts`, recorded in
+ * `CONSTANT_STATE_WIDGET_IDS`, so there is no code path through which fixture
+ * data could reach a plugin card at all. A card that looks real must be real
+ * (`D-17`); fixtures live in the harness and the prototypes only.
  *
- * What each definition DOES carry now is the full UI-04 contract — the data
- * keys the owning phase will resolve, the refresh policy it will honour, the
- * size the grid will lay it out at, and a body typed to a data shape read off
- * PRD §7.1's listed contents. The owning phase (4–7) swaps one constant in
- * `widget-data.ts` for a client-fed signal and the card lights up; it does not
- * touch the frame, the contract or the registry.
+ * What each definition carries is the full UI-04 contract: the data keys the
+ * card resolves, the refresh policy it honours, the size the grid will lay it
+ * out at, and a body typed to a data shape read off PRD §7.1's listed contents.
+ * A phase that gives a card a route swaps one constant in `widget-data.ts` for a
+ * client-fed signal and the card lights up; it does not touch the frame, the
+ * contract or the registry.
  *
  * Nothing here imports `obsidian`, and nothing here imports a fixture.
  */
@@ -259,8 +262,18 @@ export const todayWidget: WidgetDefinition<TodayData> = {
   description:
     "Tasks due today and automation failures. Calendar and Gmail aren't part of this version.",
   dataKeys: [
-    { key: "calendar.today", transport: "service", sourceLabel: "Google Calendar" },
-    { key: "mail.important-unread", transport: "service", sourceLabel: "Gmail" },
+    {
+      key: "calendar.today",
+      transport: "service",
+      sourceLabel: "Google Calendar",
+      availability: "not-in-version",
+    },
+    {
+      key: "mail.important-unread",
+      transport: "service",
+      sourceLabel: "Gmail",
+      availability: "not-in-version",
+    },
     { key: "tasks.due-today", transport: "service", sourceLabel: "Managed task store" },
     { key: "automation.failures", transport: "service", sourceLabel: "Automation runs" },
   ],

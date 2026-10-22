@@ -238,3 +238,52 @@ describe("footer part order (UI-06 ordering edge)", () => {
     expect(container.querySelectorAll(".ccc-badge")[1]?.getAttribute("data-badge")).toBe("partial");
   });
 });
+
+describe("not part of this version, and the partiality summary (plan 08-14, UI-SPEC R-12)", () => {
+  const SUMMARY = "Google Calendar and Gmail aren't part of this version";
+
+  it("lists a not-in-version source as `not part of this version`, never `no response`", () => {
+    const { container } = renderFooter({
+      sources: [
+        { label: "Google Calendar", status: "not-in-version" },
+        { label: "Managed task store", status: "missing" },
+      ],
+    });
+    const rows = [...container.querySelectorAll(".ccc-source-row")].map((row) => row.textContent);
+    expect(rows).toEqual([
+      "Google Calendar — not part of this version",
+      "Managed task store — no response",
+    ]);
+  });
+
+  it("replaces the generated chip description with ` — {summary}` and keeps the visible word Partial", () => {
+    const { container } = renderFooter({
+      partiality: { partial: true, missingSources: ["Managed task store"], summary: SUMMARY },
+    });
+    const chip = container.querySelector('.ccc-badge[data-badge="partial"]');
+    expect(chip?.querySelector(".ccc-badge-label")?.textContent).toBe("Partial");
+    expect(chip?.textContent).toContain(`Partial — ${SUMMARY}`);
+    expect(chip?.textContent).not.toContain("didn't respond");
+  });
+
+  it("shows the chip for a summarised partial result even when no source is missing", () => {
+    const { container } = renderFooter({ partiality: { partial: true, summary: SUMMARY } });
+    expect(container.querySelector('.ccc-badge[data-badge="partial"]')?.textContent).toContain(
+      `Partial — ${SUMMARY}`,
+    );
+  });
+
+  it("shows no chip for a summary on a result that is not partial", () => {
+    const { container } = renderFooter({ partiality: { partial: false, summary: SUMMARY } });
+    expect(container.querySelector('.ccc-badge[data-badge="partial"]')).toBeNull();
+  });
+
+  it("keeps the generated description when there is no summary", () => {
+    const { container } = renderFooter({
+      partiality: { partial: true, missingSources: ["GitHub"] },
+    });
+    expect(container.querySelector('.ccc-badge[data-badge="partial"]')?.textContent).toContain(
+      "Partial — 1 source didn't respond: GitHub",
+    );
+  });
+});

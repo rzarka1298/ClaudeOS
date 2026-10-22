@@ -99,6 +99,19 @@ describe("no plugin card is backed by fixture data (D-17)", () => {
   );
 });
 
+// Plan 08-14 (research B 2.8, layer 2): the Today feed module is production code
+// on the Overview path, so it is held to the same rule as the widget table.
+describe("the Overview feed module reads no fixture, harness or JSON (D-22)", () => {
+  it("overview-feeds.ts imports no fixture, mock, harness, client package or JSON module", () => {
+    const source = readFileSync(join(SRC_DIR, "../overview/overview-feeds.ts"), "utf8");
+    const imports = source.split("\n").filter((line) => /^\s*import\b|from\s+["']/.test(line));
+    expect(imports.length).toBeGreaterThan(0);
+    for (const line of imports) {
+      expect(line).not.toMatch(/fixture|mock|harness|test-support|\.json|service-api-client/i);
+    }
+  });
+});
+
 describe("every button on every registered card routes through the dispatcher", () => {
   it.each(WIDGET_IDS.filter((id) => id !== "service-health"))(
     "%s: clicking every action only ever navigates to settings",

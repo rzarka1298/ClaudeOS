@@ -13,7 +13,7 @@ import {
   type WidgetId,
 } from "./registry.js";
 import { serviceHealthState } from "./service-health.js";
-import { widgetStateFor } from "./widget-data.js";
+import { CONSTANT_STATE_WIDGET_IDS, widgetStateFor } from "./widget-data.js";
 
 /**
  * The UI-04 contract test (research Pattern 2, threat T-03-04).
@@ -178,6 +178,22 @@ describe("honest panel states (D-17, ADR-0023 Panel state assignment)", () => {
   it("Today is service-fed: loading before anything is fetched, never permission-required", () => {
     expect(widgetStateFor("today").value.kind).toBe("loading");
     expect(widgetStateFor("today").value.kind).not.toBe("permission-required");
+  });
+
+  // The intent of every pinned truth above is "no fixture data reaches a card":
+  // the constant table now lists exactly the two cards that still have no route.
+  it("records exactly github-discoveries and tech-intel as constant-state widgets (08-17 empties tech-intel)", () => {
+    expect([...CONSTANT_STATE_WIDGET_IDS].sort()).toEqual(["github-discoveries", "tech-intel"]);
+  });
+
+  it("declares Today's four data keys, Calendar and Gmail as not part of this version", () => {
+    const keys = WIDGETS.today.dataKeys.map((key) => [key.sourceLabel, key.availability]);
+    expect(keys).toEqual([
+      ["Google Calendar", "not-in-version"],
+      ["Gmail", "not-in-version"],
+      ["Managed task store", undefined],
+      ["Automation runs", undefined],
+    ]);
   });
 
   it("gates GitHub discoveries behind the github capability", () => {

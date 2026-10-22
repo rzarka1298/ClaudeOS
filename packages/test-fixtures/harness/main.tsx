@@ -514,6 +514,12 @@ interface CellInputs {
 
 const LIVE: ConnectionState = { kind: "live" };
 
+const TODAY_PARTIALITY = {
+  partial: true,
+  missingSources: [],
+  summary: "Google Calendar and Gmail aren't part of this version",
+} as const;
+
 function readyFrom(
   id: WidgetId,
   states: FixturePanel["states"],
@@ -526,13 +532,17 @@ function readyFrom(
     data: ADAPTERS[id](variant.data, key),
     observedAt: variant.observedAt,
     freshness: variant.freshness,
+    // Today is always partial on the live card (plan 08-14): Calendar and Gmail are
+    // declared not part of this version, so the fixture's own partiality is replaced.
     partiality:
-      variant.partiality.missingSources === undefined
-        ? { partial: variant.partiality.partial }
-        : {
-            partial: variant.partiality.partial,
-            missingSources: [...variant.partiality.missingSources],
-          },
+      id === "today"
+        ? TODAY_PARTIALITY
+        : variant.partiality.missingSources === undefined
+          ? { partial: variant.partiality.partial }
+          : {
+              partial: variant.partiality.partial,
+              missingSources: [...variant.partiality.missingSources],
+            },
     isEmpty,
   };
 }

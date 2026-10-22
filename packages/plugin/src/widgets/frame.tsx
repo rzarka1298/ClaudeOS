@@ -238,7 +238,10 @@ function pendingFooter(dataKeys: readonly DataDependencyKey[]): FooterModel {
     observedAt: null,
     freshness: null,
     partiality: null,
-    sources: dataKeys.map((key) => ({ label: key.sourceLabel, status: "ok" as const })),
+    sources: dataKeys.map((key) => ({
+      label: key.sourceLabel,
+      status: key.availability === "not-in-version" ? ("not-in-version" as const) : ("ok" as const),
+    })),
   };
 }
 

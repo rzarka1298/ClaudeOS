@@ -41,6 +41,14 @@ export interface DataDependencyKey {
   readonly key: string;
   readonly transport: "service" | "local";
   readonly sourceLabel: string;
+  /**
+   * `"not-in-version"` declares a source this build does not read at all (Google
+   * Calendar and Gmail, plan 08-14). The Source panel reports it as `not part of
+   * this version` whatever `missingSources` holds and in every state, so it can
+   * never read as a failed attempt (`no response`) or as zero. Absent means an
+   * ordinary source. Freshness keeps its four values (ADR-0002).
+   */
+  readonly availability?: "not-in-version" | undefined;
 }
 
 /** How a widget's data is kept current. */

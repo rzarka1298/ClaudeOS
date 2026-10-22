@@ -421,6 +421,19 @@ function automationOf(status: ResearchStatusResponse): TodayAutomation {
 const SOURCE_AUTOMATION = "Automation runs";
 
 /**
+ * The Partial chip's description (UI-SPEC R-12): Calendar and Gmail are not
+ * part of this version (declared on the widget's data keys, never listed as
+ * missing), extended with the real feeds that did not respond.
+ */
+const NOT_IN_VERSION_SUMMARY = "Google Calendar and Gmail aren't part of this version";
+
+function partialSummary(failed: readonly string[]): string {
+  return failed.length === 0
+    ? NOT_IN_VERSION_SUMMARY
+    : `${NOT_IN_VERSION_SUMMARY}; ${failed.join(" and ")} didn't respond`;
+}
+
+/**
  * The Today card's state (research B 2.4), a pure function of the feeds, the
  * connection and the clock.
  *
@@ -505,7 +518,11 @@ export function todayStateFor(
     data: { tasks: taskBlock, automation: automationBlock, nowMs },
     observedAt: new Date(Math.max(...fetchedTimes)).toISOString(),
     freshness: fresh ? "live" : "stale",
-    partiality: { partial: true, missingSources: ["Google Calendar", "Gmail", ...failedSources] },
+    partiality: {
+      partial: true,
+      missingSources: failedSources,
+      summary: partialSummary(failedSources),
+    },
     isEmpty,
   };
 }
