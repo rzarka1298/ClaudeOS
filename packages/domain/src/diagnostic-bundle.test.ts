@@ -488,6 +488,18 @@ describe("Test 4: the service is away", () => {
     expect(verifyBundle(bundle, buildDenylist(emptyDenylist))).toEqual({ ok: true });
   });
 
+  it("never shows a last good value: a health response held across a disconnect or a reconnect is not used (D-03)", () => {
+    for (const connection of ["disconnected", "connecting"] as const) {
+      const bundle = buildDiagnosticBundle(input({ health: health(), connection }));
+      for (const row of bundle.subsystems.slice(1)) {
+        expect(row).toMatchObject({ status: "unknown", reasonCode: "service-not-running" });
+      }
+      expect(bundle.counts.projects).toBeNull();
+      expect(bundle.versions.service).toBeNull();
+      expect(bundle.versions.storeSchema).toBeNull();
+    }
+  });
+
   it("carries a null store schema version through as null", () => {
     const withNull = health({
       service: { version: "0.1.0", startedAt: T0, storeSchemaVersion: null },

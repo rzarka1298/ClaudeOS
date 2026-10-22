@@ -402,7 +402,7 @@ function generated(next: () => number) {
     `${Math.floor(next() * 40)}.${Math.floor(next() * 40)}.${Math.floor(next() * 40)}`;
   const launcherStatuses = ["not-set-up", "set-up", "tested"] as const;
   const healthChoice = next();
-  const connection = pick(["live", "connecting", "disconnected"] as const);
+  const connection = next() < 0.75 ? "live" : pick(["connecting", "disconnected"] as const);
   const input: DiagnosticBundleInput = cleanBundleInput({
     generatedAt: instant,
     health: healthChoice < 0.25 ? null : healthChoice < 0.6 ? freshInstallHealth() : richHealth(),
@@ -452,7 +452,7 @@ describe("Test 5 (property): the verifier never refuses the builder's own output
       expect(verifyBundle(bundle, denylist), `run ${run}`).toEqual({ ok: true });
       if (denylist.entries.length > 0) withEntries += 1;
       entryTotal += denylist.entries.length;
-      if (input.health === null) withoutHealth += 1;
+      if (bundle.subsystems[1]?.reasonCode === "service-not-running") withoutHealth += 1;
       if (
         bundle.subsystems.some((subsystem) => "parts" in subsystem && subsystem.parts !== undefined)
       )
@@ -463,7 +463,7 @@ describe("Test 5 (property): the verifier never refuses the builder's own output
     expect(withEntries).toBeGreaterThan(400);
     expect(entryTotal).toBeGreaterThan(1000);
     expect(withoutHealth).toBeGreaterThan(80);
-    expect(withParts).toBeGreaterThan(250);
+    expect(withParts).toBeGreaterThan(200);
     expect(withDiagnostics).toBeGreaterThan(300);
   });
 

@@ -413,7 +413,9 @@ function pickedDiagnostics(
  * input that the schema does not name can reach the output, whatever the input carries at run time.
  */
 export function buildDiagnosticBundle(input: DiagnosticBundleInput): DiagnosticBundle {
-  const { health } = input;
+  // While the service is not live, no row shows a last good value (D-03): a response the plugin
+  // still holds from before the disconnect is not used.
+  const health = input.connection === "live" ? input.health : null;
   const diagnostics = pickedDiagnostics(input.pluginDiagnostics);
   const subsystems: BundleRow[] = [
     serviceRow(input),
