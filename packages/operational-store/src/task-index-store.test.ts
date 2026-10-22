@@ -1348,3 +1348,103 @@ describe("Rebuild 8: a reader during a rebuild sees the old or the new index, ne
     }
   });
 });
+
+describe("08-03 Task 2: the next open task (D-21, D-45)", () => {
+  const nextOpenId = (query: Parameters<typeof listDueToday>[1] = { day: DAY }): string | null =>
+    listDueToday(db, query).nextOpen?.taskId ?? null;
+
+  it("Test 1a: among open tasks due on three dates the earliest wins", () => {
+    put(1, { due: "2026-10-20" });
+    put(2, { due: "2026-10-07" });
+    put(3, { due: "2026-10-12" });
+    expect(nextOpenId()).toBe(fixtureId(2));
+  });
+
+  it("Test 1b: a dated task beats a more recently updated undated task", () => {
+    put(1, { updatedAt: "2026-10-04T08:00:00.000Z" });
+    put(2, { due: "2026-12-31", updatedAt: "2026-09-01T00:00:00.000Z" });
+    expect(nextOpenId()).toBe(fixtureId(2));
+  });
+
+  it("Test 1c: with only undated open tasks the most recently updated wins", () => {
+    put(1, { updatedAt: "2026-09-01T00:00:00.000Z" });
+    put(2, { updatedAt: "2026-10-03T00:00:00.000Z" });
+    put(3, { updatedAt: "2026-09-20T00:00:00.000Z" });
+    expect(nextOpenId()).toBe(fixtureId(2));
+  });
+
+  it("Test 1d: equal due values fall back to the most recently updated, then to the note id ascending", () => {
+    put(5, { due: "2026-10-10", updatedAt: "2026-09-02T00:00:00.000Z" });
+    put(6, { due: "2026-10-10", updatedAt: "2026-09-05T00:00:00.000Z" });
+    expect(nextOpenId()).toBe(fixtureId(6));
+    put(4, { due: "2026-10-10", updatedAt: "2026-09-05T00:00:00.000Z" });
+    expect(nextOpenId()).toBe(fixtureId(4));
+  });
+
+  it("Test 1e: an instant and an all-day date compare by the existing due sort key", () => {
+    put(1, { due: "2026-10-10" });
+    put(2, { due: "2026-10-09T23:00:00Z" });
+    expect(nextOpenId()).toBe(fixtureId(2));
+  });
+
+  it("Test 1f: a task only scheduled counts as undated, so a due task beats it", () => {
+    put(1, { scheduled: "2026-10-06", updatedAt: "2026-10-04T00:00:00.000Z" });
+    put(2, { due: "2026-11-30" });
+    expect(nextOpenId()).toBe(fixtureId(2));
+  });
+
+  it("Test 1g: the row carries the same shape as a feed row: id, title and the due value", () => {
+    put(1, { due: "2026-10-12" });
+    put(2, { due: "2026-10-12T14:00:00Z", updatedAt: "2026-09-02T00:00:00.000Z" });
+    expect(listDueToday(db, { day: DAY }).nextOpen).toEqual({
+      taskId: fixtureId(1),
+      title: "Task 1",
+      dueDate: "2026-10-12",
+    });
+    expect(listDueToday(db, { day: DAY, scope: WORKSPACE_A }).nextOpen).toBeNull();
+  });
+
+  it("Test 2: done, cancelled and proposed tasks are never returned, even when they are the earliest due", () => {
+    put(1, { status: "done", due: "2026-09-01", completed: "2026-09-02T00:00:00.000Z" });
+    put(2, { status: "cancelled", due: "2026-09-02" });
+    put(3, { status: "proposed", due: "2026-09-03" });
+    put(4, { due: "2026-12-01" });
+    expect(nextOpenId()).toBe(fixtureId(4));
+  });
+
+  it("Test 2b: when every task is closed or proposed there is no next open task", () => {
+    put(1, { status: "done", due: "2026-09-01", completed: "2026-09-02T00:00:00.000Z" });
+    put(2, { status: "cancelled" });
+    put(3, { status: "proposed" });
+    expect(listDueToday(db, { day: DAY }).nextOpen).toBeNull();
+  });
+
+  it("Test 3: with no task at all it is null, and a scope only considers that scope's tasks", () => {
+    expect(listDueToday(db, { day: DAY }).nextOpen).toBeNull();
+    put(1, { due: "2026-10-06" });
+    put(2, { due: "2026-10-30", scope: WORKSPACE_A });
+    put(3, { due: "2026-10-01", scope: WORKSPACE_B });
+    expect(nextOpenId({ day: DAY })).toBe(fixtureId(3));
+    expect(nextOpenId({ day: DAY, scope: WORKSPACE_A })).toBe(fixtureId(2));
+    expect(nextOpenId({ day: DAY, scope: "global" })).toBe(fixtureId(1));
+    expect(nextOpenId({ day: DAY, scope: "workspace:ccccccccc0123456789abcdef" })).toBeNull();
+    expect(() => listDueToday(db, { day: DAY, scope: "workspace:nope" })).toThrow(
+      InvalidTaskQueryError,
+    );
+  });
+
+  it("Test 4: a task due today is in `due` and may also be the next open task; the store does not suppress it", () => {
+    put(1, { due: "2026-10-05" });
+    put(2, { due: "2026-10-20" });
+    const feed = listDueToday(db, { day: DAY });
+    expect(feed.due.map((row) => row.taskId)).toEqual(ids(1));
+    expect(feed.nextOpen?.taskId).toBe(fixtureId(1));
+  });
+
+  it("an overdue task can be the next open task as well", () => {
+    put(1, { due: "2026-09-20" });
+    const feed = listDueToday(db, { day: DAY });
+    expect(feed.overdue.map((row) => row.taskId)).toEqual(ids(1));
+    expect(feed.nextOpen?.taskId).toBe(fixtureId(1));
+  });
+});

@@ -228,3 +228,41 @@ describe("Test 9 (client): failures map to closed codes", () => {
     });
   });
 });
+
+describe("08-03 Task 3 Test 1 (client): the additive nextOpen row", () => {
+  const NEXT = { taskId: ID, title: "Plan the offsite", dueDate: "2026-10-12" };
+
+  it("returns a response with nextOpen, or with nextOpen null, unchanged", async () => {
+    for (const nextOpen of [NEXT, null]) {
+      const response = { due: [], overdue: [], nextOpen };
+      const { client, calls } = recording(200, response);
+      const result = await createTasksClient(client).dueToday({ zone: ZONE });
+      expect(calls[0]?.path).toBe(TASK_DUE_TODAY_PATH);
+      expect(result).toEqual(response);
+      expect(result.nextOpen).toEqual(nextOpen);
+    }
+  });
+
+  it("keeps the key absent for an older service, so absent stays distinct from null", async () => {
+    const { client } = recording(200, { due: [], overdue: [] });
+    const result = await createTasksClient(client).dueToday({ zone: ZONE });
+    expect("nextOpen" in result).toBe(false);
+    expect(result.nextOpen).toBeUndefined();
+  });
+
+  it("refuses a nextOpen row with an unknown key or a bad shape as unrecognised-response", async () => {
+    for (const nextOpen of [
+      { ...NEXT, path: "global/tasks/x.md" },
+      { ...NEXT, title: "" },
+      { ...NEXT, taskId: "short" },
+      "not a row",
+    ]) {
+      const { client } = recording(200, { due: [], overdue: [], nextOpen });
+      await expect(createTasksClient(client).dueToday({ zone: ZONE })).rejects.toMatchObject({
+        name: "TaskRequestError",
+        code: "unrecognised-response",
+        status: 200,
+      });
+    }
+  });
+});

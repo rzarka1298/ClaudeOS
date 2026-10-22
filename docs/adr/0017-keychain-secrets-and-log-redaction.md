@@ -59,6 +59,20 @@ on every macOS install — nothing to bundle, nothing to compile.
   Allow" access dialog. This is expected behaviour, not a defect — identical to what `gh` and
   `git-credential-osxkeychain` users already see once. It should be surfaced explicitly in the
   onboarding and diagnostics views (PRD §12.3) so a first-run user does not mistake it for a bug.
+- **Amendment (Phase 8, plan 08-04, D-38): presence is checked attribute-only.** Diagnostics
+  and the Security section must say whether the install secret and the research key are stored
+  without ever reading them, so `@ccc/keychain` gains `hasSecret(account)`. It runs
+  `/usr/bin/security find-generic-password -a <account> -s <service>` by absolute path with an
+  argv array (no shell) and **no `-w` and no `-g`**, so the value is never read into the process
+  or printed; stdin, stdout and stderr are ignored. Exit 0 is `present`, exit 44 is `absent`,
+  and anything else (another exit, a timeout, a kill, a spawn failure) is `error`, never a guess.
+  The account passes the same safe-identifier check as the other calls and may not start with a
+  dash; the lookup is killed with SIGKILL after 1.5 seconds. It runs only on an owner gesture
+  (opening Diagnostics or pressing its re-check control), never on a timer, so a one-time access
+  dialog could only appear while the owner is looking at the screen. Automated tests use a mocked
+  `execa` and never touch the login Keychain; the first real-keychain run is confirmed prompt-free
+  by one owner UAT item (08-UAT item 36), and the sandbox runner uses a stub for the auto items.
+  `SecretStore` is unchanged: the service wraps `hasSecret` in a closure (08-12).
 - Secrets never reach the operational SQLite store, the managed vault, a dotfile, or a log line —
   the only path to disk is through `security-cli.ts`'s own Keychain calls. A marker-injection
   integration assertion in `authenticated-roundtrip.test.ts` proves this for real: it reads the

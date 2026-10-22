@@ -707,6 +707,41 @@ describe("Test 4 (responses)", () => {
   });
 });
 
+describe("Task 1 Test 2 (08-03): the additive nextOpen row on the due-today response (D-21, D-45)", () => {
+  const feed = {
+    due: [] as unknown[],
+    overdue: [] as unknown[],
+  };
+  const row = { taskId: ID_A, title: "Plan the offsite", dueDate: "2026-10-12" };
+
+  it("parses with nextOpen null, with a nextOpen row, and without the key (an older service)", () => {
+    expect(TaskDueTodayResponseSchema.safeParse({ ...feed, nextOpen: null }).success).toBe(true);
+    expect(TaskDueTodayResponseSchema.safeParse({ ...feed, nextOpen: row }).success).toBe(true);
+    expect(TaskDueTodayResponseSchema.safeParse(feed).success).toBe(true);
+  });
+
+  it("keeps an absent key absent after parsing, so older services read as unknown, never as null", () => {
+    const parsed = TaskDueTodayResponseSchema.parse(feed);
+    expect("nextOpen" in parsed).toBe(false);
+    expect(TaskDueTodayResponseSchema.parse({ ...feed, nextOpen: null }).nextOpen).toBeNull();
+  });
+
+  it("refuses a nextOpen row with an extra key or both due forms", () => {
+    expect(
+      TaskDueTodayResponseSchema.safeParse({ ...feed, nextOpen: { ...row, path: "x.md" } }).success,
+    ).toBe(false);
+    expect(
+      TaskDueTodayResponseSchema.safeParse({
+        ...feed,
+        nextOpen: { ...row, dueAt: "2026-10-12T09:00:00.000Z" },
+      }).success,
+    ).toBe(false);
+    expect(
+      TaskDueTodayResponseSchema.safeParse({ ...feed, nextOpen: { ...row, title: "" } }).success,
+    ).toBe(false);
+  });
+});
+
 describe("Test 4b (errors)", () => {
   it("is a closed code enum", () => {
     expect([...TASK_ERROR_CODES]).toEqual([

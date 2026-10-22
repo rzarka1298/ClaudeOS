@@ -526,6 +526,16 @@ export type TaskDueTodayRow = z.infer<typeof TaskDueTodayRowSchema>;
 export const TaskDueTodayResponseSchema = z.strictObject({
   due: z.array(TaskDueTodayRowSchema).max(TASK_DUE_TODAY_LIMIT),
   overdue: z.array(TaskDueTodayRowSchema).max(TASK_DUE_TODAY_LIMIT),
+  /**
+   * The next open task (plan 08-03; D-21, D-45): the earliest-due open task,
+   * else the most recently updated open one, in the request's scope; `null`
+   * when no open task exists. Open means not done, cancelled or proposed.
+   * Additive and optional so every older consumer keeps compiling: an older
+   * service omits the key, and **absent means unknown, never "no open task"**
+   * (only `null` says there is none). It may also appear in `due` or
+   * `overdue`; the Today panel decides when to show it.
+   */
+  nextOpen: TaskDueTodayRowSchema.nullable().optional(),
 });
 export type TaskDueTodayResponse = z.infer<typeof TaskDueTodayResponseSchema>;
 

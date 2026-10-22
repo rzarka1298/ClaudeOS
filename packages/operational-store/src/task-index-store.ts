@@ -963,12 +963,17 @@ function feedRow(row: FeedRowSql): TaskDueTodayRow {
  * The due-today and overdue feed Phase 8 surfaces (D-38): actionable tasks (not
  * done, cancelled or proposed) due or scheduled in the local day, in the Today
  * order, and the overdue ones, oldest due first, each at most
- * {@link TASK_DUE_TODAY_LIMIT} rows. Follows the scope when one is given.
+ * {@link TASK_DUE_TODAY_LIMIT} rows. Follows the scope when one is given. Also
+ * the single next open task (earliest due, else most recently updated), or null.
  */
 export function listDueToday(
   db: Database.Database,
   query: { readonly day: LocalDayBounds; readonly scope?: string },
-): { readonly due: TaskDueTodayRow[]; readonly overdue: TaskDueTodayRow[] } {
+): {
+  readonly due: TaskDueTodayRow[];
+  readonly overdue: TaskDueTodayRow[];
+  readonly nextOpen: TaskDueTodayRow | null;
+} {
   assertDay(query.day);
   const context = contextClause({ scope: query.scope ?? "all" });
   const params = { ...dayParams(query.day), ...context.params, limit: TASK_DUE_TODAY_LIMIT };
@@ -988,5 +993,17 @@ export function listDueToday(
       `SELECT ${columns} FROM task_index t WHERE ${overdueView.predicate}${scoped} ORDER BY ${order(overdueView)} LIMIT @limit`,
     )
     .all(params) as FeedRowSql[];
-  return { due: due.map(feedRow), overdue: overdue.map(feedRow) };
+  // The next open task (D-21, D-45): dated before undated, then the existing due sort
+  // key ascending, then the most recently updated, then the note id, so a tie never
+  // flips between calls. Same OPEN predicate and scope clause as the lists; one row.
+  const next = db
+    .prepare(
+      `SELECT ${columns} FROM task_index t WHERE ${OPEN}${scoped} ORDER BY ${DUE_KEY} ASC, t.updated_at DESC, t.note_id ASC LIMIT 1`,
+    )
+    .get(params) as FeedRowSql | undefined;
+  return {
+    due: due.map(feedRow),
+    overdue: overdue.map(feedRow),
+    nextOpen: next === undefined ? null : feedRow(next),
+  };
 }

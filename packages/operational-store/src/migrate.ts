@@ -49,7 +49,13 @@ function ensureSchemaVersionTable(db: Database.Database): void {
   }
 }
 
-function readSchemaVersion(db: Database.Database): number {
+/**
+ * The applied schema version: the single row of `schema_version`. Read-only
+ * (one SELECT, no write), so the diagnostics bundle can report the store's
+ * schema version without touching the store. Throws if the table does not
+ * exist yet, i.e. before {@link applyMigrations} has ever run.
+ */
+export function readSchemaVersion(db: Database.Database): number {
   const row = db.prepare("SELECT version FROM schema_version").get() as { version: number };
   return row.version;
 }

@@ -1,6 +1,6 @@
 import { DetectionResponseSchema } from "@ccc/domain";
 import { TERMINAL_PRESETS } from "@ccc/launchers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { BridgeStatus } from "../codex/bridge-state.js";
 import { createCodexDetection } from "../codex/detection.js";
 import {
@@ -371,5 +371,227 @@ describe("Codex detection merged into the launcher detection (plan 05.1-21, D-11
       "terminalPresets",
     ]);
     expect(detector.codexCandidatePath("user-install")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// probeBundle (plan 08-04, D-49, T-08-07, T-08-08): a bounded existence check
+// for the health probe. It never scans folders and never launches anything.
+
+describe("Detector.probeBundle (D-49)", () => {
+  const BUNDLE_ID = "com.google.antigravity";
+  const APP = "/Applications/Antigravity.app";
+  const RUN_ENV = { PATH: "/usr/bin:/bin", LC_ALL: "C" };
+
+  function probeSetup(
+    script: readonly ScriptedReply[],
+    readdirCalls: string[] = [],
+  ): ReturnType<typeof detectorWith> {
+    return detectorWith(script, {
+      readdir: (dir) => {
+        readdirCalls.push(dir);
+        return Promise.resolve([]);
+      },
+    });
+  }
+
+  it("Test 1: a hit whose Info.plist matches is found after exactly one mdfind and one plutil, both capped", async () => {
+    const controller = new AbortController();
+    const { detector, runner } = probeSetup([
+      mdfind(BUNDLE_ID, [APP]),
+      plist(APP, "CFBundleIdentifier", BUNDLE_ID),
+    ]);
+
+    const result = await detector.probeBundle(BUNDLE_ID, { signal: controller.signal });
+
+    expect(result).toBe("found");
+    expect(runner.calls).toHaveLength(2);
+    const [find, read] = runner.calls;
+    expect(find?.file).toBe(MDFIND);
+    expect(find?.args).toEqual([`kMDItemCFBundleIdentifier == '${BUNDLE_ID}'`]);
+    expect(find?.options.timeoutMs).toBe(1500);
+    expect(find?.options.env).toEqual(RUN_ENV);
+    expect(find?.options.signal).toBe(controller.signal);
+    expect(read?.file).toBe(PLUTIL);
+    expect(read?.args).toEqual([
+      "-extract",
+      "CFBundleIdentifier",
+      "raw",
+      "-o",
+      "-",
+      `${APP}/Contents/Info.plist`,
+    ]);
+    expect(read?.options.timeoutMs).toBe(500);
+    expect(read?.options.env).toEqual(RUN_ENV);
+    expect(read?.options.signal).toBe(controller.signal);
+  });
+
+  it("reads only the first hit and never any other file", async () => {
+    const { detector, runner } = probeSetup([
+      mdfind(BUNDLE_ID, [APP, "/Applications/Other.app"]),
+      plist(APP, "CFBundleIdentifier", BUNDLE_ID),
+    ]);
+    expect(await detector.probeBundle(BUNDLE_ID)).toBe("found");
+    expect(runner.calls.filter((call) => call.file === PLUTIL)).toHaveLength(1);
+    // Every spawn is one of the two absolute system binaries: nothing is ever launched.
+    expect(runner.calls.every((call) => call.file === MDFIND || call.file === PLUTIL)).toBe(true);
+  });
+
+  it("clamps both caps to a smaller overall budget", async () => {
+    const { detector, runner } = probeSetup([
+      mdfind(BUNDLE_ID, [APP]),
+      plist(APP, "CFBundleIdentifier", BUNDLE_ID),
+    ]);
+    await detector.probeBundle(BUNDLE_ID, { timeoutMs: 300 });
+    expect(runner.calls[0]?.options.timeoutMs).toBe(300);
+    expect(runner.calls[1]?.options.timeoutMs).toBeLessThanOrEqual(300);
+    expect(runner.calls[1]?.options.timeoutMs).toBeGreaterThan(0);
+  });
+
+  it("Test 2: no mdfind hit is not-found, with no plutil call and no folder scan", async () => {
+    const scanned: string[] = [];
+    const { detector, runner } = probeSetup([NOTHING_ELSE], scanned);
+    expect(await detector.probeBundle(BUNDLE_ID)).toBe("not-found");
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0]?.file).toBe(MDFIND);
+    expect(scanned).toEqual([]);
+  });
+
+  it("Test 3: a timeout, an abort, a failed exit or an overflow is indeterminate and never scans", async () => {
+    const outcomes: Array<Partial<import("./command-runner.js").CommandOutcome>> = [
+      { exitCode: null, errno: null, timedOut: true },
+      { exitCode: null, errno: "ABORT_ERR" },
+      { exitCode: null, errno: "ENOENT" },
+      { exitCode: 1, stdout: "" },
+      { exitCode: 0, stdout: `${APP}\n`, truncated: true },
+    ];
+    for (const outcome of outcomes) {
+      const scanned: string[] = [];
+      const { detector, runner } = probeSetup(
+        [{ match: (file) => file === MDFIND, outcome }],
+        scanned,
+      );
+      expect(await detector.probeBundle(BUNDLE_ID), JSON.stringify(outcome)).toBe("indeterminate");
+      expect(runner.calls.filter((call) => call.file === PLUTIL)).toHaveLength(0);
+      expect(scanned).toEqual([]);
+    }
+  });
+
+  it("Test 3a: an empty answer that came with a diagnostic on stderr (Spotlight off) is indeterminate, not not-found", async () => {
+    const { detector } = probeSetup([
+      {
+        match: (file) => file === MDFIND,
+        outcome: { exitCode: 0, stdout: "", stderr: "indexing is disabled\n" },
+      },
+    ]);
+    expect(await detector.probeBundle(BUNDLE_ID)).toBe("indeterminate");
+  });
+
+  it("Test 3b: a hit that is not an absolute .app path is indeterminate and nothing is read", async () => {
+    for (const line of [
+      "relative/Foo.app",
+      "/Applications/Foo.txt",
+      "/Applications/Fo\u0001o.app",
+    ]) {
+      const { detector, runner } = probeSetup([
+        { match: (file) => file === MDFIND, outcome: { exitCode: 0, stdout: `${line}\n` } },
+      ]);
+      expect(await detector.probeBundle(BUNDLE_ID), line).toBe("indeterminate");
+      expect(runner.calls.filter((call) => call.file === PLUTIL)).toHaveLength(0);
+    }
+  });
+
+  it("Test 3c: a signal aborted before the call is indeterminate with no spawn", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { detector, runner } = probeSetup([mdfind(BUNDLE_ID, [APP])]);
+    expect(await detector.probeBundle(BUNDLE_ID, { signal: controller.signal })).toBe(
+      "indeterminate",
+    );
+    expect(runner.calls).toHaveLength(0);
+  });
+
+  it("an abort between the two spawns stops before plutil", async () => {
+    const controller = new AbortController();
+    const script: ScriptedReply[] = [
+      {
+        match: (file) => {
+          if (file === MDFIND) controller.abort();
+          return file === MDFIND;
+        },
+        outcome: { exitCode: 0, stdout: `${APP}\n` },
+      },
+      plist(APP, "CFBundleIdentifier", BUNDLE_ID),
+    ];
+    const { detector, runner } = probeSetup(script);
+    expect(await detector.probeBundle(BUNDLE_ID, { signal: controller.signal })).toBe(
+      "indeterminate",
+    );
+    expect(runner.calls.filter((call) => call.file === PLUTIL)).toHaveLength(0);
+  });
+
+  it("a plist that cannot be read, times out, or names another bundle is indeterminate, never found or not-found", async () => {
+    const replies: Array<Partial<import("./command-runner.js").CommandOutcome>> = [
+      { exitCode: 1, stdout: "" },
+      { exitCode: null, timedOut: true },
+      { exitCode: null, errno: "ABORT_ERR" },
+      { exitCode: 0, stdout: "com.example.something-else\n" },
+      { exitCode: 0, stdout: "not a bundle id with spaces\n" },
+      { exitCode: 0, stdout: "\n" },
+    ];
+    for (const outcome of replies) {
+      const { detector } = probeSetup([
+        mdfind(BUNDLE_ID, [APP]),
+        { match: (file) => file === PLUTIL, outcome },
+      ]);
+      expect(await detector.probeBundle(BUNDLE_ID), JSON.stringify(outcome)).toBe("indeterminate");
+    }
+  });
+
+  it("Test 4: an id that fails BundleIdSchema or the query pattern is indeterminate with no spawn", async () => {
+    for (const hostile of [
+      "com.example' || kMDItemFSName == '*",
+      "com example",
+      "com.*.evil",
+      "com.google.*",
+      "com.google.antigravity*",
+      "",
+      `com.${"a".repeat(260)}`,
+      "com.example\nnewline",
+      "com.example/../../x",
+    ]) {
+      const { detector, runner } = probeSetup([NOTHING_ELSE]);
+      expect(await detector.probeBundle(hostile), JSON.stringify(hostile)).toBe("indeterminate");
+      expect(runner.calls).toHaveLength(0);
+    }
+  });
+
+  it("Test 5: findBundle still uses the fallback folder scan and its own caps", async () => {
+    const scanned: string[] = [];
+    const { detector, runner } = probeSetup([mdfindFails()], scanned);
+    await detector.findBundle(BUNDLE_ID);
+    expect(scanned.length).toBeGreaterThan(0);
+    expect(runner.calls[0]?.options.timeoutMs).toBe(5000);
+  });
+
+  it("never logs or returns what the children printed", async () => {
+    const logged: string[] = [];
+    const spies = ["log", "info", "warn", "error", "debug"].map((method) =>
+      vi.spyOn(console, method as "log").mockImplementation((...args: unknown[]) => {
+        logged.push(args.join(" "));
+      }),
+    );
+    try {
+      const { detector } = probeSetup([
+        mdfind(BUNDLE_ID, ["/Applications/Secret Project Name.app"]),
+        plist("/Applications/Secret Project Name.app", "CFBundleIdentifier", BUNDLE_ID),
+      ]);
+      const result = await detector.probeBundle(BUNDLE_ID);
+      expect(result).toBe("found");
+      expect(JSON.stringify(result)).not.toContain("Secret");
+      expect(logged).toEqual([]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
   });
 });

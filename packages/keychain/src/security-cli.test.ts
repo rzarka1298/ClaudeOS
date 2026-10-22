@@ -6,9 +6,8 @@ vi.mock("execa", () => ({
   execa: (...args: unknown[]) => execaMock(...args),
 }));
 
-const { getSecret, setSecret, deleteSecret, SERVICE_NAME, UnsafeSecretInputError } = await import(
-  "./security-cli.js"
-);
+const { getSecret, setSecret, deleteSecret, hasSecret, SERVICE_NAME, UnsafeSecretInputError } =
+  await import("./security-cli.js");
 
 beforeEach(() => {
   execaMock.mockReset();
@@ -138,5 +137,105 @@ describe("security-cli", () => {
       "-s",
       SERVICE_NAME,
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasSecret (plan 08-04, D-38, T-08-06..T-08-08): presence without the secret.
+//
+// Every case here runs against a mocked execa. By owner instruction the tests
+// never call the real /usr/bin/security (the login Keychain is off limits to
+// automated runs); the first real-keychain check is the owner UAT item (D-38).
+
+describe("hasSecret", () => {
+  const ACCOUNT = "ccc-probe-absent-0123456789abcdef";
+
+  it("Test 1 (tracer): an absent item (exit 44) resolves absent without throwing", async () => {
+    execaMock.mockResolvedValueOnce({ exitCode: 44, failed: true });
+    await expect(hasSecret(ACCOUNT)).resolves.toBe("absent");
+    expect(execaMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test 2: spawns the absolute binary with exactly the attribute-only argv, never -w or -g", async () => {
+    execaMock.mockResolvedValueOnce({ exitCode: 0, failed: false });
+    await hasSecret(ACCOUNT);
+    const [bin, args, options] = execaMock.mock.calls[0] as [
+      string,
+      string[],
+      Record<string, unknown>,
+    ];
+    expect(bin).toBe("/usr/bin/security");
+    expect(args).toEqual(["find-generic-password", "-a", ACCOUNT, "-s", SERVICE_NAME]);
+    expect(args).not.toContain("-w");
+    expect(args).not.toContain("-g");
+    expect(args.some((arg) => /^-[A-Za-z]*[wg][A-Za-z]*$/.test(arg))).toBe(false);
+    // Bounded, shell-free, and no output is ever captured into a result.
+    expect(options).toMatchObject({
+      reject: false,
+      timeout: 1500,
+      killSignal: "SIGKILL",
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(options.shell).toBeUndefined();
+  });
+
+  it("Test 3: exit 0 is present, 44 absent, anything else or a spawn failure is error", async () => {
+    execaMock.mockResolvedValueOnce({ exitCode: 0, failed: false });
+    await expect(hasSecret(ACCOUNT)).resolves.toBe("present");
+
+    execaMock.mockResolvedValueOnce({ exitCode: 44, failed: true });
+    await expect(hasSecret(ACCOUNT)).resolves.toBe("absent");
+
+    execaMock.mockResolvedValueOnce({ exitCode: 51, failed: true });
+    await expect(hasSecret(ACCOUNT)).resolves.toBe("error");
+
+    execaMock.mockResolvedValueOnce({ exitCode: 1, failed: true });
+    await expect(hasSecret(ACCOUNT)).resolves.toBe("error");
+
+    // A spawn error that execa surfaces as a rejection still resolves, never throws.
+    execaMock.mockRejectedValueOnce(Object.assign(new Error("spawn"), { code: "ENOENT" }));
+    await expect(hasSecret(ACCOUNT)).resolves.toBe("error");
+  });
+
+  it("Test 3b: a timeout (the child is SIGKILLed by execa) resolves error, never present or absent", async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: undefined,
+      failed: true,
+      timedOut: true,
+      isTerminated: true,
+      signal: "SIGKILL",
+    });
+    await expect(hasSecret(ACCOUNT)).resolves.toBe("error");
+    // A killed child that happens to report a stale exit code of 0 or 44 is still not an answer.
+    execaMock.mockResolvedValueOnce({ exitCode: 44, failed: true, timedOut: true });
+    await expect(hasSecret(ACCOUNT)).resolves.toBe("error");
+    execaMock.mockResolvedValueOnce({ exitCode: 0, failed: true, isTerminated: true });
+    await expect(hasSecret(ACCOUNT)).resolves.toBe("error");
+  });
+
+  it("Test 4: an account with a space, a quote, a newline or a leading dash throws before any spawn", async () => {
+    for (const bad of [
+      "has space",
+      'has"quote',
+      "line\nbreak",
+      "-w",
+      "-leading-dash",
+      "",
+      "semi;colon",
+    ]) {
+      await expect(hasSecret(bad), JSON.stringify(bad)).rejects.toBeInstanceOf(
+        UnsafeSecretInputError,
+      );
+    }
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("does not change what getSecret asks for (it still reads the value)", async () => {
+    execaMock.mockResolvedValueOnce({ stdout: "value" });
+    await getSecret("my-account");
+    const [, args] = execaMock.mock.calls[0] as [string, string[]];
+    expect(args).toContain("-w");
   });
 });

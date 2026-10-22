@@ -57,6 +57,22 @@ describe("the browser barrel (index.browser.ts)", () => {
     expect(Object.keys(browser)).not.toContain("HOSTILE_CORPUS");
   });
 
+  it("exports the diagnostics and display-path modules from both barrels (plan 08-01)", () => {
+    for (const mod of ["./diagnostics.js", "./display-path.js"]) {
+      expect(reExports("index.ts"), mod).toContain(mod);
+      expect(reExports("index.browser.ts"), mod).toContain(mod);
+    }
+    for (const name of [
+      "DIAGNOSTICS_HEALTH_PATH",
+      "DiagnosticsHealthResponseSchema",
+      "toDisplayPath",
+      "DisplayPathSchema",
+    ]) {
+      expect(Object.keys(full), name).toContain(name);
+      expect(Object.keys(browser), name).toContain(name);
+    }
+  });
+
   it("both barrels declare nothing but re-exports", () => {
     for (const file of ["index.ts", "index.browser.ts"]) {
       const code = readFileSync(join(HERE, file), "utf8")

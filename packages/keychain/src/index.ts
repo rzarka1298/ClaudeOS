@@ -12,6 +12,8 @@ export {
   createSecurityCliSecretStore,
   deleteSecret,
   getSecret,
+  HAS_SECRET_TIMEOUT_MS,
+  hasSecret,
   SERVICE_NAME,
   setSecret,
 } from "./security-cli.js";

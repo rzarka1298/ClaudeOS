@@ -491,3 +491,30 @@ describe("tasks suggested by an automation (Task 3, Test 8, TASK-04, TASK-05, D-
     expect((await counts(service)).counts.proposed).toBe(0);
   }, 120_000);
 });
+
+describe("the next open task on the due-today route (08-03 Task 1, SLICE-01, D-21, D-45)", () => {
+  let fixture: Fixture;
+  beforeAll(async () => {
+    fixture = await open(0, false);
+  }, 120_000);
+  afterAll(() => shut(fixture), 60_000);
+
+  it("names the one open task due in three days when nothing is due today", async () => {
+    const { vault, service } = fixture;
+    const due = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+    const written = writeTaskNote({
+      vaultRoot: vault.vaultRoot,
+      scope: "global",
+      title: "Plan the offsite",
+      body: "Owner-written.\n",
+      due,
+    });
+    expect((await changed(service, [written.path])).status).toBe(200);
+
+    const feed = (await service.post<TaskDueTodayResponse>(TASK_DUE_TODAY_PATH, { zone: ZONE }))
+      .body;
+    expect(feed.due).toEqual([]);
+    expect(feed.overdue).toEqual([]);
+    expect(feed.nextOpen).toEqual({ taskId: written.id, title: "Plan the offsite", dueDate: due });
+  }, 120_000);
+});

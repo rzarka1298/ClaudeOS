@@ -136,6 +136,17 @@ export interface UsageServices {
   /** Re-reads the settings and install record, probes the version, publishes on change. */
   refreshIntegration(): Promise<ClaudeIntegrationStatus>;
   /**
+   * Re-reads only Claude's settings facts and the hook install record (two
+   * bounded file reads, the same fixed paths and caps as the background
+   * refresh) and returns the integration status; the health check calls it so
+   * an edited settings file is seen at once instead of up to a minute later
+   * (plan 08-04, research A 1.3). It never spawns `claude --version` (the
+   * detected version stays what the last background refresh found), publishes
+   * no event and calls no listener: the next background refresh still sees the
+   * change against its own last-published status and publishes it then.
+   */
+  refreshSettingsFacts(): ClaudeIntegrationStatus;
+  /**
    * Persists the transcript-analysis toggle service-side and appends it to
    * the toggle log (D-47, D-48). On: first scan pending and a sweep. Off:
    * the in-flight scan stops at its next chunk boundary; aggregates stay.
@@ -493,6 +504,11 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
     handleStatusLine,
     integration,
     refreshIntegration,
+    refreshSettingsFacts() {
+      claudeSettings = readClaudeSettingsFacts(settingsPath, runtimeDir);
+      installRecord = readInstallRecord(runtimeDir);
+      return integration();
+    },
     async setTranscriptAnalysis(enabled) {
       const was = analysisEnabled();
       const at = now().toISOString();

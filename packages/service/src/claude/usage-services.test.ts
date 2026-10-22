@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { newRunId } from "@ccc/domain";
@@ -10,7 +10,7 @@ import {
   type OperationalStore,
   openStore,
 } from "@ccc/operational-store";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEventBus } from "../events/event-bus.js";
 import { createLogger } from "../logging.js";
 import { createClaudePipeline, type SessionFactsProvider } from "./pipeline.js";
@@ -146,5 +146,109 @@ describe("the Phase 05.1 hooks of the usage services", () => {
     await expect(services.setTranscriptAnalysis(true)).resolves.toEqual({ enabled: true });
     expect(() => services.deleteUsage()).not.toThrow();
     await expect(services.refreshIntegration()).resolves.toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// refreshSettingsFacts (plan 08-04, research A 1.3): the health check's cheap
+// re-read. Two bounded file reads, no `claude --version`, no event.
+
+describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
+  const FAKE_CLAUDE = "/opt/fake/claude";
+
+  function writeSettings(value: unknown): void {
+    mkdirSync(join(dir, "claude"), { recursive: true });
+    writeFileSync(join(dir, "claude", "settings.json"), JSON.stringify(value));
+  }
+
+  function writeInstallRecord(value: unknown): void {
+    mkdirSync(join(dir, "hooks"), { recursive: true });
+    writeFileSync(join(dir, "hooks", "install.json"), JSON.stringify(value));
+  }
+
+  function fakeProber() {
+    const execFile = vi.fn(async () => ({ stdout: "2.1.5 (Claude Code)\n" }));
+    return {
+      execFile,
+      deps: {
+        execFile,
+        realpath: (path: string) => path,
+        mtimeMs: () => 1,
+        cache: new Map<string, string | null>(),
+      },
+    };
+  }
+
+  it("Test 1: sees an edited settings file at once and never starts the version prober", () => {
+    writeSettings({});
+    const prober = fakeProber();
+    const services = start({ versionProbe: prober.deps });
+    expect(services.integration().disableAllHooks).toBe(false);
+
+    writeSettings({ disableAllHooks: true });
+    // Without the refresh the cached facts still say false.
+    expect(services.integration().disableAllHooks).toBe(false);
+
+    const status = services.refreshSettingsFacts();
+    expect(status.disableAllHooks).toBe(true);
+    expect(services.integration().disableAllHooks).toBe(true);
+    expect(prober.execFile).toHaveBeenCalledTimes(0);
+  });
+
+  it("Test 2: keeps the Claude version cached by the last background refresh", async () => {
+    writeSettings({});
+    writeInstallRecord({ claudeBin: FAKE_CLAUDE });
+    const prober = fakeProber();
+    const services = start({ versionProbe: prober.deps });
+    const refreshed = await services.refreshIntegration();
+    expect(refreshed.detectedClaudeVersion).toBe("2.1.5");
+    expect(prober.execFile).toHaveBeenCalledTimes(1);
+
+    writeSettings({ disableAllHooks: true });
+    const status = services.refreshSettingsFacts();
+    expect(status.disableAllHooks).toBe(true);
+    expect(status.detectedClaudeVersion).toBe("2.1.5");
+    expect(prober.execFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-reads the hook install record too, so a drill that edits it is seen at once", () => {
+    const handler = { command: "/nonexistent/node", args: [join(dir, "hooks", "handler.js")] };
+    writeSettings({ hooks: { SessionStart: [{ hooks: [handler] }] } });
+    const services = start({ versionProbe: fakeProber().deps });
+    expect(services.integration().hooks).toBe("installed");
+    expect(services.integration().hookRuntimeMissing).toBe(true);
+
+    // The install record names a node that exists, and it wins over the settings command.
+    const presentNode = join(dir, "present-node");
+    writeFileSync(presentNode, "");
+    writeInstallRecord({ nodePath: presentNode });
+    expect(services.integration().hookRuntimeMissing).toBe(true);
+    expect(services.refreshSettingsFacts().hookRuntimeMissing).toBe(false);
+  });
+
+  it("publishes no event and calls no refresh listener; the next background refresh still publishes the change", async () => {
+    writeSettings({});
+    const bus = createEventBus();
+    const publish = vi.spyOn(bus, "publish");
+    const onIntegrationRefresh = vi.fn();
+    const services = start({ bus, onIntegrationRefresh, versionProbe: fakeProber().deps });
+    const publishedBefore = publish.mock.calls.length;
+
+    writeSettings({ disableAllHooks: true });
+    services.refreshSettingsFacts();
+    expect(publish.mock.calls.length).toBe(publishedBefore);
+    expect(onIntegrationRefresh).not.toHaveBeenCalled();
+
+    await services.refreshIntegration();
+    const types = publish.mock.calls.slice(publishedBefore).map((call) => call[0]);
+    expect(types).toContain("claude-integration.updated");
+    expect(onIntegrationRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("never throws on a missing or unreadable settings file; the status reads unknown", () => {
+    const services = start({ versionProbe: fakeProber().deps });
+    const status = services.refreshSettingsFacts();
+    expect(status.hooks).toBe("unknown");
+    expect(status.disableAllHooks).toBeNull();
   });
 });

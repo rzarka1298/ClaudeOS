@@ -101,6 +101,59 @@ export async function deleteSecret(account: string): Promise<void> {
   await execa("security", ["delete-generic-password", "-a", account, "-s", SERVICE_NAME]);
 }
 
+/** The one binary this package spawns for lookups; absolute so a hijacked PATH cannot substitute it. */
+const SECURITY_BINARY = "/usr/bin/security";
+/** How long a presence lookup may run before it is killed (T-08-08). */
+export const HAS_SECRET_TIMEOUT_MS = 1500;
+/** `security` exits with 44 when the item is not in the keychain (`errSecItemNotFound`). */
+const EXIT_ITEM_NOT_FOUND = 44;
+
+/**
+ * Whether `account`'s item exists in the macOS Keychain, **without ever
+ * reading its value** (plan 08-04; D-38, research A 1.5; threat T-08-06).
+ *
+ * The argv is attribute-only: `find-generic-password -a <account> -s
+ * <service>` with no `-w` (print the password) and no `-g` (print the
+ * password to stderr), so the secret is never read into this process and
+ * nothing the child prints is ever captured: stdin, stdout and stderr are all
+ * ignored. Exit 0 is `present`, exit 44 is `absent`, and everything else (any
+ * other exit, a timeout, a kill, a spawn failure) is `error`, never a guess.
+ * It never throws for an absent item or a failed lookup; only an unsafe
+ * `account` throws, before any process is spawned.
+ *
+ * Bounded by {@link HAS_SECRET_TIMEOUT_MS} with SIGKILL, spawned directly (no
+ * shell), by absolute path. It runs only on an owner gesture (opening or
+ * re-checking Diagnostics), never on a timer, so any one-time Keychain access
+ * dialog appears only when the owner is looking at the screen; the first
+ * real-keychain run is confirmed prompt-free by an owner UAT item (ADR-0017).
+ */
+export async function hasSecret(account: string): Promise<"present" | "absent" | "error"> {
+  assertSafeIdentifier(account, "account");
+  // A leading dash would read as a `security` option, not an account; no real account starts with one.
+  if (account.startsWith("-")) throw new UnsafeSecretInputError("account");
+  try {
+    const result = await execa(
+      SECURITY_BINARY,
+      ["find-generic-password", "-a", account, "-s", SERVICE_NAME],
+      {
+        reject: false,
+        timeout: HAS_SECRET_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      },
+    );
+    // A child that was killed or timed out has no answer, whatever exit code it was reporting.
+    if (result.timedOut === true || result.isTerminated === true) return "error";
+    if (result.exitCode === 0 && result.failed !== true) return "present";
+    if (result.exitCode === EXIT_ITEM_NOT_FOUND) return "absent";
+    return "error";
+  } catch {
+    return "error";
+  }
+}
+
 /** A {@link SecretStore} backed by this module's three functions. */
 export function createSecurityCliSecretStore(): SecretStore {
   return { get: getSecret, set: setSecret, delete: deleteSecret };

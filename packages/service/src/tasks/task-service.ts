@@ -163,16 +163,21 @@ function flattenAttention(list: readonly TaskAttention[]): TaskAttentionItem[] {
 /** The most UTF-8 bytes a due-today response may take: under the client's 64 KiB cap. */
 const DUE_TODAY_BUDGET_BYTES = 56 * 1024;
 
-/** Drops trailing rows, from the longer list first, until the response fits the byte budget. */
+/**
+ * Drops trailing rows, from the longer list first, until the response fits the byte budget.
+ * `nextOpen` is one row of bounded size, counted in the budget and never dropped: the lists
+ * give way first.
+ */
 function fitDueToday(feed: TaskDueTodayResponse): TaskDueTodayResponse {
   const due = [...feed.due];
   const overdue = [...feed.overdue];
-  const size = (): number => Buffer.byteLength(JSON.stringify({ due, overdue }), "utf8");
+  const next = feed.nextOpen === undefined ? {} : { nextOpen: feed.nextOpen };
+  const size = (): number => Buffer.byteLength(JSON.stringify({ due, overdue, ...next }), "utf8");
   while (size() > DUE_TODAY_BUDGET_BYTES && (due.length > 0 || overdue.length > 0)) {
     if (overdue.length >= due.length) overdue.pop();
     else due.pop();
   }
-  return { due, overdue };
+  return { due, overdue, ...next };
 }
 
 export function createTaskServices(deps: TaskServicesDeps): TaskServiceHost {
