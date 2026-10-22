@@ -44,6 +44,7 @@ const PLUGIN_POLICY_RULE_IDS = [
 interface EslintMessage {
   readonly ruleId: string | null;
   readonly message: string;
+  readonly line?: number;
 }
 interface EslintFileResult {
   readonly filePath: string;
@@ -284,5 +285,84 @@ describe("the production plugin config carries what the fixtures prove (plan 03-
     expect(obsidianEntry).toBeDefined();
     expect(obsidianEntry?.importNames).toContain("requestUrl");
     expect(obsidianEntry?.importNames).toContain("request");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 08-10, R-F1: where does the Obsidian sentence-case rule reach?
+//
+// The Phase 8 copy plans (08-11, 08-13, 08-15, 08-18) write most of their
+// strings as Preact JSX. Whether `obsidianmd/ui/sentence-case` lints those is an
+// empirical question about the installed rule, so this fixture records the
+// answer and the tests below assert it: if a later upgrade of the plugin starts
+// reaching JSX text, these fail and the copy rules can be tightened.
+// ---------------------------------------------------------------------------
+
+const SENTENCE_CASE_RULE_ID = "obsidianmd/ui/sentence-case";
+const SENTENCE_FIXTURE = join(FIXTURES_DIR, "sentence-case-jsx-text.tsx");
+
+function sentenceCaseLines(): string[] {
+  const source = readFileSync(SENTENCE_FIXTURE, "utf8").split("\n");
+  return runEslintJson(FIXTURES_CONFIG, SENTENCE_FIXTURE)
+    .flatMap((r) => r.messages)
+    .filter((m) => m.ruleId === SENTENCE_CASE_RULE_ID)
+    .map((m) => (source[(m.line ?? 0) - 1] ?? "").trim());
+}
+
+describe("the sentence-case rule's reach into Preact copy (plan 08-10, R-F1)", () => {
+  const restorers: Array<() => void> = [];
+  afterEach(() => {
+    while (restorers.length > 0) restorers.pop()?.();
+  });
+
+  function withContent(content: string): void {
+    const original = readFileSync(SENTENCE_FIXTURE, "utf8");
+    writeFileSync(SENTENCE_FIXTURE, content);
+    restorers.push(() => writeFileSync(SENTENCE_FIXTURE, original));
+  }
+
+  test("reaches new Notice and createEl text, so a Title Case section name there is reported", () => {
+    const flagged = sentenceCaseLines();
+    expect(flagged).toContain('new Notice("Go to Projects");');
+    expect(flagged).toContain('createEl("span", { text: "Go to Projects" });');
+  });
+
+  test("does NOT reach JSX text nodes, JSX string attributes or h() option props: JSX copy is not linted", () => {
+    const flagged = sentenceCaseLines();
+    // Exactly the two controls; none of the three Preact sites is reported, so
+    // JSX copy is checked only by a test that asserts the string itself.
+    expect(flagged).toHaveLength(2);
+    expect(flagged.some((line) => line.includes("aria-label"))).toBe(false);
+    expect(flagged.some((line) => line.includes("title="))).toBe(false);
+    expect(flagged.some((line) => line === "Go to Projects")).toBe(false);
+  });
+
+  test("the lowercase section reference (R-F1) is accepted where the rule does reach", () => {
+    withContent(
+      "declare class Notice {\n  constructor(message: string);\n}\n" +
+        'export function announce(): void {\n  new Notice("Go to the projects section");\n}\n',
+    );
+    expect(sentenceCaseLines()).toEqual([]);
+  });
+
+  test("Gmail and Google Calendar are brands: accepted capitalised anywhere in a reached string", () => {
+    withContent(
+      "declare class Notice {\n  constructor(message: string);\n}\n" +
+        "export function announce(): void {\n" +
+        '  new Notice("Google Calendar and Gmail aren\'t part of this version");\n}\n',
+    );
+    expect(sentenceCaseLines()).toEqual([]);
+  });
+
+  test("the production config runs the same rule with the Phase 8 brands", () => {
+    const entry = ruleEntry(printProductionConfig(), SENTENCE_CASE_RULE_ID);
+    expect(isErrorSeverity(entry[0])).toBe(true);
+    const brands = (entry[1] as { brands?: unknown }).brands;
+    expect(Array.isArray(brands)).toBe(true);
+    expect(brands).toContain("Gmail");
+    expect(brands).toContain("Google Calendar");
+    // Section names are not brands: they stay lower case in running copy.
+    expect(brands).not.toContain("Projects");
+    expect(brands).not.toContain("Diagnostics");
   });
 });

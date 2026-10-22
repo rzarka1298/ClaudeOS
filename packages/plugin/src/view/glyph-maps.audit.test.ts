@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APPROVAL_STATE_DISPLAY } from "@ccc/domain/approval-view.js";
+import { NOT_IN_VERSION_GLYPH, SUBSYSTEM_STATUS_DISPLAY } from "@ccc/domain/diagnostics.js";
 import { REPORT_ITEM_KIND_DISPLAY } from "@ccc/domain/research.js";
 import { RUN_STATE_DISPLAY } from "@ccc/domain/session.js";
 import { TASK_PRIORITY_DISPLAY, TASK_STATUS_DISPLAY } from "@ccc/domain/tasks.js";
@@ -15,6 +16,13 @@ import { FRESHNESS_GLYPH } from "../widgets/footer.js";
  * glyph the Phase 6 maps introduce is unique across all vocabularies. Overlaps
  * that already exist between earlier phases (Phase 4's `◆`) are out of
  * scope and untouched.
+ *
+ * Phase 8 (08-UI-SPEC "Glyph rule", R-04) adds the subsystem status map
+ * (`SUBSYSTEM_STATUS_DISPLAY`) and the scope tag `NOT_IN_VERSION_GLYPH`. `✓ ✕`
+ * stay permitted repeats; `?` joins them ONLY where the meaning assertion passes
+ * (a Run that `stale` ended without reporting, and a subsystem that is
+ * `unknown`: both mean "no evidence"); `⊕ ▽ ∅` are new, text-presentation and
+ * appear in no other map.
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -49,6 +57,14 @@ const TASK_PRIORITY = Object.values(TASK_PRIORITY_DISPLAY)
   .filter((glyph): glyph is string => glyph !== null);
 
 const REPORT_KINDS = Object.values(REPORT_ITEM_KIND_DISPLAY).map((entry) => entry.glyph);
+const SUBSYSTEM = Object.values(SUBSYSTEM_STATUS_DISPLAY).map((entry) => entry.glyph);
+
+/**
+ * The one non-outcome glyph two vocabularies may share: "unknown / no evidence".
+ * Allowed only while the meaning assertions in the Phase 8 block below pin both
+ * sides (Run `stale`, subsystem `unknown`) to that meaning.
+ */
+const UNKNOWN_REPEAT = new Set(["?"]);
 
 const EXISTING = [...FRESHNESS, ...RUN_STATES, ...PHASE_4_GLYPHS];
 
@@ -123,6 +139,8 @@ describe("Test 4: the glyph maps are disjoint", () => {
       ...TASK_STATUS,
       ...TASK_PRIORITY,
       ...REPORT_KINDS,
+      ...SUBSYSTEM,
+      NOT_IN_VERSION_GLYPH,
     ]) {
       expect(/\p{Emoji_Presentation}/u.test(glyph), glyph).toBe(false);
     }
@@ -131,6 +149,89 @@ describe("Test 4: the glyph maps are disjoint", () => {
   it("gives the three report item kinds three glyphs, none of them an outcome glyph", () => {
     expect(REPORT_KINDS).toEqual(["\u2261", "\u201c", "\u2234"]);
     expect(REPORT_KINDS.filter((glyph) => OUTCOME.has(glyph))).toEqual([]);
+  });
+});
+
+describe("Phase 8: the subsystem status glyphs (UI-SPEC Glyph rule, R-04)", () => {
+  /** The glyphs this phase introduces: setup-needed, degraded and the scope tag. */
+  const NEW_GLYPHS = [
+    SUBSYSTEM_STATUS_DISPLAY["setup-needed"].glyph,
+    SUBSYSTEM_STATUS_DISPLAY.degraded.glyph,
+    NOT_IN_VERSION_GLYPH,
+  ];
+  const OTHER_MAPS = {
+    freshness: FRESHNESS,
+    "Run state": RUN_STATES,
+    "Phase 4": PHASE_4_GLYPHS,
+    approval: APPROVAL,
+    "task status": TASK_STATUS,
+    "task priority": TASK_PRIORITY,
+    "report item kind": REPORT_KINDS,
+  };
+
+  it("gives the five statuses and the scope tag the exact code points the spec names", () => {
+    expect(SUBSYSTEM).toEqual(["\u2713", "\u2295", "\u25bd", "\u2715", "?"]);
+    expect(NOT_IN_VERSION_GLYPH).toBe("\u2205");
+    expect(NEW_GLYPHS).toEqual(["\u2295", "\u25bd", "\u2205"]);
+  });
+
+  it.each(NEW_GLYPHS)("%s is text-presentation", (glyph) => {
+    expect(/\p{Emoji_Presentation}/u.test(glyph)).toBe(false);
+  });
+
+  it.each(Object.entries(OTHER_MAPS))("⊕ ▽ ∅ appear in no %s glyph", (_name, glyphs) => {
+    expect(shared(NEW_GLYPHS, glyphs)).toEqual([]);
+  });
+
+  it("keeps ⊕ ▽ ∅ out of the outcome set and out of the status map's own other entries", () => {
+    expect(NEW_GLYPHS.filter((glyph) => OUTCOME.has(glyph))).toEqual([]);
+    expect(shared(SUBSYSTEM, [NOT_IN_VERSION_GLYPH])).toEqual([]);
+    expect(new Set(SUBSYSTEM).size).toBe(SUBSYSTEM.length);
+  });
+
+  it("repeats only ✓ ✕ ? from the existing maps, and only with the same meaning", () => {
+    const existing = [...EXISTING, ...APPROVAL, ...TASK_STATUS, ...TASK_PRIORITY, ...REPORT_KINDS];
+    const repeats = shared(SUBSYSTEM, existing);
+    expect(repeats.filter((glyph) => !OUTCOME.has(glyph) && !UNKNOWN_REPEAT.has(glyph))).toEqual(
+      [],
+    );
+    // ✓ and ✕ keep the outcome meaning: working or finished, and failed.
+    expect(SUBSYSTEM_STATUS_DISPLAY.ok.glyph).toBe(RUN_STATE_DISPLAY.completed.glyph);
+    expect(SUBSYSTEM_STATUS_DISPLAY.ok.glyph).toBe(APPROVAL_STATE_DISPLAY.executed.glyph);
+    expect(SUBSYSTEM_STATUS_DISPLAY.failing.glyph).toBe(RUN_STATE_DISPLAY.failed.glyph);
+    expect(SUBSYSTEM_STATUS_DISPLAY.failing.glyph).toBe(APPROVAL_STATE_DISPLAY.failed.glyph);
+    // ? repeats only where both sides mean "no evidence": a stale Run and an unknown subsystem.
+    expect(SUBSYSTEM_STATUS_DISPLAY.unknown.glyph).toBe(RUN_STATE_DISPLAY.stale.glyph);
+    expect(SUBSYSTEM_STATUS_DISPLAY.unknown.glyph).toBe("?");
+    const questionMarks = Object.entries(RUN_STATE_DISPLAY)
+      .filter(([, entry]) => entry.glyph === "?")
+      .map(([state]) => state);
+    expect(questionMarks).toEqual(["stale"]);
+    for (const [name, glyphs] of Object.entries({
+      approval: APPROVAL,
+      "task status": TASK_STATUS,
+      "task priority": TASK_PRIORITY,
+      "report item kind": REPORT_KINDS,
+    })) {
+      expect(glyphs.includes("?"), `${name} must not reuse ?`).toBe(false);
+    }
+  });
+
+  it("keeps the five words the spec locks", () => {
+    expect(
+      Object.fromEntries(
+        Object.entries(SUBSYSTEM_STATUS_DISPLAY).map(([status, entry]) => [
+          status,
+          { word: entry.word, glyph: entry.glyph },
+        ]),
+      ),
+    ).toEqual({
+      ok: { word: "Working", glyph: "\u2713" },
+      "setup-needed": { word: "Needs setup", glyph: "\u2295" },
+      degraded: { word: "Degraded", glyph: "\u25bd" },
+      failing: { word: "Failing", glyph: "\u2715" },
+      unknown: { word: "Unknown", glyph: "?" },
+    });
   });
 });
 

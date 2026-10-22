@@ -38,6 +38,26 @@ describe("sentence-case brand list", () => {
     }
   });
 
+  it("adds exactly Gmail and Google Calendar in Phase 8 (UI-SPEC R-11, R-F1) and nothing else new", () => {
+    const brands = brandList();
+    // Phase 05.1's Codex was the last entry before Phase 8; the two product
+    // names follow it and nothing does after them. `Google` is a default, so
+    // `Google Calendar` is not redundant: the rule matches whole phrases.
+    expect(brands.slice(brands.indexOf("Codex") + 1)).toEqual(["Gmail", "Google Calendar"]);
+    expect(new Set(brands).size).toBe(brands.length);
+  });
+
+  it("lists no section name or other common noun the Phase 8 copy uses mid-sentence", () => {
+    // R-F1: section references are lower case in running copy ("Go to the
+    // projects section"), so none of these may be licensed as a brand.
+    for (const noun of ["Projects", "Launchers", "Integrations", "Security", "Schedules"]) {
+      expect(brandList(), noun).not.toContain(noun);
+    }
+    for (const common of ["Diagnostics", "Settings", "Research", "Tasks", "Keychain", "Socket"]) {
+      expect(brandList(), common).not.toContain(common);
+    }
+  });
+
   it.each(["Terminal", "Desktop", "Documents", "Downloads", "Automation"])(
     "does not list the bare common word %s",
     (word) => {

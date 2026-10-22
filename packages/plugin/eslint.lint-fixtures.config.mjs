@@ -14,9 +14,14 @@
 // than restated, so a fixture can never prove a rule the production run does
 // not have. plugin-lint.test.ts closes the same loop from the other side
 // with an `eslint --print-config` assertion against `src/main.ts`.
+import obsidianmd from "eslint-plugin-obsidianmd";
 import tseslint from "typescript-eslint";
 
-import { DOM_SAFETY_RULES, NETWORK_ISOLATION_RULES } from "./eslint.config.mjs";
+import {
+  DOM_SAFETY_RULES,
+  NETWORK_ISOLATION_RULES,
+  SENTENCE_CASE_RULE,
+} from "./eslint.config.mjs";
 
 export default [
   {
@@ -32,5 +37,14 @@ export default [
       ...DOM_SAFETY_RULES,
       ...NETWORK_ISOLATION_RULES,
     },
+  },
+  {
+    // Plan 08-10 (R-F1): the one fixture that records where the Obsidian
+    // sentence-case rule reaches. The rule needs no type information, so it runs
+    // here under the same untyped parser as the rest of the fixtures, with the
+    // production options imported rather than restated.
+    files: ["lint-fixtures/sentence-case-jsx-text.tsx"],
+    plugins: { obsidianmd },
+    rules: { "obsidianmd/ui/sentence-case": SENTENCE_CASE_RULE },
   },
 ];

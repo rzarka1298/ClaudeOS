@@ -111,6 +111,22 @@ const SENTENCE_CASE_BRANDS = [
   "Xcode",
   // Phase 05.1: Codex keeps its product-name capitalisation.
   "Codex",
+  // Phase 8 (08-UI-SPEC R-11, R-F1): the two account names the Settings copy
+  // uses mid-sentence ("Gmail and Google Calendar aren't part of this version").
+  // Product names only: section names stay lower case in running copy.
+  "Gmail",
+  "Google Calendar",
+];
+
+/**
+ * The sentence-case rule exactly as production runs it. Exported by name so
+ * packages/plugin/eslint.lint-fixtures.config.mjs can lint the committed
+ * sentence-case fixture with the identical options (plan 08-10, R-F1): the two
+ * configs cannot drift on which brands are allowed.
+ */
+export const SENTENCE_CASE_RULE = [
+  "error",
+  { enforceCamelCaseLower: true, brands: SENTENCE_CASE_BRANDS },
 ];
 
 /**
@@ -148,10 +164,7 @@ const REQUIRED_SEVERITY_OVERRIDES = {
   "obsidianmd/prefer-window-timers": "error",
   "obsidianmd/validate-manifest": "error",
   "obsidianmd/validate-license": "error",
-  "obsidianmd/ui/sentence-case": [
-    "error",
-    { enforceCamelCaseLower: true, brands: SENTENCE_CASE_BRANDS },
-  ],
+  "obsidianmd/ui/sentence-case": SENTENCE_CASE_RULE,
   "obsidianmd/prefer-create-el": "error",
   "obsidianmd/prefer-file-manager-trash-file": "error",
   "obsidianmd/prefer-instanceof": "error",
