@@ -8,6 +8,7 @@ import {
   openSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -218,6 +219,18 @@ describe("hook and status-line routing (Test 3)", () => {
     expect(p.dropCount()).toBe(0);
     writeFileSync(dropPath, "xxx");
     expect(p.dropCount()).toBe(3);
+  });
+
+  it("FIX2A F6: reports the drop count and the instant of the newest drop (the file's mtime), asynchronously", async () => {
+    const p = start();
+    expect(await p.dropFacts()).toEqual({ count: 0, lastDropAt: null });
+    writeFileSync(dropPath, "xxx");
+    const stamp = new Date("2026-10-21T10:00:00.000Z");
+    utimesSync(dropPath, stamp, stamp);
+    expect(await p.dropFacts()).toEqual({ count: 3, lastDropAt: "2026-10-21T10:00:00.000Z" });
+    // An emptied file is no drop at all.
+    writeFileSync(dropPath, "");
+    expect(await p.dropFacts()).toEqual({ count: 0, lastDropAt: null });
   });
 });
 

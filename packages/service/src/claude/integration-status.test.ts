@@ -120,11 +120,11 @@ describe("readClaudeSettingsFacts: a read-only look at Claude's settings (Test 1
     expect(readUnchanged().hooks).toBe("not-installed");
   });
 
-  it("reports unknown for a missing or invalid file, never throws, never writes", () => {
+  it("reports not-installed for a missing file (FIX2A F5) and unknown for an invalid one, never throws, never writes", () => {
     expect(readClaudeSettingsFacts(join(configDir, "absent.json"), runtimeDir)).toEqual({
-      hooks: "unknown",
-      statusLine: "unknown",
-      disableAllHooks: null,
+      hooks: "not-installed",
+      statusLine: "not-installed",
+      disableAllHooks: false,
       cleanupPeriodDays: 30,
       hookNodePath: null,
     });

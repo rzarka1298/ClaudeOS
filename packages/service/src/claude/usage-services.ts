@@ -29,14 +29,17 @@ import {
   type ClaudeSettingsFacts,
   type InstallRecord,
   nodePathExists,
+  nodePathExistsAsync,
   nodeVersionProbeDeps,
   probeClaudeVersion,
   readClaudeSettingsFacts,
+  readClaudeSettingsFactsAsync,
   readInstallRecord,
+  readInstallRecordAsync,
   type VersionProbeDeps,
 } from "./integration-status.js";
 import type { ClaudePipeline } from "./pipeline.js";
-import type { SpoolPoller } from "./spool-poller.js";
+import type { SpoolDropFacts, SpoolPoller } from "./spool-poller.js";
 import { createTranscriptJob, nodeTranscriptIo, type TranscriptIo } from "./transcript-job.js";
 import {
   buildSessionUsage,
@@ -72,7 +75,7 @@ export interface UsageServicesDeps {
   readonly db: Database.Database;
   readonly bus: Pick<EventBus, "publish">;
   readonly pipeline: Pick<ClaudePipeline, "onRunSettled" | "health" | "applyStatusMetadata">;
-  readonly poller: Pick<SpoolPoller, "setStatusLineSink" | "dropCount">;
+  readonly poller: Pick<SpoolPoller, "setStatusLineSink" | "dropCount" | "dropFacts">;
   readonly logger: Logger;
   readonly env: NodeJS.ProcessEnv;
   readonly now: () => Date;
@@ -88,7 +91,10 @@ export interface UsageServicesDeps {
   readonly claudeConfigDir?: string;
   /** Overrides the version probe's exec, realpath and mtime (tests). */
   readonly versionProbe?: VersionProbeDeps;
-  /** Overrides the hook-runtime existence check (tests). */
+  /**
+   * Overrides the hook-runtime existence check (tests). Without it the synchronous paths use
+   * `existsSync` and the health check's refresh uses an asynchronous `access`.
+   */
   readonly pathExists?: (path: string) => boolean;
   /** Overrides the settings facts (tests). */
   readonly settingsFacts?: () => UsageSettingsFacts;
@@ -141,11 +147,23 @@ export interface UsageServices {
    * refresh) and returns the integration status; the health check calls it so
    * an edited settings file is seen at once instead of up to a minute later
    * (plan 08-04, research A 1.3). It never spawns `claude --version` (the
-   * detected version stays what the last background refresh found), publishes
-   * no event and calls no listener: the next background refresh still sees the
-   * change against its own last-published status and publishes it then.
+   * detected version stays what the last background refresh found) and calls
+   * no refresh listener.
+   *
+   * Asynchronous since FIX2A F1: every file-system call goes through the
+   * thread pool, so a settings file on a stalled mount holds a pool thread and
+   * not the event loop, and the probe's cap still fires. `signal` ends the
+   * work early; a refresh whose signal has fired rejects and changes nothing.
+   * A missing settings file reads `not-installed` (F5); only an unreadable one
+   * reads `unknown`.
    */
-  refreshSettingsFacts(): ClaudeIntegrationStatus;
+  refreshSettingsFacts(signal?: AbortSignal): Promise<ClaudeIntegrationStatus>;
+  /**
+   * The dropped-records file's size and last-write instant (FIX2A F6, D-37a),
+   * read asynchronously. A file fact: it does not depend on when this service
+   * started, on who asked, or on any earlier call.
+   */
+  spoolFacts(): Promise<SpoolDropFacts>;
   /**
    * Persists the transcript-analysis toggle service-side and appends it to
    * the toggle log (D-47, D-48). On: first scan pending and a sweep. Off:
@@ -469,9 +487,9 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
   let lastIntegration = JSON.stringify(integration());
 
   /** Publishes claude-integration.updated only when the status differs from the last one. */
-  function publishIntegrationIfChanged(): void {
+  function publishIntegrationIfChanged(known?: ClaudeIntegrationStatus): void {
     try {
-      const status = integration();
+      const status = known ?? integration();
       const key = JSON.stringify(status);
       if (key === lastIntegration) return;
       lastIntegration = key;
@@ -504,18 +522,43 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
     handleStatusLine,
     integration,
     refreshIntegration,
-    refreshSettingsFacts() {
-      claudeSettings = readClaudeSettingsFacts(settingsPath, runtimeDir);
+    async refreshSettingsFacts(signal) {
+      // Every read below is asynchronous (FIX2A F1). Nothing is assigned until all of them have
+      // finished, and not at all if the signal fired: an abandoned read must not record `unknown`.
+      const settings = await readClaudeSettingsFactsAsync(settingsPath, runtimeDir, signal);
+      const record = await readInstallRecordAsync(runtimeDir, signal);
+      const drops = await deps.poller.dropFacts();
+      const nodePath = record?.nodePath ?? settings.hookNodePath;
+      const runtimePresent =
+        settings.hooks === "installed" && nodePath !== null
+          ? deps.pathExists !== undefined
+            ? deps.pathExists(nodePath)
+            : await nodePathExistsAsync(nodePath)
+          : true;
+      signal?.throwIfAborted();
+
+      claudeSettings = settings;
       const previousBin = installRecord?.claudeBin ?? null;
-      installRecord = readInstallRecord(runtimeDir);
+      installRecord = record;
       // The cached version belongs to the binary it was probed from: a different
       // binary has no known version until the next background probe.
       if ((installRecord?.claudeBin ?? null) !== previousBin) detectedClaudeVersion = null;
+      const status = buildIntegrationStatus({
+        settings: claudeSettings,
+        install: installRecord,
+        pathExists: () => runtimePresent,
+        health: deps.pipeline.health(),
+        dropCount: drops.count,
+        analysisEnabled: analysisEnabled(),
+        statusLineReported: statusLineReported(),
+        detectedClaudeVersion,
+      });
       // The same publish-if-changed path as the background refresh, so a subscriber
       // sees what the health check sees (no refresh listener, no version probe).
-      publishIntegrationIfChanged();
-      return integration();
+      publishIntegrationIfChanged(status);
+      return status;
     },
+    spoolFacts: () => deps.poller.dropFacts(),
     async setTranscriptAnalysis(enabled) {
       const was = analysisEnabled();
       const at = now().toISOString();

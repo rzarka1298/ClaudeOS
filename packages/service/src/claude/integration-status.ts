@@ -1,5 +1,6 @@
 import { execFile as nodeExecFileCallback } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
+import { access, constants } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { parseClaudeVersionOutput, supportStatus } from "@ccc/collectors";
 import type {
@@ -7,7 +8,11 @@ import type {
   IntegrationInstallState,
   TelemetryStatus,
 } from "@ccc/domain";
-import { readBoundedRegularFile } from "./bounded-read.js";
+import {
+  type BoundedRead,
+  readBoundedRegularFileAsync,
+  readBoundedRegularFileDetailed,
+} from "./bounded-read.js";
 import type { PipelineHealth } from "./pipeline.js";
 
 /**
@@ -49,6 +54,19 @@ const UNKNOWN_SETTINGS: ClaudeSettingsFacts = Object.freeze({
   hooks: "unknown",
   statusLine: "unknown",
   disableAllHooks: null,
+  cleanupPeriodDays: DEFAULT_CLEANUP_PERIOD_DAYS,
+  hookNodePath: null,
+});
+
+/**
+ * No `settings.json` at all (FIX2A F5): nothing of ours is installed and nothing is disabled. A fresh
+ * Claude Code install has no settings file, and "not installed" with the copy-command action is the
+ * truthful answer; `unknown` is kept for a file that exists but cannot be read.
+ */
+const NO_SETTINGS_FILE: ClaudeSettingsFacts = Object.freeze({
+  hooks: "not-installed",
+  statusLine: "not-installed",
+  disableAllHooks: false,
   cleanupPeriodDays: DEFAULT_CLEANUP_PERIOD_DAYS,
   hookNodePath: null,
 });
@@ -101,21 +119,13 @@ function cleanupDays(value: unknown): number {
   return Math.max(1, Math.floor(value));
 }
 
-/**
- * Read-only facts from `<claude-config>/settings.json`. A missing,
- * oversized or invalid file reports `unknown` (never throws, never writes).
- */
-export function readClaudeSettingsFacts(
-  settingsPath: string,
-  runtimeDir: string,
-): ClaudeSettingsFacts {
+/** The facts a settings read gives: a missing file is not installed, anything unreadable is unknown. */
+function settingsFactsOf(read: BoundedRead, runtimeDir: string): ClaudeSettingsFacts {
+  if (read.kind === "missing") return NO_SETTINGS_FILE;
+  if (read.kind === "unreadable") return UNKNOWN_SETTINGS;
   let settings: unknown;
   try {
-    // A regular file under a byte cap, read through one descriptor (FIX1A MINOR 6):
-    // a FIFO or a device behind a symlink is unreadable, never a hang.
-    const text = readBoundedRegularFile(settingsPath, MAX_SETTINGS_BYTES);
-    if (text === null) return UNKNOWN_SETTINGS;
-    settings = JSON.parse(text);
+    settings = JSON.parse(read.text);
   } catch {
     return UNKNOWN_SETTINGS;
   }
@@ -131,6 +141,36 @@ export function readClaudeSettingsFacts(
   };
 }
 
+/**
+ * Read-only facts from `<claude-config>/settings.json`. A missing file reads `not-installed` (FIX2A
+ * F5); an unreadable, non-regular, oversized or invalid one reads `unknown` (never throws, never
+ * writes). Synchronous: for startup and the background refresh. The health check uses
+ * {@link readClaudeSettingsFactsAsync}.
+ */
+export function readClaudeSettingsFacts(
+  settingsPath: string,
+  runtimeDir: string,
+): ClaudeSettingsFacts {
+  // A regular file under a byte cap, read through one descriptor (FIX1A MINOR 6): a FIFO or a
+  // device behind a symlink is unreadable, never a hang.
+  return settingsFactsOf(
+    readBoundedRegularFileDetailed(settingsPath, MAX_SETTINGS_BYTES),
+    runtimeDir,
+  );
+}
+
+/** The same facts through asynchronous reads, for the request path (FIX2A F1); `signal` stops it early. */
+export async function readClaudeSettingsFactsAsync(
+  settingsPath: string,
+  runtimeDir: string,
+  signal?: AbortSignal,
+): Promise<ClaudeSettingsFacts> {
+  return settingsFactsOf(
+    await readBoundedRegularFileAsync(settingsPath, MAX_SETTINGS_BYTES, signal),
+    runtimeDir,
+  );
+}
+
 /** What the installer recorded in `<runtime>/hooks/install.json` (05-09); absolute paths only. */
 export interface InstallRecord {
   readonly nodePath: string | null;
@@ -141,19 +181,41 @@ function absoluteOrNull(value: unknown): string | null {
   return typeof value === "string" && value.length <= 4096 && isAbsolute(value) ? value : null;
 }
 
-/** The install record, or null when absent or unreadable. */
-export function readInstallRecord(runtimeDir: string): InstallRecord | null {
-  const path = join(runtimeDir, "hooks", "install.json");
+function installRecordOf(read: BoundedRead): InstallRecord | null {
+  if (read.kind !== "text") return null;
   let parsed: unknown;
   try {
-    const text = readBoundedRegularFile(path, MAX_INSTALL_RECORD_BYTES);
-    if (text === null) return null;
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(read.text);
   } catch {
     return null;
   }
   if (!isObject(parsed)) return null;
   return { nodePath: absoluteOrNull(parsed.nodePath), claudeBin: absoluteOrNull(parsed.claudeBin) };
+}
+
+function installRecordPath(runtimeDir: string): string {
+  return join(runtimeDir, "hooks", "install.json");
+}
+
+/** The install record, or null when absent or unreadable. */
+export function readInstallRecord(runtimeDir: string): InstallRecord | null {
+  return installRecordOf(
+    readBoundedRegularFileDetailed(installRecordPath(runtimeDir), MAX_INSTALL_RECORD_BYTES),
+  );
+}
+
+/** The install record through an asynchronous read, for the request path (FIX2A F1). */
+export async function readInstallRecordAsync(
+  runtimeDir: string,
+  signal?: AbortSignal,
+): Promise<InstallRecord | null> {
+  return installRecordOf(
+    await readBoundedRegularFileAsync(
+      installRecordPath(runtimeDir),
+      MAX_INSTALL_RECORD_BYTES,
+      signal,
+    ),
+  );
 }
 
 export interface VersionProbeDeps {
@@ -238,6 +300,16 @@ export interface IntegrationInputs {
 }
 
 export const nodePathExists = (path: string): boolean => existsSync(path);
+
+/** Whether a path exists, asynchronously (FIX2A F1): a stalled mount holds a pool thread, not the loop. */
+export async function nodePathExistsAsync(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The status Settings shows. Telemetry reads `shape-changed` while a known
