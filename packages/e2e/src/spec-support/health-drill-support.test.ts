@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -16,7 +17,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { realClaudeConfigDir, realRuntimeDir, realStorePath } from "../isolation-guards.js";
 import { REPO_ROOT } from "../repo-paths.js";
-import { createRunRoot, type RunRootPaths } from "../run-root.js";
+import { createRunRoot, pathsForRoot, type RunRootPaths } from "../run-root.js";
 import { SQLITE_TOOL } from "../store-copy.js";
 import {
   DRILL_TIMEOUT_MS,
@@ -44,7 +45,7 @@ let home: string;
 let base: string;
 let outside: string;
 let paths: RunRootPaths;
-const deps = () => ({ home });
+const deps = () => ({ home, base });
 
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "ccc-e2e-drill."));
@@ -192,6 +193,158 @@ describe("withMode (Test 1)", () => {
   });
 });
 
+describe("withMode keeps the original error and refuses a second hold (B-MINOR 2)", () => {
+  it("rethrows the original error when the restore also fails, with the restore error attached", async () => {
+    chmodSync(outside, 0o755);
+    const target = join(paths.root, "locked");
+    writeFileSync(target, "x", { mode: 0o644 });
+    const boom = new Error("boom");
+    const caught = await withMode(
+      paths,
+      target,
+      0o000,
+      () => {
+        // The restore step will find a link here and refuse; the caller must still see "boom".
+        rmSync(target);
+        symlinkSync(outside, target);
+        throw boom;
+      },
+      deps(),
+    ).catch((error: unknown) => error);
+    expect(caught).toBe(boom);
+    expect((caught as { restoreError?: Error }).restoreError?.message).toMatch(/symbolic link/);
+    expect(mode(outside)).toBe(0o755);
+  });
+
+  it("refuses a target that another withMode still holds, by any spelling, then frees it", async () => {
+    const target = join(paths.root, "locked");
+    mkdirSync(target, { mode: 0o755 });
+    chmodSync(target, 0o755);
+    let inner: unknown;
+    await withMode(
+      paths,
+      target,
+      0o700,
+      async () => {
+        inner = await withMode(paths, join(target, "..", "locked"), 0o000, () => 1, deps()).catch(
+          (error: unknown) => error,
+        );
+      },
+      deps(),
+    );
+    expect((inner as Error).message).toMatch(/already/);
+    expect(mode(target)).toBe(0o755);
+    // Released after a normal finish and after a throw, so the same target can be used again.
+    await expect(withMode(paths, target, 0o700, () => 1, deps())).resolves.toBe(1);
+    await expect(
+      withMode(
+        paths,
+        target,
+        0o700,
+        () => {
+          throw new Error("x");
+        },
+        deps(),
+      ),
+    ).rejects.toThrow("x");
+    await expect(withMode(paths, target, 0o700, () => 2, deps())).resolves.toBe(2);
+  });
+});
+
+describe("writes never follow or share a link (B-MINOR 3)", () => {
+  it("writes a fake executable as a new file, leaving a hard-linked outside file untouched", () => {
+    const victim = join(outside, "victim.sh");
+    writeFileSync(victim, "keep", { mode: 0o644 });
+    mkdirSync(join(paths.root, "fake-bin"), { mode: 0o700 });
+    linkSync(victim, join(paths.root, "fake-bin", "claude"));
+    const file = writeFakeExecutable(paths, "claude", { versionLine: "9.9.9" }, deps());
+    expect(readFileSync(victim, "utf8")).toBe("keep");
+    expect(mode(victim)).toBe(0o644);
+    expect(readFileSync(file, "utf8")).toContain("9.9.9");
+    expect(mode(file)).toBe(0o700);
+  });
+
+  it("refuses to append to a spool file that has a second hard link", () => {
+    const victim = join(outside, "victim.dropped");
+    writeFileSync(victim, "keep", { mode: 0o644 });
+    mkdirSync(join(paths.runtimeDir, "spool"), { mode: 0o700 });
+    linkSync(victim, join(paths.runtimeDir, "spool", "hooks.dropped"));
+    expect(() => writeSpoolDrops(paths, 3, deps())).toThrow(/link/);
+    expect(readFileSync(victim, "utf8")).toBe("keep");
+    expect(mode(victim)).toBe(0o644);
+  });
+
+  it("opens every written file without following a final link", () => {
+    const source = readFileSync(new URL("./health-drill-support.ts", import.meta.url), "utf8");
+    expect(source).toMatch(/O_NOFOLLOW/);
+    expect(source).toMatch(/O_EXCL/);
+    expect(source).toMatch(/fchmodSync/);
+    expect(source).not.toMatch(/\bwriteFileSync\b|\bappendFileSync\b/);
+  });
+});
+
+describe("the run root guard (B-MINOR 4)", () => {
+  it("is pinned to the real base: a run root under another base is refused unless a test names it", () => {
+    expect(() => makeSecondVault(paths, "second", { home })).toThrow(/run root/);
+    expect(() => makeSecondVault(paths, "second", { home, base })).not.toThrow();
+  });
+
+  it("requires the run root to exist, belong to the current user and be mode 700", () => {
+    chmodSync(paths.root, 0o750);
+    expect(() => makeSecondVault(paths, "second", deps())).toThrow(/private|mode/i);
+    chmodSync(paths.root, 0o700);
+    expect(() => makeSecondVault(paths, "second", deps())).not.toThrow();
+    const gone = pathsForRoot(join(base, "ccc-uat.zzzzzz"), paths.runId);
+    expect(() => makeSecondVault(gone, "second", deps())).toThrow(/run root/);
+  });
+});
+
+describe("the owner-location check is load-bearing in the guard (test weakness)", () => {
+  // A fake home placed INSIDE the run root passes every other check: the root is not below the
+  // home, and the targets are strictly inside the root with no link on the way. Only the
+  // owner-location refusal can stop a drill from touching it.
+  it("refuses a target in an owner folder that sits inside the run root, naming the owner category", async () => {
+    const fakeHome = join(paths.root, "home");
+    mkdirSync(realRuntimeDir(fakeHome), { recursive: true });
+    mkdirSync(realClaudeConfigDir(fakeHome), { recursive: true });
+    for (const target of [realRuntimeDir(fakeHome), realClaudeConfigDir(fakeHome), fakeHome]) {
+      await expect(
+        withMode(paths, target, 0o700, () => 1, { home: fakeHome, base }),
+        target.slice(paths.root.length),
+      ).rejects.toThrow(/owner's real folders/);
+    }
+    expect(mode(realClaudeConfigDir(fakeHome))).not.toBe(0o000);
+    // The same target is fine once it is not the owner's.
+    await expect(
+      withMode(paths, realClaudeConfigDir(fakeHome), 0o700, () => 1, {
+        home: join(scratch, "other"),
+        base,
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it("refuses a hook installer binary in such an owner folder", () => {
+    const fakeHome = join(paths.root, "home");
+    mkdirSync(join(realClaudeConfigDir(fakeHome), "bin"), { recursive: true });
+    expect(() =>
+      hookInstallerArgv(
+        paths,
+        { claudeBin: join(realClaudeConfigDir(fakeHome), "bin", "claude") },
+        { home: fakeHome, base },
+      ),
+    ).toThrow(/owner's real folders/);
+  });
+
+  it("matches the owner's folders whatever the letter case", () => {
+    expect(() =>
+      refuseOwnerLocations(join(home, ".CLAUDE-COMMAND-CENTER", "operational.db"), home),
+    ).toThrow(/owner's/);
+    expect(() => refuseOwnerLocations(join(home, ".Claude", "settings.json"), home)).toThrow(
+      /owner's/,
+    );
+  });
+});
+
 describe("makeSecondVault and writeFakeExecutable (Test 2)", () => {
   it("creates a vault folder with an .obsidian marker under the run root's vaults folder", () => {
     const vault = makeSecondVault(paths, "second", deps());
@@ -329,15 +482,15 @@ describe("runHookInstaller (Test 4)", () => {
     mkdirSync(realRuntime);
     rmSync(paths.claudeConfigDir, { recursive: true });
     symlinkSync(realClaude, paths.claudeConfigDir);
-    await expect(runHookInstaller(paths, undefined, { home, run })).rejects.toThrow();
+    await expect(runHookInstaller(paths, undefined, { home, base, run })).rejects.toThrow();
     rmSync(paths.claudeConfigDir);
     mkdirSync(paths.claudeConfigDir, { mode: 0o700 });
     rmSync(paths.runtimeDir, { recursive: true });
     symlinkSync(realRuntime, paths.runtimeDir);
-    await expect(runHookInstaller(paths, undefined, { home, run })).rejects.toThrow();
+    await expect(runHookInstaller(paths, undefined, { home, base, run })).rejects.toThrow();
     // Paths that name the real folders directly are not the run root's own layout.
     await expect(
-      runHookInstaller({ ...paths, claudeConfigDir: realClaude }, undefined, { home, run }),
+      runHookInstaller({ ...paths, claudeConfigDir: realClaude }, undefined, { home, base, run }),
     ).rejects.toThrow();
     expect(calls).toEqual([]);
     expect(readdirSync(realClaude)).toEqual([]);
@@ -350,7 +503,7 @@ describe("runHookInstaller (Test 4)", () => {
       calls.push({ file, args, timeoutMs: options.timeoutMs });
       return { stdout: "", stderr: "" };
     };
-    await runHookInstaller(paths, undefined, { home, run: ok });
+    await runHookInstaller(paths, undefined, { home, base, run: ok });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.timeoutMs).toBe(DRILL_TIMEOUT_MS);
     expect(calls[0]?.timeoutMs).toBe(30_000);
@@ -358,7 +511,7 @@ describe("runHookInstaller (Test 4)", () => {
     const failing: DrillRunner = async () => {
       throw new Error("exit 1");
     };
-    await expect(runHookInstaller(paths, undefined, { home, run: failing })).rejects.toThrow(
+    await expect(runHookInstaller(paths, undefined, { home, base, run: failing })).rejects.toThrow(
       /hook installer/i,
     );
   });
@@ -400,6 +553,7 @@ describe("seedLauncherRow (Test 5)", () => {
     ]);
   }
 
+  const stopped = { isRunning: () => false };
   const input = {
     launcher: "antigravity",
     bundleId: "com.example.not-installed",
@@ -409,13 +563,17 @@ describe("seedLauncherRow (Test 5)", () => {
   it("runs one fixed statement through the sqlite3 tool with an argv array and a 30 second cap", async () => {
     writeFileSync(paths.dbPath, "", { mode: 0o600 });
     const { calls, run } = capture();
-    await seedLauncherRow(paths, input, { home, run });
+    await seedLauncherRow(paths, input, { ...deps(), run, fixture: stopped });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.file).toBe(SQLITE_TOOL);
     expect(calls[0]?.args).toEqual(["-bail", paths.dbPath, SEED_ANTIGRAVITY]);
     expect(calls[0]?.timeoutMs).toBe(30_000);
     expect(Object.keys(calls[0]?.env ?? {}).sort()).toEqual(["LC_ALL", "PATH"]);
-    await seedLauncherRow(paths, { ...input, launcher: "claude-desktop" }, { home, run });
+    await seedLauncherRow(
+      paths,
+      { ...input, launcher: "claude-desktop" },
+      { ...deps(), run, fixture: stopped },
+    );
     expect(calls[1]?.args[2]).toBe(SEED_ANTIGRAVITY.replace("'antigravity'", "'claude-desktop'"));
   });
 
@@ -423,34 +581,55 @@ describe("seedLauncherRow (Test 5)", () => {
     writeFileSync(paths.dbPath, "", { mode: 0o600 });
     const { calls, run } = capture();
     await expect(
-      seedLauncherRow(paths, { ...input, fixtureState: "running" } as never, { home, run }),
+      seedLauncherRow(paths, { ...input, fixtureState: "running" } as never, {
+        home,
+        base,
+        run,
+        fixture: stopped,
+      }),
     ).rejects.toThrow(/stopped/);
     await expect(
       seedLauncherRow(paths, { launcher: input.launcher, bundleId: input.bundleId } as never, {
         home,
+        base,
         run,
+        fixture: stopped,
       }),
     ).rejects.toThrow(/stopped/);
+    // No fixture handle at all: the caller cannot show the service is down, so it is refused (B-MINOR 5).
     await expect(
-      seedLauncherRow(paths, input, { home, run, fixture: { isRunning: () => true } }),
+      // @ts-expect-error the fixture handle is a required dependency
+      seedLauncherRow(paths, input, { home, base, run }),
+    ).rejects.toThrow(/stopped/);
+    await expect(
+      seedLauncherRow(paths, input, { home, base, run, fixture: { isRunning: () => true } }),
     ).rejects.toThrow(/stopped/);
     // A db path that is not the run root's own store.
     const other = join(paths.root, "tmp", "other.db");
     writeFileSync(other, "");
     await expect(
-      seedLauncherRow({ ...paths, dbPath: other }, input, { home, run }),
+      seedLauncherRow({ ...paths, dbPath: other }, input, { home, base, run, fixture: stopped }),
     ).rejects.toThrow();
     await expect(
-      seedLauncherRow({ ...paths, dbPath: join(outside, "operational.db") }, input, { home, run }),
+      seedLauncherRow({ ...paths, dbPath: join(outside, "operational.db") }, input, {
+        home,
+        base,
+        run,
+        fixture: stopped,
+      }),
     ).rejects.toThrow();
     // No store yet: sqlite3 would create an empty one, so the helper refuses instead.
     rmSync(paths.dbPath);
-    await expect(seedLauncherRow(paths, input, { home, run })).rejects.toThrow(/store/i);
+    await expect(
+      seedLauncherRow(paths, input, { home, base, run, fixture: stopped }),
+    ).rejects.toThrow(/store/i);
     // A store that is a symlink to a file outside the root.
     const elsewhere = join(outside, "operational.db");
     writeFileSync(elsewhere, "");
     symlinkSync(elsewhere, paths.dbPath);
-    await expect(seedLauncherRow(paths, input, { home, run })).rejects.toThrow(/symbolic link/);
+    await expect(
+      seedLauncherRow(paths, input, { home, base, run, fixture: stopped }),
+    ).rejects.toThrow(/symbolic link/);
     expect(calls).toEqual([]);
   });
 
@@ -470,17 +649,26 @@ describe("seedLauncherRow (Test 5)", () => {
       "a\nb",
     ]) {
       await expect(
-        seedLauncherRow(paths, { ...input, bundleId }, { home, run }),
+        seedLauncherRow(paths, { ...input, bundleId }, { home, base, run, fixture: stopped }),
         JSON.stringify(bundleId),
       ).rejects.toThrow();
     }
     for (const launcher of ["claude-code", "codex", "terminal", "", "x'y"]) {
       await expect(
-        seedLauncherRow(paths, { ...input, launcher } as never, { home, run }),
+        seedLauncherRow(paths, { ...input, launcher } as never, {
+          home,
+          base,
+          run,
+          fixture: stopped,
+        }),
       ).rejects.toThrow();
     }
     expect(calls).toEqual([]);
-    await seedLauncherRow(paths, { ...input, bundleId: "A".repeat(255) }, { home, run });
+    await seedLauncherRow(
+      paths,
+      { ...input, bundleId: "A".repeat(255) },
+      { home, base, run, fixture: stopped },
+    );
     expect(calls).toHaveLength(1);
   });
 
@@ -488,8 +676,12 @@ describe("seedLauncherRow (Test 5)", () => {
     "writes the row into a real sandbox store copy and replaces it on a second seed",
     async () => {
       makeStore();
-      await seedLauncherRow(paths, input, { home });
-      await seedLauncherRow(paths, { ...input, bundleId: "com.example.also-missing" }, { home });
+      await seedLauncherRow(paths, input, { ...deps(), fixture: stopped });
+      await seedLauncherRow(
+        paths,
+        { ...input, bundleId: "com.example.also-missing" },
+        { ...deps(), fixture: stopped },
+      );
       const rows = JSON.parse(
         execFileSync(
           SQLITE_TOOL,

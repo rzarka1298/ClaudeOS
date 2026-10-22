@@ -1,11 +1,13 @@
 import {
   cpSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { main } from "./cli.js";
 import { REPO_ROOT } from "./repo-paths.js";
-import { type AuditResult, auditPhases, classifyResult } from "./uat-audit.js";
+import { type AuditResult, type AuditTestHooks, auditPhases, classifyResult } from "./uat-audit.js";
 import { parseUatScript } from "./uat-tags.js";
 
 /**
@@ -51,13 +53,42 @@ function put(phases: string, folder: string, file: string, text: string): void {
   writeFileSync(join(phases, folder, file), text);
 }
 
+/** The item counts of the miniature fixtures (the real counts come from the spec maps). */
+const FIXTURE_COUNTS = { "06": 3, "07": 2, "08": 2 } as const;
+
+/**
+ * Runs the audit through the real `main`. A `--only a,b` pair in `args` is lifted out into the
+ * test hook, because the production parser refuses `--only` (FIX1B B-M1); `rawAudit` is the
+ * production parser unchanged. Fixture item counts replace the spec-map counts unless
+ * `realCounts` is set.
+ */
 async function audit(
   args: string[],
   io: Record<string, unknown> = {},
+  options: { realCounts?: boolean } = {},
+): Promise<{ code: number; lines: string[] }> {
+  const rest = [...args];
+  let only: string[] | undefined;
+  const at = rest.indexOf("--only");
+  if (at !== -1 && rest[at + 1] !== undefined) {
+    only = (rest[at + 1] as string).split(",");
+    rest.splice(at, 2);
+  }
+  return rawAudit(rest, io, {
+    ...(only === undefined ? {} : { only }),
+    ...(options.realCounts === true ? {} : { expectedItems: FIXTURE_COUNTS }),
+  });
+}
+
+async function rawAudit(
+  args: string[],
+  io: Record<string, unknown> = {},
+  hooks: AuditTestHooks = {},
 ): Promise<{ code: number; lines: string[] }> {
   const lines: string[] = [];
   const code = await main(["audit", ...args], {
     write: (line) => lines.push(line),
+    auditHooks: hooks,
     io: {
       readGitFacts: async () => ({ head: HEAD, clean: true, changedSince: null }),
       now: () => new Date("2026-01-02T03:04:05Z"),
@@ -96,7 +127,7 @@ describe("the audit command over a standard script folder (Test 1, tracer)", () 
       phases,
       "03-gamma",
       "03-UAT.md",
-      "---\nstatus: testing\nphase: 03-gamma\n---\n\n## Tests\n\n### 1. Unrun\nrun: owner\nresult: [pending]\n",
+      "---\nstatus: testing\nphase: 03-gamma\n---\n\n## Tests\n\n### 1. Unrun\nrun: owner\nresult: [pending]\n\n## Summary\n\ntotal: 1\n",
     );
     const out = join(scratch, "AUDIT.md");
     const { code } = await audit(["--phases-dir", phases, "--out", out, "--only", "02,03"]);
@@ -110,13 +141,13 @@ describe("the audit command over a standard script folder (Test 1, tracer)", () 
       phases,
       "03-gamma",
       "03-UAT.md",
-      "---\nstatus: complete\nphase: 03-gamma\n---\n\n### 1. A\nresult: fail\n",
+      "---\nstatus: complete\nphase: 03-gamma\n---\n\n### 1. A\nresult: fail\n\n## Summary\n\ntotal: 1\n",
     );
     put(
       phases,
       "04-delta",
       "04-UAT.md",
-      "---\nstatus: complete\nphase: 04-delta\n---\n\n### 1. A\nresult: maybe later\n",
+      "---\nstatus: complete\nphase: 04-delta\n---\n\n### 1. A\nresult: maybe later\n\n## Summary\n\ntotal: 1\n",
     );
     const out = join(scratch, "AUDIT.md");
     expect((await audit(["--phases-dir", phases, "--out", out, "--only", "02,03"])).code).toBe(1);
@@ -184,6 +215,10 @@ describe("an auto result counts only when its run is ratified (Test 3)", () => {
     "auto-result: pass @ 0a1b2c3d 2000-03-01",
     "result: [pending]",
     "",
+    "## Summary",
+    "",
+    "total: 1",
+    "",
   ].join("\n");
   const REPORT = (ratified: string): string =>
     [
@@ -242,10 +277,11 @@ describe("usage errors (Test 4)", () => {
     for (const [args, flag] of [
       [["--bogus"], "--bogus"],
       [["--only", "99"], "--only"],
-      [["--only", "0x"], "--only"],
+      [["--only", "02"], "--only"],
+      [["--only=02"], "--only"],
       [["--phases-dir"], "--phases-dir"],
     ] as const) {
-      const { code, lines } = await audit([...args]);
+      const { code, lines } = await rawAudit([...args]);
       expect(code, args.join(" ")).toBe(2);
       expect(lines.join("\n")).toContain(flag);
     }
@@ -284,6 +320,7 @@ function auditTree(phases: string, only: string[]): AuditResult {
     readText: (path) => (existsSync(path) ? readFileSync(path, "utf8") : null),
     listDir: (dir) => (existsSync(dir) ? readdirSync(dir) : []),
     only,
+    expectedItems: FIXTURE_COUNTS,
   });
 }
 
@@ -345,7 +382,7 @@ describe("the Phase 05.1 adapter (Test 3)", () => {
     expect(row.recorded).toBe(5);
     expect(row.status).toBe("recorded-with-exceptions");
     expect(row.exceptions.map((entry) => entry.id).sort()).toEqual(
-      ["05.1-claude-run", "05.1-u2", "05.1-u3"].sort(),
+      ["05.1-claude-run", "05.1-u2", "05.1-u3", "05.1-u4"].sort(),
     );
   });
 
@@ -432,6 +469,7 @@ describe("the exception list in the record (Test 6)", () => {
         "05.1-claude-run",
         "05.1-u2",
         "05.1-u3",
+        "05.1-u4",
         "05.2-no-uat-file",
         "06-claude-ratified",
       ].sort(),
@@ -439,7 +477,7 @@ describe("the exception list in the record (Test 6)", () => {
     for (const line of rows) {
       expect(line).toMatch(/\| OD-7 \| pending \|$/);
     }
-    expect(text).toMatch(/^exceptions: 7$/m);
+    expect(text).toMatch(/^exceptions: 8$/m);
     expect(text).toMatch(/^exceptions-accepted: 0$/m);
   });
 });
@@ -466,7 +504,7 @@ describe("regeneration keeps what the owner wrote (Test 1)", () => {
   it("keeps the accepted: values, the Amendments block and the statement block byte for byte", async () => {
     const { out, phases } = await firstRecord();
     let text = readFileSync(out, "utf8");
-    text = text.replace(/^(\| 01-item-10 \|.*\| )pending \|$/m, "$12000-05-06 (synthetic owner) |");
+    text = text.replace(/^(\| 01-item-10 \|.*\| )pending \|$/m, "$12000-05-06 |");
     text = text.replace(
       /^## Amendments[\s\S]*?(?=^## Milestone statement)/m,
       "## Amendments\n\n- 2000-05-05: a made-up amendment line, kept verbatim.\n\n",
@@ -546,15 +584,395 @@ describe("a public clone (Test 3)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// FIX1B: the checker fails closed.
+
+/** True when the temp volume treats upper and lower case as the same name (APFS default). */
+const CASE_INSENSITIVE = (() => {
+  const probe = mkdtempSync(join(tmpdir(), "ccc-e2e-case."));
+  try {
+    writeFileSync(join(probe, "Probe"), "x");
+    return existsSync(join(probe, "pROBE"));
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+
+describe("the production parser has no --only (B-M1)", () => {
+  it("refuses --only in either spelling and writes nothing", async () => {
+    const phases = phasesWith("02-beta", "07-eta");
+    const out = join(scratch, "AUDIT.md");
+    for (const only of [["--only", "02,07"], ["--only=02,07"]]) {
+      const { code, lines } = await rawAudit(["--phases-dir", phases, "--out", out, ...only]);
+      expect(code, only.join(" ")).toBe(2);
+      expect(lines.join("\n")).toContain("--only");
+    }
+    expect(existsSync(out)).toBe(false);
+  });
+});
+
+describe("the --out guard (B-M1, Codex-1, B-MINOR 6)", () => {
+  const sevenOf = (phases: string): string => join(phases, "07-eta", "07-UAT.md");
+
+  /** An audit filtered to phase 02, aimed at `out`: the filter must not hide 07's file. */
+  async function aimed(phases: string, out: string) {
+    return audit(["--phases-dir", phases, "--out", out, "--only", "02"]);
+  }
+
+  it("refuses another phase's evidence file whatever the --only filter", async () => {
+    const phases = phasesWith("02-beta", "07-eta");
+    const before = readFileSync(sevenOf(phases), "utf8");
+    const { code, lines } = await aimed(phases, sevenOf(phases));
+    expect(code).toBe(2);
+    expect(lines.join("\n")).toContain("--out");
+    expect(readFileSync(sevenOf(phases), "utf8")).toBe(before);
+  });
+
+  it.runIf(CASE_INSENSITIVE)("refuses a case variant of an evidence file", async () => {
+    const phases = phasesWith("02-beta", "07-eta");
+    const before = readFileSync(sevenOf(phases), "utf8");
+    const variant = join(phases, "07-ETA", "07-uat.MD");
+    expect((await aimed(phases, variant)).code).toBe(2);
+    expect(readFileSync(sevenOf(phases), "utf8")).toBe(before);
+  });
+
+  it("refuses a symbolic link and a hard link to an evidence file", async () => {
+    const phases = phasesWith("02-beta", "07-eta");
+    const before = readFileSync(sevenOf(phases), "utf8");
+    const soft = join(scratch, "soft.md");
+    symlinkSync(sevenOf(phases), soft);
+    expect((await aimed(phases, soft)).code).toBe(2);
+    const hard = join(scratch, "hard.md");
+    linkSync(sevenOf(phases), hard);
+    expect((await aimed(phases, hard)).code).toBe(2);
+    const dirLink = join(scratch, "dir-link");
+    symlinkSync(join(phases, "07-eta"), dirLink);
+    expect((await aimed(phases, join(dirLink, "07-UAT.md"))).code).toBe(2);
+    expect(readFileSync(sevenOf(phases), "utf8")).toBe(before);
+  });
+
+  it("refuses an --out outside the Phase 8 folder and the temp folder", async () => {
+    const phases = phasesWith("02-beta");
+    const elsewhere = join(REPO_ROOT, "packages", "e2e", "audit-out-must-not-exist.md");
+    expect((await aimed(phases, elsewhere)).code).toBe(2);
+    expect(existsSync(elsewhere)).toBe(false);
+  });
+
+  it("allows a new file below the temp folder", async () => {
+    const phases = phasesWith("02-beta");
+    expect((await aimed(phases, join(scratch, "fresh-record.md"))).code).toBe(0);
+  });
+
+  it("allows the Phase 8 folder and, by default, writes the record there", async () => {
+    const phases = phasesWith("02-beta");
+    put(phases, "08-theta", "keep.txt", "x");
+    const inside = join(phases, "08-theta", "08-UAT-AUDIT.md");
+    expect((await aimed(phases, inside)).code).toBe(0);
+    expect(existsSync(inside)).toBe(true);
+    rmSync(inside);
+    const { code } = await audit(["--phases-dir", phases, "--only", "02"]);
+    expect(code).toBe(0);
+    expect(existsSync(inside)).toBe(true);
+  });
+});
+
+describe("script items fail closed (B-M2 a, b, d)", () => {
+  const body = (items: string[], summary: string | null): string =>
+    [
+      "---",
+      "status: complete",
+      "phase: 03-gamma",
+      "---",
+      "",
+      "## Tests",
+      "",
+      ...items,
+      ...(summary === null ? [] : ["## Summary", "", summary, ""]),
+    ].join("\n");
+  const ok = (n: number): string => `### ${n}. Item ${n}\nrun: owner\nresult: pass\n`;
+
+  function statusOfScript(text: string, expected?: Record<string, number>): AuditResult {
+    const phases = phasesWith();
+    put(phases, "03-gamma", "03-UAT.md", text);
+    return auditPhases({
+      phasesDir: phases,
+      readText: (path) => (existsSync(path) ? readFileSync(path, "utf8") : null),
+      listDir: (dir) => (existsSync(dir) ? readdirSync(dir) : []),
+      only: ["03"],
+      ...(expected === undefined ? {} : { expectedItems: expected }),
+    });
+  }
+
+  it("reads a clean script as recorded", () => {
+    const row = rowOf(statusOfScript(body([ok(1), ok(2)], "total: 2")), "03");
+    expect(row.status).toBe("recorded");
+    expect(row.defects).toEqual([]);
+  });
+
+  it("reads an item with no result line, or with two, as unrecognised", () => {
+    const none = rowOf(statusOfScript(body([ok(1), "### 2. B\nrun: owner\n"], "total: 2")), "03");
+    expect(none.status).toBe("unrecognised");
+    const two = rowOf(
+      statusOfScript(body([ok(1), "### 2. B\nresult: fail\nresult: pass\n"], "total: 2")),
+      "03",
+    );
+    expect(two.status).toBe("unrecognised");
+  });
+
+  it("reads a script with a parse finding such as a repeated item as unrecognised", () => {
+    const row = rowOf(statusOfScript(body([ok(1), ok(1)], "total: 2")), "03");
+    expect(row.status).toBe("unrecognised");
+    expect(row.defects.join(" ")).toMatch(/ITEM_DUPLICATE/);
+    const tag = rowOf(
+      statusOfScript(body([ok(1), "### 2. B\nrun: owner\nrun: auto\nresult: pass\n"], "total: 2")),
+      "03",
+    );
+    expect(tag.status).toBe("unrecognised");
+  });
+
+  it("reads an item count that differs from the Summary total, or a missing total, as a problem", () => {
+    const fewer = rowOf(statusOfScript(body([ok(1), ok(2)], "total: 3")), "03");
+    expect(fewer.status).toBe("unrecognised");
+    expect(fewer.defects.join(" ")).toMatch(/total/);
+    expect(rowOf(statusOfScript(body([ok(1)], null)), "03").status).toBe("unrecognised");
+    expect(rowOf(statusOfScript(body([ok(1)], "total: many")), "03").status).toBe("unrecognised");
+  });
+
+  it("compares phases 06, 07 and 08 with the spec map item count", () => {
+    const phases = phasesWith("06-zeta");
+    const run = (expected?: Record<string, number>) =>
+      auditPhases({
+        phasesDir: phases,
+        readText: (path) => (existsSync(path) ? readFileSync(path, "utf8") : null),
+        listDir: (dir) => (existsSync(dir) ? readdirSync(dir) : []),
+        only: ["06"],
+        ...(expected === undefined ? {} : { expectedItems: expected }),
+      });
+    // The default is the real map (26 items for Phase 6): the 3-item miniature does not match it.
+    const real = rowOf(run(), "06");
+    expect(real.status).toBe("unrecognised");
+    expect(real.defects.join(" ")).toMatch(/spec map/);
+    expect(rowOf(run({ "06": 3 }), "06").status).toBe("recorded-with-exceptions");
+  });
+
+  it("reads an explicit automated failure as an issue even while the owner result is pending", () => {
+    const failing = [
+      "### 1. Auto",
+      "run: auto",
+      "auto-result: fail @ 0a1b2c3d 2000-03-01",
+      "result: [pending]",
+      "",
+    ].join("\n");
+    const row = rowOf(statusOfScript(body([failing], "total: 1")), "03");
+    expect(row.status).toBe("issue");
+    // A later owner pass is the owner's own word and stands.
+    const walked = failing.replace("result: [pending]", "result: pass");
+    expect(rowOf(statusOfScript(body([walked], "total: 1")), "03").status).toBe("recorded");
+  });
+});
+
+describe("the 05.1 log adapter (B-M2 c)", () => {
+  const SCRIPT =
+    "# Synthetic\n\nStatus: COMPLETE\n\n" +
+    [1, 2, 3].map((n) => `### U${n} — Item ${n}\nresult: [pending]\n`).join("\n");
+
+  function logRow(log: string) {
+    const phases = phasesWith();
+    put(phases, "05.1-delta", "05.1-UAT.md", SCRIPT);
+    put(phases, "05.1-delta", "05.1-UAT-RESULTS-LOG.md", log);
+    return rowOf(auditTree(phases, ["05.1"]), "05.1");
+  }
+
+  it("takes the latest complete result of each item and ignores part lines", () => {
+    const row = logRow("U1 fail — first\nU1 part 1 pass\nU1 pass — re-run\nU2 PASSED\nU3 pass\n");
+    expect(row.recorded).toBe(3);
+    expect(row.status).toBe("recorded");
+  });
+
+  it("lets a later failure supersede an earlier pass", () => {
+    const row = logRow("U1 pass\nU2 pass\nU3 pass\nU2 failed — regressed\n");
+    expect(row.status).toBe("issue");
+  });
+
+  it("reads an unknown verb as unrecognised, never as pending or ok", () => {
+    const row = logRow("U1 pass\nU2 wibbled — who knows\nU3 pass\n");
+    expect(row.status).toBe("unrecognised");
+  });
+
+  it("matches a result after any whitespace, and reports not applicable as an exception", () => {
+    const row = logRow("U1\tpass\nU2  pass\nU3 not applicable — the IDE cannot do it\n");
+    expect(row.recorded).toBe(3);
+    expect(row.exceptions.map((entry) => entry.id)).toEqual(["05.1-u3"]);
+    expect(row.status).toBe("recorded-with-exceptions");
+  });
+
+  it("flags a log result for an item the script does not have", () => {
+    const row = logRow("U1 pass\nU2 pass\nU3 pass\nU9 pass\n");
+    expect(row.defects.join(" ")).toMatch(/U9/);
+  });
+});
+
+describe("--strict reads the acceptance exactly (B-M3)", () => {
+  async function strictWith(value: string): Promise<{ code: number; lines: string[] }> {
+    const phases = phasesWith("01-alpha");
+    const out = join(scratch, "AUDIT.md");
+    await audit(["--phases-dir", phases, "--out", out, "--only", "01"]);
+    writeFileSync(
+      out,
+      readFileSync(out, "utf8").replace(/^(\| 01-item-10 \|.*\| )pending \|$/m, `$1${value} |`),
+    );
+    return audit(["--phases-dir", phases, "--out", out, "--only", "01", "--strict"]);
+  }
+
+  it("accepts a bare date and 'accepted <date>'", async () => {
+    expect((await strictWith("2026-11-01")).code).toBe(0);
+    expect((await strictWith("accepted 2026-11-01")).code).toBe(0);
+  });
+
+  it("fails on anything else, naming the acceptance as unreadable", async () => {
+    for (const value of [
+      "2026-11-01 rejected — not this",
+      "2026-11-01 (synthetic owner)",
+      "accepted 2026-11-01 but not really",
+      "2026-13-45",
+      "rejected",
+      "2026-1-1",
+    ]) {
+      const { code, lines } = await strictWith(value);
+      expect(code, value).toBe(1);
+      expect(lines.join("\n"), value).toMatch(/01-item-10 acceptance unreadable/);
+    }
+  });
+});
+
+describe("regeneration keeps the owner's region verbatim (B-M4)", () => {
+  it("keeps everything from ## Amendments to the end, nested headings included", async () => {
+    const phases = phasesWith("01-alpha");
+    const out = join(scratch, "AUDIT.md");
+    await audit(["--phases-dir", phases, "--out", out, "--only", "01"]);
+    const generated = readFileSync(out, "utf8");
+    const head = generated.slice(0, generated.indexOf("## Amendments"));
+    const region = [
+      "## Amendments",
+      "",
+      "- 2000-05-05: a made-up amendment line.",
+      "",
+      "## 07-UAT item 20 amendment",
+      "",
+      "Owner words about item 20.   Trailing spaces   ",
+      "",
+      "## Milestone statement",
+      "",
+      "- OD-7: accepted",
+      "",
+      "## Owner signature",
+      "",
+      "Signed, made up.",
+      "no final newline",
+    ].join("\n");
+    writeFileSync(out, `${head.replace("## Phases\n", "## Phases\n\nSTALE\n")}${region}`);
+    await audit(["--phases-dir", phases, "--out", out, "--only", "01"]);
+    const after = readFileSync(out, "utf8");
+    expect(after.endsWith(region)).toBe(true);
+    expect(after).toContain("## 07-UAT item 20 amendment");
+    expect(after).toContain("## Owner signature");
+    expect(after).not.toContain("STALE");
+    expect(after.match(/^## Amendments$/gm)?.length).toBe(1);
+  });
+});
+
+describe("the remaining audit gaps (B-MINOR 7)", () => {
+  it("reports a Phase 7 script that still says status: testing as a defect", () => {
+    const row = rowOf(auditTree(phasesWith("07-eta"), ["07"]), "07");
+    expect(row.status).toBe("pending-live-uat");
+    expect(row.defects.join(" ")).toMatch(/status: testing/);
+  });
+
+  it("does not accept a bare run mention in the 05.2 record without a ratified marker", () => {
+    const phases = phasesWith("05.2-epsilon");
+    const file = join(phases, "05.2-epsilon", "05.2-VERIFICATION.md");
+    const original = readFileSync(file, "utf8");
+    const status = (text: string): string => {
+      writeFileSync(file, text);
+      return rowOf(auditTree(phases, ["05.2"]), "05.2").status;
+    };
+    const bare = original.replace(
+      /^Run 0a1b2c3d passed.*$/m,
+      "Run 0a1b2c3d passed 2/2 automated specs. Decide whether run 0a1b2c3d is ratified.",
+    );
+    expect(status(bare)).toBe("pending-live-uat");
+    expect(status(original.replace(/was ratified under/, "was not ratified under"))).toBe(
+      "pending-live-uat",
+    );
+    expect(
+      status(original.replace(/^Run.*$/m, "The report says ratified: I accept run 0a1b2c3d.")),
+    ).toBe("recorded-with-exceptions");
+    expect(
+      status(original.replace(/^Run.*$/m, "Run **0a1b2c3d** on main was ratified by Claude.")),
+    ).toBe("recorded-with-exceptions");
+  });
+
+  it("does not list its own output as an unregistered UAT file", () => {
+    const phases = phasesWith("02-beta");
+    put(phases, "08-theta", "08-UAT-AUDIT.md", "x");
+    put(phases, "08-theta", "08-UAT-NOTES.md", "x");
+    const result = auditPhases({
+      phasesDir: phases,
+      readText: (path) => (existsSync(path) ? readFileSync(path, "utf8") : null),
+      listDir: (dir) => (existsSync(dir) ? readdirSync(dir) : []),
+      expectedItems: FIXTURE_COUNTS,
+    });
+    expect(result.unregistered).toEqual(["08-theta/08-UAT-NOTES.md"]);
+  });
+});
+
 const planned = existsSync(join(REPO_ROOT, ".planning", "ROADMAP.md"));
 const real = planned ? describe : describe.skip;
 
 real("the real tree (Test 4, private checkouts only)", () => {
   it("exits 0 with phases 01 to 06 recorded and 07 and 08 pending, and prints no item text", async () => {
     const out = join(scratch, "REAL-AUDIT.md");
-    const { code, lines } = await audit(["--out", out]);
+    const { code, lines } = await audit(["--out", out], {}, { realCounts: true });
     expect(code).toBe(0);
     const text = readFileSync(out, "utf8");
+    // The per-phase counts of the real evidence (a drift here is a finding, not a test to loosen).
+    const counts: Record<string, string> = {
+      "01": "1/1",
+      "02": "4/4",
+      "03": "12/12",
+      "04": "14/14",
+      "05": "17/17",
+      "05.1": "16/16",
+      "05.2": "1/1",
+      "06": "26/26",
+      "07": "0/24",
+      "08": "0/39",
+    };
+    for (const [phase, count] of Object.entries(counts)) {
+      expect(text, phase).toMatch(
+        new RegExp(`^\\| ${phase.replace(".", "\\.")} \\|[^|]*\\| ${count} \\|`, "m"),
+      );
+    }
+    // Every real exception is listed (the eight known at plan time, plus 05.1 U3 not applicable).
+    const ids = text
+      .split("\n")
+      .filter((line) => /^\| (?:01|05|05\.1|05\.2|06)-[a-z0-9-]+ \|/.test(line))
+      .map((line) => line.split("|")[1]?.trim())
+      .sort();
+    expect(ids).toEqual(
+      [
+        "01-item-10",
+        "05-uat-6",
+        "05.1-claude-run",
+        "05.1-u3",
+        "05.1-u5",
+        "05.1-u7",
+        "05.1-u14",
+        "05.2-no-uat-file",
+        "06-claude-ratified",
+      ].sort(),
+    );
+    expect(text).not.toMatch(/unregistered UAT file: 08-/);
     for (const phase of ["01", "02", "03", "04", "05", "05.1", "05.2", "06"]) {
       expect(text, phase).toMatch(
         new RegExp(

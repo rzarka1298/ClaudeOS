@@ -16,11 +16,11 @@ import {
  */
 
 beforeEach(() => {
-  settingsSectionRequested.value = null;
+  takeSettingsSectionRequest();
 });
 
 afterEach(() => {
-  settingsSectionRequested.value = null;
+  takeSettingsSectionRequest();
 });
 
 describe("the section ids and labels (Test 1)", () => {
@@ -119,5 +119,30 @@ describe("an unknown id is ignored (Test 3)", () => {
       expect(settingsSectionRequested.value).toBe("paths");
     }
     expect(takeSettingsSectionRequest()).toBe("paths");
+  });
+});
+
+describe("the pending request cannot be written from outside (B-MINOR 8)", () => {
+  it("refuses a direct write, valid or not, and keeps the pending value", () => {
+    const writable = settingsSectionRequested as unknown as { value: unknown };
+    expect(() => {
+      writable.value = "not-a-section";
+    }).toThrow();
+    expect(() => {
+      writable.value = "paths";
+    }).toThrow();
+    expect(settingsSectionRequested.value).toBeNull();
+    requestSettingsSection("security");
+    expect(() => {
+      writable.value = "__proto__";
+    }).toThrow();
+    expect(settingsSectionRequested.value).toBe("security");
+    expect(takeSettingsSectionRequest()).toBe("security");
+  });
+
+  it("is still readable and subscribable as a signal", () => {
+    expect(settingsSectionRequested.peek()).toBeNull();
+    requestSettingsSection("visual");
+    expect(settingsSectionRequested.peek()).toBe("visual");
   });
 });

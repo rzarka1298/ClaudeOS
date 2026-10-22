@@ -45,6 +45,8 @@ export interface ServiceFixtureDeps {
   startService?: (args: StartServiceArgs) => Promise<Stoppable>;
   wait?: Wait;
   home?: string | undefined;
+  /** The allowed run-root base; tests only (production runs use the default under /tmp). */
+  base?: string | undefined;
   deadlineMs?: number;
 }
 
@@ -138,7 +140,10 @@ export function createServiceFixture(
       // The isolation variables come last, so a research variable can never replace one.
       env: {
         ...(options.researchEnv ?? {}),
-        ...buildServiceEnv(paths, sandbox.account, options.kind ?? "normal"),
+        ...buildServiceEnv(paths, sandbox.account, options.kind ?? "normal", {
+          base: deps.base,
+          home: deps.home,
+        }),
       },
     };
     if (options.waitAttempts !== undefined) args.waitAttempts = options.waitAttempts;

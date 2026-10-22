@@ -1,5 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   assertRunRootShape,
@@ -83,6 +91,39 @@ export function pathsForRoot(root: string, runId: string): RunRootPaths {
   };
 }
 
+/**
+ * Gives the owner back read, write and search on everything below `path` (u+rwx on folders,
+ * u+rw on files), so a drill that was interrupted while it held a locked folder or a read-only
+ * file cannot block the removal. Links are never followed or changed; an entry that cannot be
+ * changed is skipped and the removal reports whatever is left.
+ */
+function resetModes(path: string): void {
+  let info: ReturnType<typeof lstatSync>;
+  try {
+    info = lstatSync(path);
+  } catch {
+    return;
+  }
+  if (info.isSymbolicLink()) return;
+  try {
+    if (info.isDirectory()) {
+      if ((info.mode & 0o700) !== 0o700) chmodSync(path, (info.mode & 0o7777) | 0o700);
+    } else if ((info.mode & 0o600) !== 0o600) {
+      chmodSync(path, (info.mode & 0o7777) | 0o600);
+    }
+  } catch {
+    return;
+  }
+  if (!info.isDirectory()) return;
+  let names: string[];
+  try {
+    names = readdirSync(path);
+  } catch {
+    return;
+  }
+  for (const name of names) resetModes(join(path, name));
+}
+
 export function createRunRoot(options: RunRootOptions = {}): RunRootPaths {
   const base = options.base ?? DEFAULT_RUN_BASE;
   const root = mkdtempSync(join(base, RUN_ROOT_PREFIX));
@@ -110,6 +151,7 @@ export function createRunRoot(options: RunRootOptions = {}): RunRootPaths {
     }
     return paths;
   } catch (err) {
+    resetModes(root);
     rmSync(root, { recursive: true, force: true });
     throw err;
   }
@@ -118,5 +160,6 @@ export function createRunRoot(options: RunRootOptions = {}): RunRootPaths {
 /** Removes a run root completely; anything failing the shape check is refused and left alone. */
 export function removeRunRoot(root: string, options: RunRootOptions = {}): void {
   assertRunRootShape(root, { base: options.base ?? DEFAULT_RUN_BASE, home: options.home });
+  resetModes(root);
   rmSync(root, { recursive: true, force: true });
 }

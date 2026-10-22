@@ -63,7 +63,7 @@ import {
 } from "./screenshots.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
 import { extractSpecTitles } from "./tag-lint.js";
-import { runAuditCommand } from "./uat-audit.js";
+import { type AuditTestHooks, runAuditCommand } from "./uat-audit.js";
 import { generateUatVault } from "./uat-vault.js";
 import { isolatePluginData } from "./vault-plugin-data.js";
 import { parseVersions } from "./versions.js";
@@ -99,6 +99,8 @@ export interface CliDeps {
   write?: (line: string) => void;
   runUat?: (options: RunOptions, ports: RunPorts) => Promise<RunOutcome>;
   createRunPorts?: () => RunPorts;
+  /** Test-only seam for the audit (a phase filter, item counts); the command line has none. */
+  auditHooks?: AuditTestHooks;
 }
 
 export type CommandHandler = (
@@ -472,6 +474,7 @@ const auditHandler: CommandHandler = async (argv, deps) => {
       },
     },
     deps.write,
+    deps.auditHooks,
   );
 };
 

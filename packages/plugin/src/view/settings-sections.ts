@@ -1,4 +1,4 @@
-import { signal } from "@preact/signals";
+import { computed, type ReadonlySignal, signal } from "@preact/signals";
 
 /**
  * The Settings destination's nine sections and the one-shot deep link that reaches them
@@ -47,18 +47,26 @@ export function isSettingsSectionId(value: unknown): value is SettingsSectionId 
   return typeof value === "string" && (SETTINGS_SECTIONS as readonly string[]).includes(value);
 }
 
-/** The pending deep link, or `null`. Only {@link requestSettingsSection} sets it. */
-export const settingsSectionRequested = signal<SettingsSectionId | null>(null);
+/** The writable cell. Private: only {@link requestSettingsSection} and the take function touch it. */
+const pending = signal<SettingsSectionId | null>(null);
+
+/**
+ * The pending deep link, or `null`, as a read-only signal: a write from outside the module throws,
+ * so an unvalidated id can never be stored. Only {@link requestSettingsSection} sets it.
+ */
+export const settingsSectionRequested: ReadonlySignal<SettingsSectionId | null> = computed(
+  () => pending.value,
+);
 
 /** Asks the Settings destination to show `id`. An unknown id is ignored and changes nothing. */
 export function requestSettingsSection(id: SettingsSectionId): void {
   if (!isSettingsSectionId(id)) return;
-  settingsSectionRequested.value = id;
+  pending.value = id;
 }
 
 /** Reads the pending request and clears it: the value is returned exactly once. */
 export function takeSettingsSectionRequest(): SettingsSectionId | null {
-  const pending = settingsSectionRequested.peek();
-  settingsSectionRequested.value = null;
-  return pending;
+  const request = pending.peek();
+  pending.value = null;
+  return request;
 }

@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRunRoot, removeRunRoot } from "./run-root.js";
@@ -89,6 +98,34 @@ describe("removeRunRoot (Test 6)", () => {
     mkdirSync(join(paths.vaultsDir, "live"));
     removeRunRoot(paths.root, { base });
     expect(existsSync(paths.root)).toBe(false);
+  });
+
+  it("resets locked folders and read-only files first, so a drill that left a mode behind cannot block teardown (B-MINOR 2)", () => {
+    const paths = createRunRoot({ base });
+    const locked = join(paths.vaultsDir, "locked");
+    mkdirSync(join(locked, "inner"), { recursive: true });
+    writeFileSync(join(locked, "inner", "note.md"), "x");
+    writeFileSync(join(paths.runtimeDir, "frozen"), "x", { mode: 0o400 });
+    chmodSync(join(locked, "inner"), 0o500);
+    chmodSync(locked, 0o000);
+    chmodSync(paths.wdioDir, 0o500);
+    removeRunRoot(paths.root, { base });
+    expect(existsSync(paths.root)).toBe(false);
+  });
+
+  it("never follows a link while resetting modes", () => {
+    const paths = createRunRoot({ base });
+    const outside = mkdtempSync("/tmp/ccc-e2e-rr-out.");
+    try {
+      chmodSync(outside, 0o755);
+      symlinkSync(outside, join(paths.vaultsDir, "link"));
+      chmodSync(paths.codexHome, 0o500);
+      removeRunRoot(paths.root, { base });
+      expect(existsSync(paths.root)).toBe(false);
+      expect(mode(outside)).toBe(0o755);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("refuses anything that fails the shape check and leaves it alone", () => {

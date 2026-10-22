@@ -1,25 +1,33 @@
 import { execFile } from "node:child_process";
 import {
-  appendFileSync,
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
+  fchmodSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   statSync,
-  writeFileSync,
+  unlinkSync,
+  writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { BundleIdSchema } from "@ccc/domain";
 import {
   assertNoSymlinkBelow,
   canonicalPath,
+  foldedPath,
   isSameOrInside,
+  isSameOrInsideFolded,
   isStrictlyInside,
   MSG_PATH_LINK,
 } from "../canonical-path.js";
 import {
   assertRunRootShape,
+  DEFAULT_RUN_BASE,
   realClaudeConfigDir,
   realRuntimeDir,
   refuseRealPaths,
@@ -36,11 +44,17 @@ import { SQLITE_TOOL } from "../store-copy.js";
  * stopped sandbox store, and a permission change that is always undone.
  *
  * Every helper first runs the same guard (`guardRoot`, then `guardTarget`): the run root must
- * have the `ccc-uat.XXXXXX` shape, the passed paths must be exactly that root's own layout, no
+ * be a `ccc-uat.XXXXXX` folder directly under the real base (`/tmp`), exist, belong to the
+ * current user and be mode 700, the passed paths must be exactly that root's own layout, no
  * location may be the owner's real runtime folder, Claude config folder or sit below the home
  * folder at all, every target must lie strictly inside the root both textually and after
  * symlinks are resolved, and no component below the root may be a symbolic link. Every refusal
  * is a fixed message that names the category, never the offending path.
+ *
+ * Files are written through one descriptor opened with `O_NOFOLLOW` (and `O_EXCL` for a new
+ * executable); the mode is set on that descriptor, and a file that has a second hard link is
+ * refused, so neither a link swapped in after the check nor a link made beforehand can carry a
+ * write or a mode change to a file outside the run root.
  *
  * Processes are started with a fixed argv, `shell: false`, an explicit minimal environment and a
  * 30 second cap that ends the child with SIGKILL; nothing here waits without a deadline. This
@@ -59,6 +73,11 @@ const MSG_OUTSIDE_ROOT = "Refusing a path outside the run root.";
 const MSG_OWNER_LOCATION = "Refusing a path in the owner's real folders.";
 const MSG_FORGED_PATHS = "Refusing run root paths that are not the run root's own layout.";
 const MSG_BAD_MODE = "Refusing a mode that is not plain permission bits.";
+const MSG_ROOT_NOT_PRIVATE =
+  "Refusing a run root that does not exist or is not a private folder of the current user.";
+const MSG_SHARED_FILE =
+  "Refusing a file that is shared through a hard link or is not a plain file.";
+const MSG_ALREADY_HELD = "Refusing a permission change on a path another change already holds.";
 
 /** Injection points. Tests pass a fake home and a fake runner; production passes nothing. */
 export interface DrillDeps {
@@ -68,8 +87,10 @@ export interface DrillDeps {
   timeoutMs?: number | undefined;
   /** The process runner; defaults to {@link runFixedArgv}. */
   run?: DrillRunner | undefined;
-  /** The service fixture, when the caller has one: seeding is refused while it runs. */
+  /** The service fixture: seeding needs one, and is refused while it runs. */
   fixture?: { isRunning(): boolean } | undefined;
+  /** The allowed run-root base; defaults to the real one. A parameter for tests only. */
+  base?: string | undefined;
 }
 
 export type DrillRunner = (
@@ -93,7 +114,10 @@ export function refuseOwnerLocations(path: string, home: string = homedir()): vo
     throw new Error(MSG_OWNER_LOCATION);
   }
   for (const owner of [realRuntimeDir(home), realClaudeConfigDir(home), home]) {
-    if (isSameOrInside(canonicalPath(owner), canonical)) throw new Error(MSG_OWNER_LOCATION);
+    // Folded: the default macOS volume reads `.Claude` and `.claude` as one folder.
+    if (isSameOrInsideFolded(canonicalPath(owner), canonical)) {
+      throw new Error(MSG_OWNER_LOCATION);
+    }
   }
 }
 
@@ -113,14 +137,16 @@ const LAYOUT_FIELDS = [
 ] as const satisfies readonly (keyof RunRootPaths)[];
 
 /** Validates the run root itself and returns its resolved path. */
-function guardRoot(paths: RunRootPaths, home: string): string {
+function guardRoot(paths: RunRootPaths, home: string, base: string): string {
   if (typeof paths?.root !== "string" || !isAbsolute(paths.root) || paths.root.includes("\0")) {
     throw new Error(MSG_OUTSIDE_ROOT);
   }
   const root = resolve(paths.root);
-  // Throws for anything that is not a direct child ccc-uat.XXXXXX of its parent, that sits
-  // below the home folder, or that is (or hides behind) a symlink.
-  assertRunRootShape(root, { base: dirname(root), home });
+  // Throws for anything that is not a direct child ccc-uat.XXXXXX of the PINNED base (not of
+  // whatever parent the caller's paths happen to name), that sits below the home folder, or that
+  // is (or hides behind) a symlink.
+  assertRunRootShape(root, { base, home });
+  requirePrivateRoot(root);
   const expected = pathsForRoot(root, paths.runId);
   for (const field of LAYOUT_FIELDS) {
     if (paths[field] !== expected[field]) throw new Error(MSG_FORGED_PATHS);
@@ -135,6 +161,24 @@ function guardRoot(paths: RunRootPaths, home: string): string {
   );
   refuseOwnerLocations(root, home);
   return root;
+}
+
+/** The run root exists as a real folder, is the current user's and is mode 700. */
+function requirePrivateRoot(root: string): void {
+  let info: ReturnType<typeof lstatSync>;
+  try {
+    info = lstatSync(root);
+  } catch {
+    throw new Error(MSG_ROOT_NOT_PRIVATE);
+  }
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    (typeof process.getuid === "function" && info.uid !== process.getuid()) ||
+    (info.mode & 0o777) !== 0o700
+  ) {
+    throw new Error(MSG_ROOT_NOT_PRIVATE);
+  }
 }
 
 /**
@@ -162,7 +206,7 @@ function guarded(
   deps: DrillDeps,
 ): { root: string; check: (target: string) => string } {
   const home = deps.home ?? homedir();
-  const root = guardRoot(paths, home);
+  const root = guardRoot(paths, home, deps.base ?? DEFAULT_RUN_BASE);
   return { root, check: (target) => guardTarget(root, target, home) };
 }
 
@@ -170,8 +214,55 @@ function guarded(
 function ensureDir(check: (target: string) => string, dir: string): string {
   const checked = check(dir);
   if (!existsSync(checked)) mkdirSync(checked, { recursive: true, mode: 0o700 });
-  chmodSync(check(checked), 0o700);
+  // The mode goes on the descriptor of the folder itself, opened without following a final link.
+  let fd: number;
+  try {
+    fd = openSync(
+      check(checked),
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    );
+  } catch {
+    throw new Error(MSG_PATH_LINK);
+  }
+  try {
+    fchmodSync(fd, 0o700);
+  } finally {
+    closeSync(fd);
+  }
   return checked;
+}
+
+/**
+ * Writes `text` to `file` through one descriptor: `O_NOFOLLOW`, never truncating, and either
+ * `O_EXCL` (a new file) or `O_APPEND` (an existing one). A file with another hard link, or one
+ * that is not a plain file, is refused before anything is written or its mode changed; the mode
+ * is then set on the descriptor.
+ */
+function writeThroughDescriptor(
+  file: string,
+  text: string,
+  options: { mode: number; kind: "create" | "append" },
+): void {
+  const flags =
+    constants.O_WRONLY |
+    constants.O_CREAT |
+    constants.O_NOFOLLOW |
+    (options.kind === "create" ? constants.O_EXCL : constants.O_APPEND);
+  let fd: number;
+  try {
+    fd = openSync(file, flags, options.mode);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error(MSG_PATH_LINK);
+    throw error;
+  }
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.nlink !== 1) throw new Error(MSG_SHARED_FILE);
+    fchmodSync(fd, options.mode);
+    writeSync(fd, text);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // --- permission change --------------------------------------------------------------------
@@ -181,6 +272,23 @@ function ensureDir(check: (target: string) => string, dir: string): string {
  * original mode back in a finally block, also when `fn` throws. The guard runs again before the
  * restore, so a link swapped in while `fn` ran is never chmodded through.
  */
+/** Targets a `withMode` currently holds, by folded canonical path. */
+const heldTargets = new Set<string>();
+
+/** Attaches `restoreError` to `error` without changing what is thrown. */
+function attachRestoreError(error: unknown, restoreError: unknown): void {
+  if (typeof error !== "object" || error === null) return;
+  try {
+    Object.defineProperty(error, "restoreError", {
+      value: restoreError,
+      configurable: true,
+      enumerable: false,
+    });
+  } catch {
+    // A frozen error cannot carry it; the original is still what the caller sees.
+  }
+}
+
 export async function withMode<T>(
   paths: RunRootPaths,
   target: string,
@@ -198,12 +306,39 @@ export async function withMode<T>(
     throw new Error("Refusing a permission change on a path that is not there.");
   }
   if (info.isSymbolicLink()) throw new Error(MSG_PATH_LINK);
+  const key = foldedPath(canonicalPath(checked));
+  if (heldTargets.has(key)) throw new Error(MSG_ALREADY_HELD);
+  heldTargets.add(key);
   const original = info.mode & 0o777;
-  chmodSync(checked, mode);
+  // Put the original mode back: the guard runs again and the entry must still be the one that
+  // was changed (same device and inode), so a link or a replacement is never chmodded through.
+  const restore = (): void => {
+    const again = check(checked);
+    const now = lstatSync(again);
+    if (now.isSymbolicLink()) throw new Error(MSG_PATH_LINK);
+    if (now.dev !== info.dev || now.ino !== info.ino) {
+      throw new Error("Refusing to restore a mode on a path that was replaced.");
+    }
+    chmodSync(again, original);
+  };
   try {
-    return await fn();
+    chmodSync(checked, mode);
+    let result: T;
+    try {
+      result = await fn();
+    } catch (error) {
+      try {
+        restore();
+      } catch (restoreError) {
+        // The caller must see what actually went wrong, not the clean-up failure behind it.
+        attachRestoreError(error, restoreError);
+      }
+      throw error;
+    }
+    restore();
+    return result;
   } finally {
-    chmodSync(check(checked), original);
+    heldTargets.delete(key);
   }
 }
 
@@ -261,8 +396,17 @@ export function writeFakeExecutable(
   const directory = kind === "claude" ? join(root, "fake-bin") : paths.codexCandidatesDir;
   ensureDir(check, directory);
   const file = check(join(directory, kind));
-  writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' '${options.versionLine}'\n`, { mode: 0o700 });
-  chmodSync(check(file), 0o700);
+  // A fresh file every time: an earlier fake (or a hard link planted in its place) is unlinked,
+  // not written through, and the new one is created exclusively without following a link.
+  try {
+    unlinkSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  writeThroughDescriptor(file, `#!/bin/sh\nprintf '%s\\n' '${options.versionLine}'\n`, {
+    mode: 0o700,
+    kind: "create",
+  });
   return file;
 }
 
@@ -280,8 +424,7 @@ export function writeSpoolDrops(paths: RunRootPaths, bytes: number, deps: DrillD
   const { check } = guarded(paths, deps);
   const spool = ensureDir(check, join(paths.runtimeDir, "spool"));
   const file = check(join(spool, "hooks.dropped"));
-  appendFileSync(file, "x".repeat(bytes), { flag: "a", mode: 0o600 });
-  chmodSync(check(file), 0o600);
+  writeThroughDescriptor(file, "x".repeat(bytes), { mode: 0o600, kind: "append" });
   return file;
 }
 
@@ -386,9 +529,15 @@ const SEED_STATEMENTS: Record<SeedLauncher, (bundleId: string) => string> = {
 export async function seedLauncherRow(
   paths: RunRootPaths,
   input: SeedLauncherRowInput,
-  deps: DrillDeps = {},
+  deps: DrillDeps & { fixture: { isRunning(): boolean } },
 ): Promise<void> {
-  if (input?.fixtureState !== "stopped" || deps.fixture?.isRunning() === true) {
+  // The fixture handle is required: without it nothing shows the service is down, and a service
+  // that holds the store open would race the write.
+  if (
+    input?.fixtureState !== "stopped" ||
+    typeof deps?.fixture?.isRunning !== "function" ||
+    deps.fixture.isRunning() === true
+  ) {
     throw new Error("Refusing to seed a store unless the service fixture is stopped.");
   }
   const statement = Object.hasOwn(SEED_STATEMENTS, input.launcher)
