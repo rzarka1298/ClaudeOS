@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   DiagnosticsHealthResponseSchema,
   type HealthTrigger,
@@ -253,7 +253,9 @@ describe("Test 5: the salted vault fingerprint and the display paths (D-36)", ()
     expect(response.paths.vault?.startsWith("~/") || response.paths.vault?.startsWith("…/")).toBe(
       true,
     );
-    expect(response.paths.vault).not.toContain(tmpdir());
+    // Outside the home folder a display path is the last two segments only, whatever the machine's
+    // temporary folder is called (it may itself be `/tmp`, so the folder name is not a leak check).
+    expect(response.paths.vault).toBe(`…/${basename(dirname(root))}/${basename(root)}`);
   });
 
   it("keeps the salt stable within one service and gives another service a different one", async () => {
