@@ -30,8 +30,10 @@ describe("Task 3 Test 1: toDisplayPath", () => {
   });
 
   it("does not treat a sibling that shares the home folder's prefix as inside home", () => {
-    expect(toDisplayPath("/Users/USERNAME2/work/app", HOME)).toBe("…/work/app");
-    expect(toDisplayPath("/Users/USERNAME-archive", HOME)).toBe("…/Users/USERNAME-archive");
+    expect(toDisplayPath("/home/USERNAME2/work/app", "/home/USERNAME")).toBe("…/work/app");
+    expect(toDisplayPath("/home/USERNAME-archive", "/home/USERNAME")).toBe(
+      "…/home/USERNAME-archive",
+    );
   });
 
   it("uses the outside rule when the home folder is null, empty or the root", () => {
@@ -74,7 +76,7 @@ function lcg(seed: number): () => number {
 describe("Task 3 Test 2: property sweep", () => {
   const user = "USERNAME";
   const pool = ["Obsidian", "vault", "work", "app", user, "notes", ".config", "a b", "tmp", "x"];
-  const homes = [`/Users/${user}`, `/Users/${user}/`, `/home/${user}`];
+  const homes = ["/Users/USERNAME", "/Users/USERNAME/", "/home/USERNAME"];
 
   it("never returns an absolute path or the home path, and the user segment only after the home prefix", () => {
     const rand = lcg(0x5eed);

@@ -507,7 +507,7 @@ describe("Task 2 Test 6 (no free text)", () => {
     "refuses a row that carries a %s key",
     (key) => {
       const response = freshInstall();
-      response.rows[0] = { ...response.rows[0], [key]: "/Users/someone/vault" } as never;
+      response.rows[0] = { ...response.rows[0], [key]: "/Users/USERNAME/vault" } as never;
       expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(false);
     },
   );
@@ -528,7 +528,7 @@ describe("Task 2 Test 6 (no free text)", () => {
     expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
 
     const refused: Record<string, unknown>[] = [
-      { claudeVersion: "/Users/someone/bin/claude" },
+      { claudeVersion: "/Users/USERNAME/bin/claude" },
       { claudeVersion: "version 2.1.5 (Claude Code)" },
       { minimumVersion: "latest" },
       { dropCount: -1 },
@@ -548,7 +548,7 @@ describe("Task 2 Test 6 (no free text)", () => {
   });
 
   it("refuses an absolute or control-character path and a non-display string anywhere in paths", () => {
-    for (const vault of ["/Users/someone/vault", "vault", "~/ok\u0000", "https://example.com"]) {
+    for (const vault of ["/Users/USERNAME/vault", "vault", "~/ok\u0000", "https://example.com"]) {
       const r = freshInstall();
       r.paths.vault = vault as never;
       expect(DiagnosticsHealthResponseSchema.safeParse(r).success, vault).toBe(false);
@@ -582,7 +582,7 @@ describe("Task 2 Test 6b (vault fingerprint, D-36)", () => {
 
   it("refuses path-shaped, longer, shorter, uppercase and extra-key values", () => {
     const bad: unknown[] = [
-      { salt, digest: "/Users/someone/vault" },
+      { salt, digest: "/Users/USERNAME/vault" },
       { salt, digest: `${digest}0` },
       { salt, digest: digest.slice(1) },
       { salt: salt.toUpperCase(), digest },
@@ -647,7 +647,7 @@ describe("Task 2: the closed error body", () => {
     }
     expect(DiagnosticsErrorBodySchema.safeParse({ error: "boom" }).success).toBe(false);
     expect(
-      DiagnosticsErrorBodySchema.safeParse({ error: "internal", message: "/Users/x" }).success,
+      DiagnosticsErrorBodySchema.safeParse({ error: "internal", message: "/Users/you" }).success,
     ).toBe(false);
   });
 });
