@@ -6,9 +6,11 @@ import { computed, effect, signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { type ConnectionState, connectionState } from "../connection-state.js";
 import { researchApi } from "../research/api.js";
+import { overviewResearchEpoch } from "../research/events.js";
 import { tasksApi } from "../tasks/api.js";
 import { tasksGeneration } from "../tasks/events.js";
 import { failureCopy, isFailureCode } from "../view/research-copy.js";
+import { safeLine } from "../view/research-format.js";
 import { nowTick } from "../widgets/clock.js";
 import type { WidgetState } from "../widgets/contract.js";
 import type { TechIntelData, TodayAutomation, TodayData, TodayTask } from "../widgets/panels.js";
@@ -209,11 +211,27 @@ const isLive = computed(() => connectionState.value.kind === "live");
  * - On start, and whenever the connection becomes live again: refresh.
  * - When `tasks.changed` advances the generation while live: refresh the
  *   due-today feed only (a task change says nothing about research runs).
+ * - When a `research.updated` event advances the research epoch while live:
+ *   refresh the automation and report feeds (plan 08-17).
  */
 export function startOverviewFeeds(): () => void {
   let seenGeneration = tasksGeneration.peek();
   const stopLive = effect(() => {
     if (isLive.value) refreshNow();
+  });
+  // A `research.updated` event refreshes the research feeds even when no Research view is open
+  // (research B 2.6). A task change says nothing about research, and a research event says
+  // nothing about tasks, so each trigger refreshes only what it concerns.
+  let seenEpoch = overviewResearchEpoch.peek();
+  const stopEpoch = effect(() => {
+    const epoch = overviewResearchEpoch.value;
+    if (epoch === seenEpoch) return;
+    seenEpoch = epoch;
+    if (isLive.peek()) {
+      lastRefreshAt = Date.now();
+      void refreshAutomation();
+      void refreshLatestReport();
+    }
   });
   const stopGeneration = effect(() => {
     const generation = tasksGeneration.value;
@@ -226,6 +244,7 @@ export function startOverviewFeeds(): () => void {
   });
   return () => {
     stopLive();
+    stopEpoch();
     stopGeneration();
   };
 }
@@ -588,6 +607,19 @@ export const todayState = computed<WidgetState<TodayData>>(() =>
 // ---------------------------------------------------------------------------
 // The Technology and market intelligence mapping (plan 08-17, D-19)
 
+const SOURCE_REPORTS = "Research reports";
+const SOURCE_RESEARCH = "Research sources";
+
+/**
+ * How many of the run's sources did not contribute. The row's own count wins; a
+ * partial row that carries none falls back to the difference of its totals.
+ */
+function unavailableSources(row: ReadableReportRow): number {
+  return row.unavailableCount > 0
+    ? row.unavailableCount
+    : Math.max(0, row.sourceTotal - row.sourceCount);
+}
+
 /**
  * The Technology card's state (UI-SPEC S7), a pure function of the report feed,
  * the connection and the clock.
@@ -597,7 +629,14 @@ export const todayState = computed<WidgetState<TodayData>>(() =>
  * - Answered but never held a value, while connected: `error`.
  * - Otherwise `ready`, dated by the report's own generation time. A report is a
  *   stored artifact, so freshness is `cached` or `stale` (36 hours) from
- *   `reportFreshness` and never `live` (UI-SPEC R-14).
+ *   `reportFreshness` and never `live` (UI-SPEC R-14). An empty list is a real
+ *   answer (`isEmpty`), and so is a page of only unreadable rows.
+ * - Partial when the report itself is (`Research sources` did not all respond)
+ *   and/or when the last refresh failed and the card shows the last good answer
+ *   (`Research reports` did not respond). The chip summary says which.
+ * - The title is neutralised here too (`safeLine`): the service already did it,
+ *   and a response that reached the plugin without it still cannot reorder or
+ *   hide anything.
  */
 export function techIntelStateFor(
   feed: FeedSnapshot<LatestReportAnswer>,
@@ -617,6 +656,23 @@ export function techIntelStateFor(
   }
   const latest = answer.latest;
   const freshness = latest === null ? "cached" : reportFreshness(latest.generatedAt, nowMs);
+  const unavailable = latest?.partial ? unavailableSources(latest) : 0;
+
+  const missingSources: string[] = [];
+  const parts: string[] = [];
+  if (feed.failed) {
+    missingSources.push(SOURCE_REPORTS);
+    parts.push(`${SOURCE_REPORTS} didn't respond`);
+  }
+  if (latest?.partial) {
+    missingSources.push(SOURCE_RESEARCH);
+    parts.push(
+      unavailable > 0
+        ? `${unavailable} of ${latest.sourceTotal} research sources were unavailable`
+        : "Some research sources were unavailable",
+    );
+  }
+
   return {
     kind: "ready",
     data: {
@@ -625,13 +681,13 @@ export function techIntelStateFor(
           ? null
           : {
               noteId: latest.noteId,
-              title: latest.title,
+              title: safeLine(latest.title),
               generatedAt: latest.generatedAt,
               partial: latest.partial,
               sourceCount: latest.sourceCount,
               sourceTotal: latest.sourceTotal,
               itemCount: latest.itemCount,
-              unavailableCount: latest.unavailableCount,
+              unavailableCount: unavailable,
               stale: freshness === "stale",
             },
       unreadableCount: answer.unreadableCount,
@@ -639,7 +695,10 @@ export function techIntelStateFor(
     observedAt:
       latest === null ? new Date(feed.fetchedAt ?? nowMs).toISOString() : latest.generatedAt,
     freshness,
-    partiality: { partial: false },
+    partiality:
+      parts.length === 0
+        ? { partial: false }
+        : { partial: true, missingSources, summary: parts.join("; ") },
     isEmpty: latest === null,
   };
 }

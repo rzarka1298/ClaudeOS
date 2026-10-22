@@ -11,7 +11,7 @@ import { useContext } from "preact/hooks";
 import { launchStatus, launchStatusKey } from "../projects/launch-status.js";
 import { UntrustedText } from "../view/approval-text.js";
 import type { DestinationId } from "../view/destinations.js";
-import { itemsText, sourcesText } from "../view/research-format.js";
+import { countOf, itemsText, sourcesText } from "../view/research-format.js";
 import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
@@ -558,6 +558,13 @@ function sourcesAndItems(report: TechIntelReport): string {
   return `${sources} · ${itemsText(report.itemCount)}`;
 }
 
+/** `◈ Partial: 1 of 6 sources were unavailable.` The glyph is decorative: the word carries the meaning. */
+function partialLine(report: TechIntelReport): string {
+  return report.unavailableCount > 0
+    ? `◈ Partial: ${report.unavailableCount} of ${report.sourceTotal} sources were unavailable.`
+    : "◈ Partial: some sources were unavailable.";
+}
+
 function TechIntelBody({ data, onNavigate }: WidgetBodyProps<TechIntelData>): VNode | null {
   const report = data.report;
   if (report === null) return null;
@@ -567,6 +574,7 @@ function TechIntelBody({ data, onNavigate }: WidgetBodyProps<TechIntelData>): VN
         <UntrustedText text={report.title} />
       </p>
       <p className="ccc-list-meta">{sourcesAndItems(report)}</p>
+      {report.partial ? <p className="ccc-state-body">{partialLine(report)}</p> : null}
       <p className="ccc-list-meta">AI-generated summary. Not verified by a person.</p>
       {report.stale ? (
         <>
@@ -590,6 +598,37 @@ function TechIntelBody({ data, onNavigate }: WidgetBodyProps<TechIntelData>): VN
   );
 }
 
+/**
+ * No report to show (UI-SPEC S7): either the list is empty (`No reports yet`, with the next
+ * step) or its newest page held only reports that could not be read (`No readable reports`).
+ * The card supplies all its own copy (`ownsEmptyCopy`), so the generic list wording never
+ * appears, and the link is a button that navigates, never an anchor.
+ */
+function TechIntelEmpty({
+  data,
+  onNavigate,
+}: {
+  readonly data?: TechIntelData | undefined;
+  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+}): VNode {
+  const unreadable = data?.unreadableCount ?? 0;
+  return (
+    <>
+      <p className="ccc-state-heading">
+        {unreadable > 0 ? "No readable reports" : "No reports yet"}
+      </p>
+      <p className="ccc-state-body">
+        {unreadable > 0
+          ? `${countOf(unreadable, "report", "reports")} couldn't be read. Open the research view to check them.`
+          : "Press Run now in the research view to write the first cited report."}
+      </p>
+      <button type="button" className="ccc-list-more" onClick={() => onNavigate?.("research")}>
+        Open the research view
+      </button>
+    </>
+  );
+}
+
 export const techIntelWidget: WidgetDefinition<TechIntelData> = {
   id: "tech-intel",
   title: "Technology and market intelligence",
@@ -605,11 +644,7 @@ export const techIntelWidget: WidgetDefinition<TechIntelData> = {
   quickActions: [],
   renderBody: TechIntelBody,
   ownsEmptyCopy: true,
-  renderEmpty: ({ data }) => (
-    <p className="ccc-state-heading">
-      {data !== undefined && data.unreadableCount > 0 ? "No readable reports" : "No reports yet"}
-    </p>
-  ),
+  renderEmpty: TechIntelEmpty,
 };
 
 // ---------------------------------------------------------------------------

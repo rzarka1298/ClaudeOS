@@ -5,7 +5,7 @@ import type { SocketApiClient } from "@ccc/service-api-client";
 import { type ReadonlySignal, signal } from "@preact/signals";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connectionState } from "../connection-state.js";
+import { type ConnectionState, connectionState } from "../connection-state.js";
 import { createLaunchRequester } from "../projects/launch-client.js";
 import { resetLaunchStatus } from "../projects/launch-status.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
@@ -909,7 +909,7 @@ function techData(report: Record<string, unknown> | null, unreadableCount = 0): 
 }
 
 /** Renders the Technology card from a state and returns the card element and the navigation spy. */
-function techCard(state: WidgetState<unknown>, connection = { kind: "live" } as const) {
+function techCard(state: WidgetState<unknown>, connection: ConnectionState = { kind: "live" }) {
   const onNavigate = vi.fn();
   const view = render(
     <Overview
@@ -996,5 +996,134 @@ describe("Technology: the latest cited report (plan 08-17 Task 1)", () => {
   it("a fresh report has no stale line", () => {
     const { card } = techCard(techReady(techData(techReport())));
     expect(card.textContent).not.toContain("more than 36 hours old");
+  });
+});
+
+describe("Technology: empty, unreadable, partial, error, loading and hostile states (plan 08-17 Task 2)", () => {
+  const research = (label: string) => `Open the research view${label}`;
+
+  it("Test 1: no report reads `No reports yet`, the next step and a research-view link", () => {
+    const { card, onNavigate } = techCard(techReady(techData(null, 0), { isEmpty: true }));
+    expect(card.getAttribute("data-presentation")).toBe("empty");
+    expect(card.querySelector(".ccc-state-heading")?.textContent).toBe("No reports yet");
+    expect(card.textContent).toContain(
+      "Press Run now in the research view to write the first cited report.",
+    );
+    expect(card.textContent).not.toContain("Nothing here yet");
+    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: research("") }));
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("research");
+  });
+
+  it("Test 1: only unreadable rows reads `No readable reports` with the pluralised count", () => {
+    const three = techCard(techReady(techData(null, 3), { isEmpty: true }));
+    expect(three.card.querySelector(".ccc-state-heading")?.textContent).toBe("No readable reports");
+    expect(three.card.textContent).toContain(
+      "3 reports couldn't be read. Open the research view to check them.",
+    );
+    cleanup();
+    const one = techCard(techReady(techData(null, 1), { isEmpty: true }));
+    expect(one.card.textContent).toContain("1 report couldn't be read.");
+    expect(one.card.textContent).not.toContain("1 reports");
+  });
+
+  it("Test 2: a partial report adds the partial line, the Partial badge and the chip summary", () => {
+    const { card } = techCard(
+      techReady(
+        techData(
+          techReport({ partial: true, sourceCount: 5, sourceTotal: 6, unavailableCount: 1 }),
+        ),
+        {
+          partiality: {
+            partial: true,
+            missingSources: ["Research sources"],
+            summary: "1 of 6 research sources were unavailable",
+          },
+        },
+      ),
+    );
+    expect(card.textContent).toContain("5 of 6 sources · 12 items");
+    expect(card.textContent).toContain("◈ Partial: 1 of 6 sources were unavailable.");
+    const badge = card.querySelector('.ccc-badge[data-badge="partial"]');
+    expect(badge?.querySelector(".ccc-badge-label")?.textContent).toBe("Partial");
+    expect(badge?.textContent).toContain("1 of 6 research sources were unavailable");
+  });
+
+  it("Test 2: the Source panel lists Research sources as no response for a partial report", () => {
+    const { card } = techCard(
+      techReady(techData(techReport({ partial: true, sourceTotal: 6, unavailableCount: 1 })), {
+        partiality: {
+          partial: true,
+          missingSources: ["Research sources"],
+          summary: "1 of 6 research sources were unavailable",
+        },
+      }),
+    );
+    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: /Source/ }));
+    expect(card.textContent).toMatch(/Research reports\s*—?\s*ok/);
+    expect(card.textContent).toMatch(/Research sources\s*—?\s*no response/);
+  });
+
+  it("a complete report has no partial line and no Partial badge", () => {
+    const { card } = techCard(techReady(techData(techReport())));
+    expect(card.textContent).not.toContain("Partial");
+    expect(card.querySelector('.ccc-badge[data-badge="partial"]')).toBeNull();
+  });
+
+  it("Test 3: an error state while connected is the frame error with the diagnostics follow-up", () => {
+    const { card } = techCard({
+      kind: "error",
+      message: "Couldn't load technology and market intelligence.",
+    });
+    expect(card.getAttribute("data-presentation")).toBe("error");
+    expect(card.querySelector(".ccc-state-heading")?.textContent).toContain(
+      "Couldn't load technology and market intelligence.",
+    );
+    expect(card.textContent).toContain(
+      "Check the service in Settings → Diagnostics, then refresh.",
+    );
+  });
+
+  it("Test 3: disconnected is the frame dim with the Unavailable badge", () => {
+    const { card } = techCard(techReady(techData(techReport())), {
+      kind: "disconnected",
+      reason: "gone",
+    });
+    expect(card.getAttribute("data-presentation")).toBe("disconnected");
+    expect(card.querySelector(".ccc-card-body")?.getAttribute("data-dimmed")).toBe("true");
+    expect(card.querySelector('.ccc-badge[data-badge="unavailable"]')?.textContent).toContain(
+      "Unavailable",
+    );
+    expect(card.textContent).not.toContain("Live");
+  });
+
+  it("loading shows a skeleton and a hidden `Loading technology and market intelligence`", () => {
+    const { card } = techCard({ kind: "loading" });
+    expect(card.getAttribute("data-presentation")).toBe("loading");
+    expect(card.querySelector(".ccc-skeleton-line")).not.toBeNull();
+    expect(card.querySelector(".ccc-visually-hidden")?.textContent).toBe(
+      "Loading technology and market intelligence",
+    );
+  });
+
+  it("Test 4: a hostile title renders as literal text with no a, img, iframe or script under the card", () => {
+    const LT = String.fromCharCode(0x3c);
+    const GT = String.fromCharCode(0x3e);
+    const hostile = `**bold** [click](https://example.invalid/x) ![p](https://example.invalid/p.png) ${LT}img src=x onerror=alert(1)${GT} ${LT}iframe src=x${GT}${LT}script${GT}alert(1)${LT}/script${GT} invoice[U+202E]gpj.exe`;
+    const { card } = techCard(techReady(techData(techReport({ title: hostile }))));
+    expect(card.querySelector("a, img, iframe, script")).toBeNull();
+    expect(card.querySelector(".ccc-intel-latest")?.firstElementChild?.textContent).toContain(
+      "[click](https://example.invalid/x)",
+    );
+    expect(card.querySelector(".ccc-control-token")?.textContent).toContain("[U+202E]");
+    expect(card.querySelector("[href], [src], [srcdoc]")).toBeNull();
+  });
+
+  it("the title clamps to two lines with the full text in `title`", () => {
+    const long = `Quarterly outlook ${"x".repeat(300)}`;
+    const { card } = techCard(techReady(techData(techReport({ title: long }))));
+    const title = card.querySelector(".ccc-intel-latest")?.firstElementChild;
+    expect(title?.classList.contains("ccc-clamp-2")).toBe(true);
+    expect(title?.getAttribute("title")).toBe(long);
+    expect(title?.textContent).toBe(long);
   });
 });

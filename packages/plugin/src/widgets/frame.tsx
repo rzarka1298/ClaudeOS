@@ -283,7 +283,13 @@ export function WidgetFrame<T>({
           </>
         );
       case "empty":
-        if (definition.ownsEmptyCopy === true) return <Empty />;
+        // The card's own empty copy still gets its data and its navigation channel: a card
+        // that owns the whole empty body (Technology, plan 08-17) needs both.
+        if (definition.ownsEmptyCopy === true) {
+          return (
+            <Empty onNavigate={onNavigate} data={state.kind === "ready" ? state.data : undefined} />
+          );
+        }
         return (
           <>
             <p className="ccc-state-heading">Nothing here yet</p>

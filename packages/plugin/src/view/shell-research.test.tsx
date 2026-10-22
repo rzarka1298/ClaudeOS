@@ -234,7 +234,7 @@ describe("08-17 Task 1 (tracer): the Overview's latest cited report opens in the
         Promise.resolve(
           page === "items" ? itemsPage(threeKindItems()) : sourcesPage(threeSources()),
         ),
-      ) as never,
+      ),
     });
     configureResearch({ api, ...fakeResearchPorts() });
 
