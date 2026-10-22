@@ -402,3 +402,76 @@ describe("the native tab still exports every moved name (Test 4)", () => {
     expect(tab.rebuildSuccessNotice).toBe(model.rebuildSuccessNotice);
   });
 });
+
+/** Every string constant the model exports, as literal text (FIX1B: pinned independently of the tab re-exports). */
+const PINNED_STRINGS: Readonly<Record<string, string>> = {
+  REDUCED_MOTION_KEY: "reducedMotion",
+  REDUCED_MOTION_NAME: "Reduced motion",
+  REDUCED_MOTION_DESC:
+    "Turn off number easing, the background twinkle and decorative transitions. System follows the macOS accessibility setting.",
+  REDUCED_MOTION_SAVE_FAILED: "Couldn't save the reduced motion setting.",
+  CLAUDE_GROUP_HEADING: "Claude",
+  CLAUDE_HOOKS_NAME: "Claude Code hooks",
+  CLAUDE_HOOKS_CHECKING_TEXT: "Checking…",
+  CLAUDE_STATUS_UNAVAILABLE_TEXT: "Status unavailable — the companion service isn't running.",
+  CLAUDE_HOOKS_NOT_INSTALLED_TEXT:
+    "Not installed. Session tracking and waiting-for-approval states need them.",
+  CLAUDE_COPY_INSTALL_NAME: "Copy install command",
+  CLAUDE_INSTALL_COMMAND: "./scripts/claude-hooks/install.sh",
+  CLAUDE_COPY_INSTALL_DESC:
+    "From the Claude command center repository folder, run: ./scripts/claude-hooks/install.sh — add --dry-run to preview the change first, or --with-statusline to also install the status-line wrapper.",
+  CLAUDE_INSTALL_COPIED_NOTICE: "Install command copied. Run it in Terminal.",
+  CLAUDE_COPY_UNINSTALL_NAME: "Copy uninstall command",
+  CLAUDE_UNINSTALL_COMMAND: "./scripts/claude-hooks/uninstall.sh",
+  CLAUDE_COPY_UNINSTALL_DESC:
+    "Removes the hooks and the status-line wrapper and restores your previous settings: ./scripts/claude-hooks/uninstall.sh",
+  CLAUDE_UNINSTALL_COPIED_NOTICE: "Uninstall command copied. Run it in Terminal.",
+  CLAUDE_COPY_FAILED_NOTICE:
+    "Couldn't copy the command. It's shown in the setting's description; copy it from there.",
+  CLAUDE_STATUSLINE_NAME: "Status-line wrapper",
+  CLAUDE_STATUSLINE_INSTALLED_AVAILABLE_TEXT: "Installed. Plan usage is available.",
+  CLAUDE_STATUSLINE_INSTALLED_WAITING_TEXT:
+    "Installed. Waiting for the first response in a Claude Code session.",
+  CLAUDE_STATUSLINE_NOT_INSTALLED_TEXT:
+    'Not installed. Plan usage reads "Account capacity unavailable". The wrapper keeps your current status line exactly as it is.',
+  TRANSCRIPT_ANALYSIS_KEY: "claude.transcriptAnalysis",
+  CLAUDE_TRANSCRIPT_ANALYSIS_NAME: "Transcript analysis",
+  CLAUDE_TRANSCRIPT_ANALYSIS_DESC:
+    "Count tokens from Claude Code's local transcripts. Only counts, model names and timestamps are stored — never prompts, replies or file contents. Hook telemetry keeps working when this is off. This also covers Codex session titles, previews and token activity.",
+  CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE:
+    "Couldn't change transcript analysis. The companion service didn't respond.",
+  CLAUDE_DELETE_USAGE_NAME: "Delete cached usage analytics",
+  CLAUDE_DELETE_USAGE_DESC:
+    "Removes stored token counts, cost estimates, plan usage history and coverage records for Claude Code and Codex. Session history stays.",
+  CLAUDE_DELETE_USAGE_RETAINED_NOTE: "Existing totals are kept until you delete them.",
+  CLAUDE_USAGE_DELETED_NOTICE: "Cached usage analytics deleted.",
+  CLAUDE_USAGE_DELETE_FAILED_NOTICE:
+    "Couldn't delete cached usage analytics. Check the service in Settings → Diagnostics, then try again.",
+  APPROVALS_GROUP_HEADING: "Approvals",
+  NOTIFY_APPROVALS_KEY: "notifyApprovals",
+  NOTIFY_APPROVALS_NAME: "Approval notifications",
+  NOTIFY_APPROVALS_DESC:
+    "Show a macOS notification when a new approval request arrives while Obsidian isn't focused. It shows a generic message and can't approve anything.",
+  NOTIFY_APPROVALS_SAVE_FAILED: "Couldn't save the approval notifications setting.",
+  SEND_TEST_APPROVAL_NAME: "Send a test approval",
+  SEND_TEST_APPROVAL_DESC:
+    "Creates a request that does nothing when approved. It arrives after 5 seconds, so you can switch to another app and see the notification.",
+  SEND_TEST_APPROVAL_NEEDS_SERVICE: " Needs the companion service, which isn't running.",
+  TASKS_GROUP_HEADING: "Tasks",
+  REBUILD_NAME: "Rebuild task index",
+  REBUILD_DESC:
+    "Re-reads every task note in the vault and rebuilds the task lists. Your notes aren't changed.",
+  REBUILD_NEEDS_SERVICE: " Needs the companion service, which isn't running.",
+  REBUILD_STARTED_NOTICE: "Rebuilding the task index…",
+  REBUILD_FAILED_NOTICE:
+    "Couldn't rebuild the task index. Check the service in Settings → Diagnostics, then try again.",
+};
+
+describe("the moved string constants keep their exact text (FIX1B)", () => {
+  it("equals the literal text for every string the model exports, and exports nothing else", () => {
+    const actual = Object.fromEntries(
+      Object.entries(model).filter(([, value]) => typeof value === "string"),
+    );
+    expect(actual).toEqual(PINNED_STRINGS);
+  });
+});

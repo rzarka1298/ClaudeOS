@@ -212,8 +212,21 @@ describe("service env (Test 4)", () => {
         "CCC_CODEX_BRIDGE_HOME",
         "CCC_CODEX_HOME",
         "XDG_STATE_HOME",
+        "CCC_CLAUDE_CANDIDATES_DISABLED",
       ].sort(),
     );
+  });
+
+  it("seals the owner's Claude install off the same way, in both kinds (B-M6)", () => {
+    for (const kind of ["normal", "expiry"] as const) {
+      expect(buildServiceEnv(paths(root), account, kind).CCC_CLAUDE_CANDIDATES_DISABLED).toBe("1");
+    }
+    const scrubbed = scrubInheritedEnv({
+      CCC_CLAUDE_CANDIDATES_DISABLED: "0",
+      CCC_CLAUDE_CANDIDATES_DIR: "/real/claude/bin",
+      KEEP: "yes",
+    });
+    expect(scrubbed).toEqual({ KEEP: "yes" });
   });
 
   it("points the service's own Codex home and bridge state home at the run root (B-MINOR 1)", () => {
@@ -315,7 +328,7 @@ describe("service env (Test 4)", () => {
     expect(env.CCC_ENABLE_TEST_OVERRIDES).toBe("1");
     expect(env.CCC_APPROVAL_TEST_TTL_MS).toBe("15000");
     expect(env.CCC_APPROVAL_SWEEP_MS).toBe("500");
-    expect(Object.keys(env)).toHaveLength(13);
+    expect(Object.keys(env)).toHaveLength(14);
   });
 
   it("refuses the default install-secret account and an account outside the ccc-uat family", () => {
@@ -340,6 +353,8 @@ describe("service env (Test 4)", () => {
       CCC_CODEX_BRIDGE_HOME: "/real/bridge-home",
       CCC_CODEX_HOME: "/real/codex-home",
       XDG_STATE_HOME: "/real/state",
+      CCC_CLAUDE_CANDIDATES_DISABLED: "0",
+      CCC_CLAUDE_CANDIDATES_DIR: "/real/claude/bin",
     };
     const scrubbed = scrubInheritedEnv(inherited);
     expect(scrubbed).toEqual({ PATH: "/usr/bin", HOME: "/home-x" });

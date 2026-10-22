@@ -220,6 +220,9 @@ export function buildServiceEnv(
     // research Pitfall 4). "Disabled" wins in detection; the folders are the fallback for a
     // drill that lifts it and the stand-in for the home folder when bridge state is derived.
     CCC_CODEX_CANDIDATES_DISABLED: "1",
+    // The same for the owner's Claude install: the service never probes the fixed install
+    // locations for `claude` (it is found only through a drill's own candidates folder).
+    CCC_CLAUDE_CANDIDATES_DISABLED: "1",
     CCC_CODEX_CANDIDATES_DIR: paths.codexCandidatesDir,
     CCC_CODEX_BRIDGE_HOME: paths.codexBridgeHome,
   };
@@ -244,6 +247,8 @@ const SCRUBBED_ENV_KEYS: readonly string[] = [
   "CCC_INSTALL_SECRET_ACCOUNT",
   "CCC_SPOOL_PATH",
   "CCC_CODEX_CANDIDATES_DISABLED",
+  "CCC_CLAUDE_CANDIDATES_DISABLED",
+  "CCC_CLAUDE_CANDIDATES_DIR",
   "CCC_CODEX_CANDIDATES_DIR",
   "CCC_CODEX_BRIDGE_HOME",
 ];

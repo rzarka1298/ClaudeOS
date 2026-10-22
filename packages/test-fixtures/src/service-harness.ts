@@ -106,6 +106,7 @@ export async function startServiceForTest({
       XDG_STATE_HOME: keepIfInFixture(process.env.XDG_STATE_HOME, emptyStateHome),
       CCC_CODEX_BRIDGE_HOME: emptyStateHome,
       CCC_CODEX_CANDIDATES_DISABLED: "1",
+      CCC_CLAUDE_CANDIDATES_DISABLED: "1",
       CCC_SOCKET_PATH: socketPath,
       CCC_RUNTIME_DIR: path.dirname(socketPath),
       ...env,
