@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { main } from "./cli.js";
-import { classifyResult } from "./uat-audit.js";
+import { type AuditResult, auditPhases, classifyResult } from "./uat-audit.js";
 
 /**
  * Plan 08-06 (SLICE-02, D-24, D-25, D-29): the audit checker over synthetic fixtures. The fixtures
@@ -269,5 +270,174 @@ describe("usage errors (Test 4)", () => {
     expect(lines.join("\n")).toContain("--out");
     expect(readFileSync(join(phases, "02-beta", "02-UAT.md"), "utf8")).toBe(before);
     expect((await audit(["stray"])).code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: the five non-standard evidence formats and the exception list.
+
+function auditTree(phases: string, only: string[]): AuditResult {
+  return auditPhases({
+    phasesDir: phases,
+    readText: (path) => (existsSync(path) ? readFileSync(path, "utf8") : null),
+    listDir: (dir) => (existsSync(dir) ? readdirSync(dir) : []),
+    only,
+  });
+}
+
+function rowOf(result: AuditResult, phase: string) {
+  const row = result.rows.find((entry) => entry.phase === phase);
+  if (row === undefined) throw new Error(`no row for phase ${phase}`);
+  return row;
+}
+
+describe("the Phase 1 adapter (Test 1)", () => {
+  it("reads the Owner UAT heading and lists the deferred item as the one exception", () => {
+    const row = rowOf(auditTree(phasesWith("01-alpha"), ["01"]), "01");
+    expect(row.status).toBe("recorded-with-exceptions");
+    expect(row.exceptions.map((entry) => entry.id)).toEqual(["01-item-10"]);
+    expect(row.exceptions[0]?.summary).toMatch(/Item 10.*deferred/);
+  });
+
+  it("is recorded without exceptions when nothing is deferred, and pending without the heading", () => {
+    const phases = phasesWith("01-alpha");
+    const file = join(phases, "01-alpha", "01-VERIFICATION.md");
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8").replace(/Item 10[\s\S]*$/, "Nothing is deferred.\n"),
+    );
+    expect(rowOf(auditTree(phases, ["01"]), "01").status).toBe("recorded");
+    writeFileSync(file, "---\nstatus: passed\n---\n\n# No heading here\n");
+    expect(rowOf(auditTree(phases, ["01"]), "01").status).toBe("pending-live-uat");
+  });
+});
+
+describe("the Phase 5 adapter (Test 2)", () => {
+  it("takes items from the Items list, lets the latest line win and lists UNVERIFIED", () => {
+    const row = rowOf(auditTree(phasesWith("05-gamma"), ["05"]), "05");
+    // The setup reminder is not an item; UAT-2's re-run supersedes its earlier ISSUE.
+    expect(row.total).toBe(4);
+    expect(row.recorded).toBe(4);
+    expect(row.status).toBe("recorded-with-exceptions");
+    expect(row.exceptions.map((entry) => entry.id)).toEqual(["05-uat-3"]);
+  });
+
+  it("treats a stale NOT RUN header with results as a defect, not a failure", () => {
+    const row = rowOf(auditTree(phasesWith("05-gamma"), ["05"]), "05");
+    expect(row.defects.join(" ")).toMatch(/NOT RUN/);
+    expect(row.status).not.toBe("issue");
+  });
+
+  it("stays an issue when the ISSUE line is not superseded", () => {
+    const phases = phasesWith("05-gamma");
+    const file = join(phases, "05-gamma", "05-UAT.md");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^- UAT-2 \(re-run.*\n/m, ""));
+    expect(rowOf(auditTree(phases, ["05"]), "05").status).toBe("issue");
+  });
+});
+
+describe("the Phase 05.1 adapter (Test 3)", () => {
+  it("takes items from the U headings and results from the log, ignoring part lines", () => {
+    const row = rowOf(auditTree(phasesWith("05.1-delta"), ["05.1"]), "05.1");
+    expect(row.total).toBe(5);
+    expect(row.recorded).toBe(5);
+    expect(row.status).toBe("recorded-with-exceptions");
+    expect(row.exceptions.map((entry) => entry.id).sort()).toEqual(
+      ["05.1-claude-run", "05.1-u2", "05.1-u3"].sort(),
+    );
+  });
+
+  it("reports in-file [pending] results as a defect, since the log is the record", () => {
+    const row = rowOf(auditTree(phasesWith("05.1-delta"), ["05.1"]), "05.1");
+    expect(row.defects.join(" ")).toMatch(/5 in-file result line\(s\) still read \[pending\]/);
+  });
+
+  it("is missing when the log file is absent", () => {
+    const phases = phasesWith("05.1-delta");
+    rmSync(join(phases, "05.1-delta", "05.1-UAT-RESULTS-LOG.md"));
+    expect(rowOf(auditTree(phases, ["05.1"]), "05.1").status).toBe("missing");
+  });
+});
+
+describe("the Phase 05.2 adapter (Test 4)", () => {
+  it("is recorded with the no-UAT-file exception when passed and a ratified run is named", () => {
+    const row = rowOf(auditTree(phasesWith("05.2-epsilon"), ["05.2"]), "05.2");
+    expect(row.status).toBe("recorded-with-exceptions");
+    expect(row.exceptions.map((entry) => entry.id)).toEqual(["05.2-no-uat-file"]);
+  });
+
+  it("is pending when the record is not passed or names no run", () => {
+    const phases = phasesWith("05.2-epsilon");
+    const file = join(phases, "05.2-epsilon", "05.2-VERIFICATION.md");
+    const original = readFileSync(file, "utf8");
+    writeFileSync(file, original.replace("status: passed", "status: human_needed"));
+    expect(rowOf(auditTree(phases, ["05.2"]), "05.2").status).toBe("pending-live-uat");
+    writeFileSync(file, original.replace(/run 0a1b2c3d/gi, "a run"));
+    expect(rowOf(auditTree(phases, ["05.2"]), "05.2").status).toBe("pending-live-uat");
+  });
+});
+
+describe("the Phase 6 adapter (Test 5)", () => {
+  it("records every item and lists the Claude ratification as an exception", () => {
+    const row = rowOf(auditTree(phasesWith("06-zeta"), ["06"]), "06");
+    expect(row.total).toBe(3);
+    expect(row.recorded).toBe(3);
+    expect(row.status).toBe("recorded-with-exceptions");
+    expect(row.exceptions.map((entry) => entry.id)).toEqual(["06-claude-ratified"]);
+  });
+
+  it("is plainly recorded when the owner made the ratification statement", () => {
+    const phases = phasesWith("06-zeta");
+    const file = join(phases, "06-zeta", "06-UAT-AUTO-REPORT.md");
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8").replace(
+        /^ratified: .*$/m,
+        "ratified: Accepted by the owner on 2000-04-02.",
+      ),
+    );
+    expect(rowOf(auditTree(phases, ["06"]), "06").status).toBe("recorded");
+  });
+
+  it("is missing when the registered report is absent", () => {
+    const phases = phasesWith("06-zeta");
+    rmSync(join(phases, "06-zeta", "06-UAT-AUTO-REPORT.md"));
+    expect(rowOf(auditTree(phases, ["06"]), "06").status).toBe("missing");
+  });
+});
+
+describe("the exception list in the record (Test 6)", () => {
+  it("gives every exception row the OD-7 pointer and accepted: pending", async () => {
+    const phases = phasesWith("01-alpha", "05-gamma", "05.1-delta", "05.2-epsilon", "06-zeta");
+    const out = join(scratch, "AUDIT.md");
+    const { code } = await audit([
+      "--phases-dir",
+      phases,
+      "--out",
+      out,
+      "--only",
+      "01,05,05.1,05.2,06",
+    ]);
+    expect(code).toBe(0);
+    const text = readFileSync(out, "utf8");
+    const rows = text
+      .split("\n")
+      .filter((line) => /^\| (?:01|05|05\.1|05\.2|06)-[a-z0-9-]+ \|/.test(line));
+    expect(rows.map((line) => line.split("|")[1]?.trim()).sort()).toEqual(
+      [
+        "01-item-10",
+        "05-uat-3",
+        "05.1-claude-run",
+        "05.1-u2",
+        "05.1-u3",
+        "05.2-no-uat-file",
+        "06-claude-ratified",
+      ].sort(),
+    );
+    for (const line of rows) {
+      expect(line).toMatch(/\| OD-7 \| pending \|$/);
+    }
+    expect(text).toMatch(/^exceptions: 7$/m);
+    expect(text).toMatch(/^exceptions-accepted: 0$/m);
   });
 });

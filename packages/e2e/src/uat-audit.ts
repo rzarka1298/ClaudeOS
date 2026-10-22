@@ -151,6 +151,8 @@ export interface AuditInput {
   readonly only?: readonly string[] | undefined;
 }
 
+const OD7 = "OD-7";
+
 function emptyOutput(): AdapterOutput {
   return {
     total: 0,
@@ -214,17 +216,186 @@ function scriptAdapter(context: AdapterContext): AdapterOutput {
   return out;
 }
 
+// --- adapter: Phase 5 free-form results block ----------------------------------------------
+
+/** The lines of the section that starts at the first heading matching `heading`. */
+function sectionLines(text: string, heading: RegExp): string[] {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => heading.test(line));
+  if (start === -1) return [];
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => line.startsWith("## "));
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+/** Records an item whose result exists but is a soft spot the owner accepts. */
+function recordException(out: AdapterOutput, exception: AuditException): void {
+  out.total += 1;
+  out.recorded += 1;
+  out.exceptions.push(exception);
+}
+
+const exceptionOf = (
+  phase: string,
+  id: string,
+  summary: string,
+  pointer: string = OD7,
+): AuditException => ({ id, phase, summary, pointer });
+
+function resultsBlockAdapter(context: AdapterContext): AdapterOutput {
+  const out = emptyOutput();
+  const text = context.texts[0] ?? "";
+  const items = sectionLines(text, /^## Items\b/)
+    .map((line) => /^- UAT-(\d+)\b/.exec(line)?.[1])
+    .filter((id): id is string => id !== undefined);
+  if (items.length === 0) {
+    out.unrecognised += 1;
+    out.defects.push("no items found in the Items list");
+    return out;
+  }
+  // The latest line per item wins, and `UAT-9 (re-run on ...)` is the same item as `UAT-9`.
+  const latest = new Map<string, string>();
+  for (const line of sectionLines(text, /^## Results\b/)) {
+    const match = /^- UAT-(\d+)(?: \([^)]*\))?:\s*(.*)$/.exec(line);
+    if (match !== null) latest.set(match[1] as string, (match[2] as string).trim());
+  }
+  for (const id of items) {
+    const value = latest.get(id);
+    if (value === undefined) count(out, "pending");
+    else if (/^UNVERIFIED\b/i.test(value)) {
+      recordException(
+        out,
+        exceptionOf(context.phase, `${context.phase}-uat-${id}`, `UAT-${id} recorded UNVERIFIED`),
+      );
+    } else count(out, classifyResult(value));
+  }
+  if (/^Status:\s*NOT RUN\b/im.test(text) && latest.size > 0) {
+    out.defects.push("the header still says NOT RUN although results are recorded");
+  }
+  return out;
+}
+
+// --- adapter: Phase 05.1 headings plus a results log ----------------------------------------
+
+function uatLogAdapter(context: AdapterContext): AdapterOutput {
+  const out = emptyOutput();
+  const script = context.texts[0] ?? "";
+  const log = context.texts[1] ?? "";
+  const items = [...script.matchAll(/^### U(\d+) \u2014/gm)].map((match) => match[1] as string);
+  if (items.length === 0) {
+    out.unrecognised += 1;
+    out.defects.push("no U-numbered items found");
+    return out;
+  }
+  // `U10 part 1 pass` is not a full line: only `U<n> <state>` counts, and the last one wins.
+  const latest = new Map<string, string>();
+  for (const line of log.split(/\r?\n/)) {
+    const match = /^U(\d+)\s+(pass|not applicable|not run|partial)\b/i.exec(line);
+    if (match !== null) latest.set(match[1] as string, (match[2] as string).toLowerCase());
+  }
+  for (const id of items) {
+    const state = latest.get(id);
+    if (state === undefined) count(out, "pending");
+    else if (state === "pass" || state === "not applicable") count(out, "ok");
+    else {
+      recordException(
+        out,
+        exceptionOf(context.phase, `${context.phase}-u${id}`, `U${id} recorded as ${state}`),
+      );
+    }
+  }
+  if (/^Status:.*run by Claude with computer use/im.test(script)) {
+    out.exceptions.push(
+      exceptionOf(
+        context.phase,
+        `${context.phase}-claude-run`,
+        "Items run by Claude with computer use rather than by the owner (header note)",
+      ),
+    );
+  }
+  const inFilePending = (script.match(/^result:\s*\[pending\]/gm) ?? []).length;
+  if (inFilePending > 0) {
+    out.defects.push(
+      `${inFilePending} in-file result line(s) still read [pending]; the log is the record`,
+    );
+  }
+  return out;
+}
+
+// --- adapter: Phase 1 owner UAT heading in the verification file -----------------------------
+
+function verificationAdapter(context: AdapterContext): AdapterOutput {
+  const out = emptyOutput();
+  const text = context.texts[0] ?? "";
+  out.total = 1;
+  if (!/^## Owner UAT \u2014 PASSED \(\d{4}-\d{2}-\d{2}\)/m.test(text)) {
+    out.pending = 1;
+    out.defects.push("no Owner UAT PASSED heading found");
+    return out;
+  }
+  out.recorded = 1;
+  if (/Item 10[\s\S]{0,80}deferred/i.test(text)) {
+    out.exceptions.push(
+      exceptionOf(
+        context.phase,
+        `${context.phase}-item-10`,
+        "Item 10 (CI red on a real push) deferred until a remote exists",
+      ),
+    );
+  }
+  return out;
+}
+
+// --- adapter: Phase 05.2 ratified run --------------------------------------------------------
+
+function ratifiedRunAdapter(context: AdapterContext): AdapterOutput {
+  const out = emptyOutput();
+  const text = context.texts[0] ?? "";
+  out.total = 1;
+  const passed = (parseUatScript(text).frontMatter.status ?? "").trim() === "passed";
+  const run = /\brun ([0-9a-f]{8})\b/i.exec(text);
+  if (!passed || run === null) {
+    out.pending = 1;
+    out.defects.push("the verification record is not passed or names no ratified run");
+    return out;
+  }
+  out.recorded = 1;
+  out.exceptions.push(
+    exceptionOf(
+      context.phase,
+      `${context.phase}-no-uat-file`,
+      "No UAT file of its own; the evidence is the verification record and a ratified run",
+    ),
+  );
+  return out;
+}
+
+// --- adapter: the ratification statement of an auto report -----------------------------------
+
+function ratifiedReportAdapter(context: AdapterContext): AdapterOutput {
+  const out = emptyOutput();
+  const ratified = (parseUatScript(context.texts[0] ?? "").frontMatter.ratified ?? "").trim();
+  if (ratified === "" || /^pending\b/i.test(ratified)) {
+    out.defects.push("the auto report is not ratified");
+  } else if (/^Ratified by Claude\b/i.test(ratified)) {
+    out.exceptions.push(
+      exceptionOf(
+        context.phase,
+        `${context.phase}-claude-ratified`,
+        "Auto run ratified by Claude under standing authorization, not by the owner's one-line statement",
+      ),
+    );
+  }
+  return out;
+}
+
 const adapters: Readonly<Record<EvidenceKind, (context: AdapterContext) => AdapterOutput>> = {
   "uat-script": scriptAdapter,
-  "results-block": () => ({ ...emptyOutput(), unrecognised: 1, defects: ["adapter not built"] }),
-  "uat-log": () => ({ ...emptyOutput(), unrecognised: 1, defects: ["adapter not built"] }),
-  "verification-owner-uat": () => ({
-    ...emptyOutput(),
-    unrecognised: 1,
-    defects: ["adapter not built"],
-  }),
-  "ratified-run": () => ({ ...emptyOutput(), unrecognised: 1, defects: ["adapter not built"] }),
-  "ratified-report": () => emptyOutput(),
+  "results-block": resultsBlockAdapter,
+  "uat-log": uatLogAdapter,
+  "verification-owner-uat": verificationAdapter,
+  "ratified-run": ratifiedRunAdapter,
+  "ratified-report": ratifiedReportAdapter,
 };
 
 // --- the audit ------------------------------------------------------------------------------
