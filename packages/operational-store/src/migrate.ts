@@ -52,12 +52,17 @@ function ensureSchemaVersionTable(db: Database.Database): void {
 /**
  * The applied schema version: the single row of `schema_version`. Read-only
  * (one SELECT, no write), so the diagnostics bundle can report the store's
- * schema version without touching the store. Throws if the table does not
- * exist yet, i.e. before {@link applyMigrations} has ever run.
+ * schema version without touching the store. Returns `null` when the table
+ * exists but holds no row (a store that was created and then interrupted, or
+ * emptied): there is no version to report, and the caller says "unknown"
+ * rather than catching a TypeError. Still throws if the table does not exist
+ * yet, i.e. before {@link applyMigrations} has ever run.
  */
-export function readSchemaVersion(db: Database.Database): number {
-  const row = db.prepare("SELECT version FROM schema_version").get() as { version: number };
-  return row.version;
+export function readSchemaVersion(db: Database.Database): number | null {
+  const row = db.prepare("SELECT version FROM schema_version").get() as
+    | { version: number }
+    | undefined;
+  return row === undefined ? null : row.version;
 }
 
 function writeSchemaVersion(db: Database.Database, version: number): void {
@@ -86,7 +91,8 @@ export function applyMigrations(
 ): void {
   const files = listMigrationFiles(migrationsDir);
   ensureSchemaVersionTable(db);
-  const currentVersion = readSchemaVersion(db);
+  // ensureSchemaVersionTable has just guaranteed the row.
+  const currentVersion = readSchemaVersion(db) ?? 0;
 
   if (currentVersion > files.length) {
     throw new SchemaAheadOfCodeError(currentVersion, files.length);

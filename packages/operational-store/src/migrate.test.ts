@@ -342,6 +342,21 @@ describe("readSchemaVersion (plan 08-04: the bundle's store schema version)", ()
     expect(readSchemaVersion(db)).toBe(EXPECTED_SCHEMA_VERSION);
   });
 
+  it("MINOR 8: an empty schema_version table reads null instead of throwing", () => {
+    db.exec("CREATE TABLE schema_version (version INTEGER NOT NULL)");
+    expect(readSchemaVersion(db)).toBeNull();
+    // Read-only: the row was not created for the caller.
+    expect((db.prepare("SELECT COUNT(*) AS n FROM schema_version").get() as { n: number }).n).toBe(
+      0,
+    );
+  });
+
+  it("MINOR 8: applyMigrations still repairs an empty schema_version table", () => {
+    db.exec("CREATE TABLE schema_version (version INTEGER NOT NULL)");
+    applyMigrations(db, REAL_MIGRATIONS_DIR);
+    expect(readSchemaVersion(db)).toBe(EXPECTED_SCHEMA_VERSION);
+  });
+
   it("is exported from the package index", async () => {
     const index = await import("./index.js");
     expect(index.readSchemaVersion).toBe(readSchemaVersion);
