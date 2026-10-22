@@ -3,10 +3,18 @@ import {
   DiagnosticsHealthResponseSchema,
   type HealthTrigger,
   type ProbeOutcome,
-  type ServiceSideRow,
   toDisplayPath,
 } from "@ccc/domain";
 import { logger } from "../logging.js";
+import {
+  asCachedResponse,
+  createHealthCache,
+  type NamedProbe,
+  type Probe,
+  type ProbeLogEntry,
+  runProbes,
+  type SubsystemRowId,
+} from "./run-probes.js";
 
 /**
  * The diagnostics services behind `GET /api/v1/diagnostics/health` (plan 08-07; D-02, D-04, D-05).
@@ -17,9 +25,6 @@ import { logger } from "../logging.js";
  * trigger that returns a {@link ProbeOutcome} (a row without its check time and freshness).
  * Nothing here can launch, install, write or reach the network.
  */
-
-/** One subsystem's check. It must stop when `signal` aborts; it must not throw (a throw is `probe-error`). */
-export type Probe = (signal: AbortSignal, trigger: HealthTrigger) => Promise<ProbeOutcome>;
 
 /** The four probes 08-12 wires. The vault probe is built here from {@link DiagnosticsPorts.vault}. */
 export type WiredProbeId = "hooks" | "collectors" | "scheduler" | "launchers";
@@ -47,6 +52,8 @@ export interface DiagnosticsPorts {
   readonly launchers?: Probe | undefined;
   readonly serviceFacts: DiagnosticsServiceFacts;
   readonly now: () => Date;
+  /** Hears probes that did not answer (code and error class name only). Defaults to the service log. */
+  readonly log?: ((entry: ProbeLogEntry) => void) | undefined;
 }
 
 export interface DiagnosticsServices {
@@ -58,12 +65,18 @@ export interface DiagnosticsServices {
   check(trigger: HealthTrigger, signal?: AbortSignal): Promise<DiagnosticsHealthResponse>;
 }
 
-function notWired(id: ServiceSideRow["id"]): ProbeOutcome {
+function notWired(id: SubsystemRowId): ProbeOutcome {
   return { id, status: "unknown", reasonCode: "subsystem-not-wired" } as ProbeOutcome;
+}
+
+function logProbe(entry: ProbeLogEntry): void {
+  logger.warn(entry, "diagnostics probe did not answer");
 }
 
 export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsServices {
   const { serviceFacts } = ports;
+  const log = ports.log ?? logProbe;
+  const cache = createHealthCache({ nowMs: () => ports.now().getTime() });
 
   // Task 1 vault probe: the real probe replaces this in Task 3.
   const probeVaultInline: Probe = () => {
@@ -79,60 +92,54 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
     return Promise.resolve(notWired("vault"));
   };
 
-  const probes: readonly [ServiceSideRow["id"], Probe | undefined][] = [
-    ["vault", probeVaultInline],
-    ["hooks", ports.hooks],
-    ["collectors", ports.collectors],
-    ["scheduler", ports.scheduler],
-    ["launchers", ports.launchers],
-  ];
+  const wired = (id: SubsystemRowId, probe: Probe | undefined): NamedProbe => ({
+    id,
+    run: probe ?? (() => Promise.resolve(notWired(id))),
+  });
+
+  const compute = async (trigger: HealthTrigger): Promise<DiagnosticsHealthResponse> => {
+    const rows = await runProbes(
+      [
+        wired("vault", probeVaultInline),
+        wired("hooks", ports.hooks),
+        wired("collectors", ports.collectors),
+        wired("scheduler", ports.scheduler),
+        wired("launchers", ports.launchers),
+      ],
+      trigger,
+      { now: ports.now, log },
+    );
+    const root = ports.vault.readRoot();
+    const display = (path: string): string =>
+      toDisplayPath(path, serviceFacts.homeDir) ?? "…/unknown";
+    // The strict parse is the last guard: a response that does not parse is an internal error
+    // (closed 500), never a body with a stray field.
+    return DiagnosticsHealthResponseSchema.parse({
+      generatedAt: ports.now().toISOString(),
+      service: {
+        version: serviceFacts.version,
+        startedAt: serviceFacts.startedAt,
+        storeSchemaVersion: serviceFacts.storeSchemaVersion(),
+      },
+      rows,
+      keychain: { installSecret: "unknown", researchKey: "unknown" },
+      paths: {
+        vault: root === null ? null : display(root),
+        runtimeDir: display(serviceFacts.runtimeDir),
+        socket: display(serviceFacts.socketPath),
+      },
+      vaultFingerprint: null,
+      counts: { projects: null, scanFolders: null, openTasks: null, reports: null },
+    });
+  };
 
   return {
     async check(trigger, signal) {
-      const effective = signal ?? new AbortController().signal;
-      const checkedAt = ports.now().toISOString();
-      const rows: ServiceSideRow[] = [];
-      for (const [id, probe] of probes) {
-        let outcome: ProbeOutcome;
-        if (probe === undefined) {
-          outcome = notWired(id);
-        } else {
-          try {
-            outcome = await probe(effective, trigger);
-          } catch (err: unknown) {
-            logger.warn(
-              {
-                subsystem: id,
-                code: "probe-error",
-                errorName: err instanceof Error ? err.name : typeof err,
-              },
-              "diagnostics probe failed",
-            );
-            outcome = { id, status: "unknown", reasonCode: "probe-error" } as ProbeOutcome;
-          }
-        }
-        rows.push({ ...outcome, checkedAt, freshness: "live" } as ServiceSideRow);
-      }
-      const root = ports.vault.readRoot();
-      const display = (path: string): string =>
-        toDisplayPath(path, serviceFacts.homeDir) ?? "…/unknown";
-      return DiagnosticsHealthResponseSchema.parse({
-        generatedAt: checkedAt,
-        service: {
-          version: serviceFacts.version,
-          startedAt: serviceFacts.startedAt,
-          storeSchemaVersion: serviceFacts.storeSchemaVersion(),
-        },
-        rows,
-        keychain: { installSecret: "unknown", researchKey: "unknown" },
-        paths: {
-          vault: root === null ? null : display(root),
-          runtimeDir: display(serviceFacts.runtimeDir),
-          socket: display(serviceFacts.socketPath),
-        },
-        vaultFingerprint: null,
-        counts: { projects: null, scanFolders: null, openTasks: null, reports: null },
-      });
+      // The caller's signal only stops this caller before a run starts: a run is shared, so one
+      // caller leaving must never abort the others' probes.
+      signal?.throwIfAborted();
+      const answer = await cache.get(trigger, () => compute(trigger));
+      return answer.cached ? asCachedResponse(answer.response) : answer.response;
     },
   };
 }
