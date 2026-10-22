@@ -3610,7 +3610,7 @@ fieldset.ccc-template-rows > legend {
   font-weight: var(--ccc-weight-strong);
 }
 
-.ccc-command-center .ccc-settings-header > p {
+.ccc-command-center .ccc-settings-header > p:not(.ccc-settings-status) {
   margin: 0;
   max-width: 68ch;
   overflow-wrap: break-word;
@@ -3619,9 +3619,10 @@ fieldset.ccc-template-rows > legend {
 
 /* The one polite status line: empty before its first message, Label size,
  * muted ink. It is the destination's only live region. */
-.ccc-command-center .ccc-settings-header > .ccc-settings-status,
-.ccc-command-center .ccc-settings > .ccc-settings-status {
+.ccc-command-center .ccc-settings-status {
   min-block-size: var(--ccc-space-md);
+  margin: 0;
+  overflow-wrap: break-word;
   color: var(--ccc-ink-muted);
   font-size: var(--ccc-text-label);
 }
@@ -3926,23 +3927,237 @@ fieldset.ccc-template-rows > legend {
   user-select: text;
 }
 
-/* ---- S4 diagnostic bundle preview (colours and focus; shape follows) ---- */
+/* ---- S4 diagnostic bundle preview -------------------------------------- */
 
 .ccc-command-center .ccc-bundle-preview {
   min-block-size: var(--ccc-space-lg);
   min-inline-size: var(--ccc-space-lg);
+  max-block-size: calc(var(--ccc-space-3xl) * 5);
   margin: 0;
   padding: var(--ccc-space-md);
+  overflow-x: hidden;
+  overflow-y: auto;
   border: var(--ccc-border-hairline) solid var(--ccc-ink-muted);
   border-radius: var(--ccc-radius-sm);
   background-color: var(--ccc-surface);
   color: var(--ccc-ink);
   --text-color: var(--ccc-ink);
+  font-family: var(--ccc-font-mono);
+  font-size: var(--ccc-text-label);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .ccc-command-center .ccc-bundle-preview:focus-visible {
   outline: var(--ccc-focus-ring) solid var(--ccc-accent);
   outline-offset: calc(-1 * var(--ccc-focus-ring));
+}
+
+/* ---- S3 status chips --------------------------------------------------- */
+
+/* A status chip reuses `.ccc-badge`. Glyph, word and border style are three
+ * cues that survive greyscale and forced colours; the ink is the fourth. The
+ * border is --ccc-ink-muted on every status (6.04 : 1 on glass), so solid,
+ * dashed and dotted are real, visible cues (R-F4). The palette has no warning
+ * colour and the danger colour is reserved for errors: degraded reads through
+ * its glyph, its word and its reason sentence, and setup-needed is guidance,
+ * never red (D-07). */
+.ccc-command-center .ccc-badge[data-status] {
+  align-self: flex-start;
+  border-color: var(--ccc-ink-muted);
+  border-style: solid;
+  color: var(--ccc-ink);
+}
+
+.ccc-command-center .ccc-badge[data-status="ok"],
+.ccc-command-center .ccc-badge[data-status="degraded"] {
+  border-style: solid;
+  color: var(--ccc-ink);
+}
+
+.ccc-command-center .ccc-badge[data-status="setup-needed"] {
+  border-style: dashed;
+  color: var(--ccc-ink-muted);
+}
+
+.ccc-command-center .ccc-badge[data-status="failing"] {
+  border-style: solid;
+  color: var(--ccc-danger);
+}
+
+.ccc-command-center .ccc-badge[data-status="unknown"],
+.ccc-command-center .ccc-badge[data-status="not-in-version"] {
+  border-style: dotted;
+  color: var(--ccc-ink-muted);
+}
+
+/* ---- S3 the health list ------------------------------------------------ */
+
+/* A list of rows, not a table: a reflowed table drops its semantics at narrow
+ * widths and nothing may scroll horizontally (R-03). The block measures its
+ * own width, because beside the nav the content column is narrower than the
+ * pane. Markup: li.ccc-health-row > (name + chip, reason + detail + meta +
+ * actions, then any full-width block such as the next-step panel or the parts
+ * disclosure). */
+.ccc-command-center .ccc-health {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+  min-width: 0;
+}
+
+.ccc-command-center .ccc-health-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+  margin: 0;
+  max-width: 68ch;
+  overflow-wrap: break-word;
+}
+
+.ccc-command-center .ccc-health-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-lg);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ccc-command-center .ccc-health-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--ccc-space-sm) var(--ccc-space-lg);
+  min-width: 0;
+}
+
+.ccc-command-center .ccc-health-row + .ccc-health-row {
+  padding-block-start: var(--ccc-space-lg);
+  border-block-start: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-command-center .ccc-health-row > * {
+  min-width: 0;
+}
+
+.ccc-command-center .ccc-health-row > :first-child,
+.ccc-command-center .ccc-health-row > :nth-child(2) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+}
+
+/* Anything after the name and reason blocks spans the whole row. */
+.ccc-command-center .ccc-health-row > :nth-child(n + 3) {
+  grid-column: 1 / -1;
+}
+
+.ccc-command-center .ccc-health-row p {
+  margin: 0;
+  max-width: 68ch;
+  overflow-wrap: break-word;
+}
+
+/* The parts disclosure: a nested list, each part a quiet indented block. */
+.ccc-command-center .ccc-health-parts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ccc-command-center .ccc-health-part {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  min-width: 0;
+  padding-inline-start: var(--ccc-space-md);
+  border-inline-start: var(--ccc-border-hairline) solid var(--ccc-border);
+}
+
+.ccc-command-center .ccc-health-part p {
+  margin: 0;
+  overflow-wrap: break-word;
+}
+
+/* A repository-relative command to copy: mono at the Label size, wraps. */
+.ccc-command-center .ccc-health-command {
+  display: block;
+  padding: var(--ccc-space-xs) var(--ccc-space-sm);
+  border-radius: var(--ccc-radius-sm);
+  background-color: var(--ccc-surface);
+  color: var(--ccc-ink);
+  font-family: var(--ccc-font-mono);
+  font-size: var(--ccc-text-label);
+  overflow-wrap: anywhere;
+}
+
+/* Below 34rem a row is one column. */
+@container (max-width: 34rem) {
+  .ccc-command-center .ccc-health-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- S4 the diagnostic bundle ------------------------------------------ */
+
+.ccc-command-center .ccc-bundle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+  min-width: 0;
+}
+
+.ccc-command-center .ccc-bundle p {
+  margin: 0;
+  max-width: 68ch;
+  overflow-wrap: break-word;
+}
+
+/* ---- S6 and S7 the Overview slice panels ------------------------------- */
+
+/* The Today block heading (an h4-level element): the Label role, quiet. */
+.ccc-command-center .ccc-today-section {
+  margin: var(--ccc-space-md) 0 var(--ccc-space-xs);
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  font-weight: var(--ccc-weight-strong);
+  letter-spacing: var(--ccc-tracking-label);
+  text-transform: uppercase;
+}
+
+.ccc-command-center .ccc-today-section:first-child {
+  margin-block-start: 0;
+}
+
+/* The unavailable-sources note: always present, Label size, muted. */
+.ccc-command-center .ccc-today-note {
+  margin: var(--ccc-space-sm) 0 0;
+  overflow-wrap: break-word;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+/* The latest cited report in the Technology and market intelligence panel. */
+.ccc-command-center .ccc-intel-latest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-sm);
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.ccc-command-center .ccc-intel-latest > p {
+  margin: 0;
+}
+
+.ccc-command-center .ccc-intel-latest > :first-child {
+  color: var(--ccc-ink);
+  font-weight: var(--ccc-weight-strong);
 }
 
 /* Phase 05.1 wave-5 visual fixes, scoped to the Codex sections and launcher

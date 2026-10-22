@@ -323,3 +323,198 @@ describe("Task 1 (tracer): the root and the new controls state their own colours
     expect(declaredValue("ccc-display-path", "user-select")).toBe("text");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 2: status chips, health rows, the bundle and the Overview slice classes
+// ---------------------------------------------------------------------------
+
+/** The text of the Phase 8 section: from its banner comment to the next section's banner. */
+const BANNER = STYLESHEET.indexOf("Phase 8 - Settings, Diagnostics");
+const SECTION_START = BANNER < 0 ? -1 : STYLESHEET.lastIndexOf("/*", BANNER);
+const SECTION_END = STYLESHEET.indexOf("/* Phase 05.1 wave-5 visual fixes");
+const SECTION_SOURCE =
+  SECTION_START < 0 ? "" : codeOnly(STYLESHEET.slice(SECTION_START, SECTION_END));
+const SECTION_RULES = parseRules(SECTION_SOURCE);
+
+const TOKEN_NAMES = new Set(
+  RULES.filter((rule) => rule.selectors.includes(":where(.ccc-command-center)")).flatMap((rule) =>
+    declarationsOf(rule).map((d) => d.property),
+  ),
+);
+
+describe("Task 2: status chips never use colour alone (D-07, D-33, R-05, R-06, R-F4)", () => {
+  const STATUS = (status: string): string => `[data-status="${status}"]`;
+
+  it("Test 1: each data-status value maps to the ink and border style of the UI-SPEC table", () => {
+    const table: ReadonlyArray<readonly [string, string, string]> = [
+      ["ok", "var(--ccc-ink)", "solid"],
+      ["setup-needed", "var(--ccc-ink-muted)", "dashed"],
+      ["degraded", "var(--ccc-ink)", "solid"],
+      ["failing", "var(--ccc-danger)", "solid"],
+      ["unknown", "var(--ccc-ink-muted)", "dotted"],
+      ["not-in-version", "var(--ccc-ink-muted)", "dotted"],
+    ];
+    for (const [status, ink, style] of table) {
+      expect(declaredValue("ccc-badge", "color", STATUS(status)), `${status} ink`).toBe(ink);
+      expect(declaredValue("ccc-badge", "border-style", STATUS(status)), `${status} border`).toBe(
+        style,
+      );
+    }
+  });
+
+  it("Test 1: all chip borders use --ccc-ink-muted, and only failing uses the danger colour", () => {
+    expect(declaredValue("ccc-badge", "border-color", "[data-status]")).toBe(
+      "var(--ccc-ink-muted)",
+    );
+    const dangerous = SECTION_RULES.filter((rule) =>
+      rule.selectors.some((selector) => stateOf(selector, "ccc-badge")?.startsWith("[data-status")),
+    )
+      .filter((rule) => rule.body.includes("--ccc-danger"))
+      .flatMap((rule) => rule.selectors);
+    expect(dangerous.every((selector) => selector.includes(STATUS("failing")))).toBe(true);
+    expect(dangerous.length).toBeGreaterThan(0);
+    // setup-needed is guidance, never an error: no danger ink anywhere in its rules.
+    for (const rule of rulesNaming("ccc-badge")) {
+      if (rule.selectors.some((selector) => selector.includes(STATUS("setup-needed")))) {
+        expect(rule.body).not.toContain("--ccc-danger");
+      }
+    }
+  });
+
+  it("Test 2: a health row is two columns above 34rem and one below, with a hairline between rows", () => {
+    expect(declaredValue("ccc-health-row", "display")).toBe("grid");
+    expect(declaredValue("ccc-health-row", "grid-template-columns")).toBe(
+      "minmax(0, 1fr) minmax(0, 2fr)",
+    );
+    const narrow = RULES.filter((rule) =>
+      rule.atStack.includes("@container (max-width: 34rem)"),
+    ).filter((rule) => rule.selectors.some((s) => stateOf(s, "ccc-health-row") === ""));
+    expect(
+      narrow.flatMap(declarationsOf).find((d) => d.property === "grid-template-columns")?.value,
+    ).toBe("minmax(0, 1fr)");
+    expect(declaredValue("ccc-health-row", "border-block-start", " + .ccc-health-row")).toBe(
+      "var(--ccc-border-hairline) solid var(--ccc-border)",
+    );
+    expect(declaredValue("ccc-health-row", "padding-block-start", " + .ccc-health-row")).toBe(
+      "var(--ccc-space-lg)",
+    );
+    expect(declaredValue("ccc-health-list", "gap")).toBe("var(--ccc-space-lg)");
+    // The health block measures its own width, not the pane's.
+    expect(declaredValue("ccc-health", "container-type")).toBe("inline-size");
+  });
+
+  it("Test 2: commands and display paths wrap anywhere", () => {
+    expect(declaredValue("ccc-health-command", "overflow-wrap")).toBe("anywhere");
+    expect(declaredValue("ccc-health-command", "font-family")).toBe("var(--ccc-font-mono)");
+    expect(declaredValue("ccc-health-command", "font-size")).toBe("var(--ccc-text-label)");
+    expect(declaredValue("ccc-display-path", "overflow-wrap")).toBe("anywhere");
+  });
+
+  it("Test 3: the bundle preview is mono at the label size, wraps, and scrolls vertically only", () => {
+    expect(declaredValue("ccc-bundle-preview", "font-family")).toBe("var(--ccc-font-mono)");
+    expect(declaredValue("ccc-bundle-preview", "font-size")).toBe("var(--ccc-text-label)");
+    expect(declaredValue("ccc-bundle-preview", "color")).toBe("var(--ccc-ink)");
+    expect(declaredValue("ccc-bundle-preview", "background-color")).toBe("var(--ccc-surface)");
+    expect(declaredValue("ccc-bundle-preview", "white-space")).toBe("pre-wrap");
+    expect(declaredValue("ccc-bundle-preview", "overflow-wrap")).toBe("anywhere");
+    expect(declaredValue("ccc-bundle-preview", "max-block-size")).toBe(
+      "calc(var(--ccc-space-3xl) * 5)",
+    );
+    expect(declaredValue("ccc-bundle-preview", "overflow-y")).toBe("auto");
+    expect(declaredValue("ccc-bundle-preview", "overflow-x")).toBe("hidden");
+  });
+
+  it("Test 4: the Today and Technology blocks use only existing tokens and no new size", () => {
+    const names = ["ccc-today-section", "ccc-today-note", "ccc-intel-latest"];
+    for (const name of names) {
+      const named = rulesNaming(name);
+      expect(named.length, `no rule names .${name}`).toBeGreaterThan(0);
+      for (const rule of named) {
+        for (const { property, value } of declarationsOf(rule)) {
+          const tokens = [...value.matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1] ?? "");
+          for (const token of tokens) {
+            expect(TOKEN_NAMES.has(token), `${name} { ${property} } uses unknown ${token}`).toBe(
+              true,
+            );
+          }
+          const literals = value
+            .replace(/var\(--[\w-]+\)/g, "")
+            .match(/(?<![\w-])(?:\d*\.)?\d+(?:px|rem|em|ms|s|vh|vw|%|ch|ex|pt)\b/g);
+          const sizes = (literals ?? []).filter((literal) => !/^0+(\.0+)?[a-z%]*$/.test(literal));
+          expect(sizes, `${name} { ${property}: ${value} }`).toEqual([]);
+        }
+      }
+    }
+    // The Today label step is the Label role: Label size, 600, tracked, uppercase, muted.
+    expect(declaredValue("ccc-today-section", "font-size")).toBe("var(--ccc-text-label)");
+    expect(declaredValue("ccc-today-section", "font-weight")).toBe("var(--ccc-weight-strong)");
+    expect(declaredValue("ccc-today-section", "text-transform")).toBe("uppercase");
+    expect(declaredValue("ccc-today-section", "color")).toBe("var(--ccc-ink-muted)");
+    expect(declaredValue("ccc-today-note", "font-size")).toBe("var(--ccc-text-label)");
+  });
+
+  it("every class of the UI-SPEC class list has a rule", () => {
+    const CLASSES = [
+      "ccc-settings",
+      "ccc-settings-header",
+      "ccc-settings-status",
+      "ccc-settings-layout",
+      "ccc-settings-nav",
+      "ccc-settings-nav-item",
+      "ccc-settings-content",
+      "ccc-setting-row",
+      "ccc-setting-row-text",
+      "ccc-setting-row-control",
+      "ccc-switch",
+      "ccc-select-wrap",
+      "ccc-select",
+      "ccc-display-path",
+      "ccc-health",
+      "ccc-health-summary",
+      "ccc-health-list",
+      "ccc-health-row",
+      "ccc-health-parts",
+      "ccc-health-part",
+      "ccc-health-command",
+      "ccc-bundle",
+      "ccc-bundle-preview",
+      "ccc-today-section",
+      "ccc-today-note",
+      "ccc-intel-latest",
+    ];
+    expect(CLASSES.filter((name) => rulesNaming(name).length === 0)).toEqual([]);
+  });
+
+  it("Test 5 (global guard): the Phase 8 section adds no !important, hex colour, custom property, px or foreign animation", () => {
+    expect(SECTION_START).toBeGreaterThan(-1);
+    expect(SECTION_END).toBeGreaterThan(SECTION_START);
+    expect(SECTION_RULES.length).toBeGreaterThan(30);
+    expect(SECTION_SOURCE).not.toMatch(/!\s*important/);
+    expect(SECTION_SOURCE).not.toMatch(/#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|oklch|lab)\s*\(/i);
+    expect(SECTION_SOURCE).not.toMatch(/\b\d*\.?\d+px\b/);
+    expect(SECTION_SOURCE).not.toMatch(/@keyframes|animation\s*:/);
+    // The only custom property a rule here may state is the label carrier.
+    const customProperties = SECTION_RULES.flatMap(declarationsOf)
+      .map((d) => d.property)
+      .filter((property) => property.startsWith("--") && property !== "--text-color");
+    expect(customProperties).toEqual([]);
+    // Every transition drives from a motion token; every selector sits under the root.
+    for (const rule of SECTION_RULES) {
+      for (const selector of rule.selectors) {
+        expect(selector.startsWith(`${ROOT} `), selector).toBe(true);
+      }
+      for (const { property, value } of declarationsOf(rule)) {
+        if (/^(transition|animation)(-duration)?$/.test(property) && value !== "none") {
+          expect(value, `${rule.selectors.join(", ")} { ${property} }`).toContain(
+            "var(--ccc-motion-fast)",
+          );
+        }
+      }
+    }
+    // Every var() reference resolves to an existing --ccc-* token.
+    const unknown = [...SECTION_SOURCE.matchAll(/var\((--[\w-]+)\)/g)]
+      .map((m) => m[1] ?? "")
+      .filter((token) => !TOKEN_NAMES.has(token));
+    expect(unknown).toEqual([]);
+  });
+});
