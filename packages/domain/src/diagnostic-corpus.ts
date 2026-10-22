@@ -76,6 +76,26 @@ export const HOSTILE_SHAPE_SAMPLES: readonly HostileSample[] = [
     rule: "home-path",
     value: join(PERCENT_SLASH, "Users", PERCENT_SLASH, SYNTHETIC_USER, PERCENT_SLASH, "x"),
   },
+  {
+    name: "a home path with the folder name in other letter cases",
+    rule: "home-path",
+    value: join("/uSe", "rs/", SYNTHETIC_USER, "/x"),
+  },
+  {
+    name: "a home path in full-width characters",
+    rule: "home-path",
+    value: join("\uFF0F", "Users", "\uFF0F", SYNTHETIC_USER),
+  },
+  {
+    name: "a home path with a zero-width character inside",
+    rule: "home-path",
+    value: join("/Us", "\u200B", "ers/", SYNTHETIC_USER),
+  },
+  {
+    name: "a home path percent-encoded twice",
+    rule: "home-path",
+    value: join("%252F", "Users", "%252F", SYNTHETIC_USER),
+  },
   { name: "a Linux home path", rule: "home-path", value: join("/ho", "me/dev/x") },
   { name: "a file URL", rule: "home-path", value: join("file", ":///x") },
   { name: "a macOS temporary folder", rule: "home-path", value: join("/var/", "folders/ab/T/x") },
@@ -159,7 +179,15 @@ export const HOSTILE_NAME_SAMPLES: readonly HostileSample[] = [
     rule: "denylist-project",
     value: join("Órchard L", "é", "dger"),
   },
+  {
+    name: "the project name with other separators",
+    rule: "denylist-project",
+    value: "orchard_ledger",
+  },
+  { name: "the project name with no separator", rule: "denylist-project", value: "OrchardLedger" },
   { name: "the folder name", rule: "denylist-folder", value: "plum-cellar" },
+  { name: "the folder name with underscores", rule: "denylist-folder", value: "plum_cellar" },
+  { name: "the folder name without the hyphen", rule: "denylist-folder", value: "plumcellar" },
   { name: "the GitHub owner", rule: "denylist-github", value: "someone-example" },
   { name: "the GitHub repository", rule: "denylist-github", value: "quince-engine" },
   {

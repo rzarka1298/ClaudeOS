@@ -501,6 +501,8 @@ type DenylistRule = Extract<RefusalCode, `denylist-${string}`>;
 interface DenylistEntry {
   readonly rule: DenylistRule;
   readonly folded: string;
+  /** The folded entry with every character that is not a letter or digit removed. */
+  readonly squashed: string;
 }
 
 /** The names to refuse, folded. Opaque to callers: pass it to {@link verifyBundle}. */
@@ -524,6 +526,11 @@ export function foldForComparison(text: string): string {
     .toLowerCase();
 }
 
+/** Letters and digits only, so `plum-cellar`, `plum_cellar` and `Plum Cellar` compare equal. */
+function squash(folded: string): string {
+  return folded.replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
 /**
  * Builds the denylist from the owner data the plugin holds: project display names, folder
  * basenames, GitHub owner, repository and owner/repository, the vault name and the macOS short
@@ -539,7 +546,7 @@ export function buildDenylist(input: DenylistInput): Denylist {
     const folded = foldForComparison(value).trim();
     if (folded.length < DENYLIST_MIN_LENGTH || BUNDLE_VOCABULARY.has(folded)) return;
     if (!entries.some((entry) => entry.rule === rule && entry.folded === folded)) {
-      entries.push({ rule, folded });
+      entries.push({ rule, folded, squashed: squash(folded) });
     }
   };
   for (const name of input.projectNames) add("denylist-project", name);
@@ -605,7 +612,8 @@ export const PRIVACY_RULES = {
   base64Run: "[A-Za-z0-9+/_=-]{32,}",
 } as const;
 
-const HOME_PATH = new RegExp(PRIVACY_RULES.homePath.source, "g");
+// Case-insensitive: macOS file systems are, so `/users/name` is the same folder as `/Users/name`.
+const HOME_PATH = new RegExp(PRIVACY_RULES.homePath.source, "gi");
 const EMAIL = new RegExp(PRIVACY_RULES.email.source, "g");
 const EMAIL_EXEMPT = new RegExp(PRIVACY_RULES.email.exemptSource);
 const PATH_SHAPES = PRIVACY_RULES.pathShapes.map((source) => new RegExp(source));
@@ -678,12 +686,31 @@ function percentDecode(text: string): string {
   }
 }
 
-/** The spellings of a string the rules look at: as written, unescaped, percent-decoded, and both. */
+/** Compatibility-normalised (full-width slashes and letters become ASCII) and stripped of invisible format characters. */
+function normalised(text: string): string {
+  return text.normalize("NFKC").replace(/\p{Cf}/gu, "");
+}
+
+/**
+ * The spellings of a string the rules look at: as written, JSON-unescaped, percent-decoded (once
+ * and twice), those combined, and each of them normalised (NFKC, zero-width characters removed).
+ * A plain ASCII string with no backslash or percent sign has only itself.
+ */
 function variantsOf(text: string): string[] {
-  if (!/[\\%]/.test(text)) return [text];
+  if (!/[\\%]|[^\x20-\x7e]/.test(text)) return [text];
   const unescaped = unescapeText(text);
   const decoded = percentDecode(text);
-  return [...new Set([text, unescaped, decoded, unescapeText(decoded), percentDecode(unescaped)])];
+  const decodedTwice = percentDecode(decoded);
+  const spellings = [
+    text,
+    unescaped,
+    decoded,
+    decodedTwice,
+    unescapeText(decoded),
+    unescapeText(decodedTwice),
+    percentDecode(unescaped),
+  ];
+  return [...new Set(spellings.flatMap((spelling) => [spelling, normalised(spelling)]))];
 }
 
 const INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
@@ -703,8 +730,12 @@ function denylistRuleOf(text: string, denylist: Denylist): DenylistRule | null {
   if (denylist.entries.length === 0) return null;
   for (const variant of variantsOf(text)) {
     const folded = foldForComparison(variant);
+    const squashed = squash(folded);
     for (const entry of denylist.entries) {
       if (folded.includes(entry.folded)) return entry.rule;
+      if (entry.squashed.length >= DENYLIST_MIN_LENGTH && squashed.includes(entry.squashed)) {
+        return entry.rule;
+      }
     }
   }
   return null;
