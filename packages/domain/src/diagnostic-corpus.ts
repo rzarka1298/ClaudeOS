@@ -1,4 +1,8 @@
-import type { DenylistInput, DiagnosticBundleInput, RefusalCode } from "./diagnostic-bundle.js";
+import type {
+  BundleRefusalCode,
+  DenylistInput,
+  DiagnosticBundleInput,
+} from "./diagnostic-bundle.js";
 import { type DiagnosticsHealthResponse, DiagnosticsHealthResponseSchema } from "./diagnostics.js";
 
 /**
@@ -35,7 +39,7 @@ export const CORPUS_DENYLIST_INPUT: DenylistInput = {
 
 export interface HostileSample {
   readonly name: string;
-  readonly rule: RefusalCode;
+  readonly rule: BundleRefusalCode;
   readonly value: string;
 }
 

@@ -213,6 +213,14 @@ export const CLASSIFICATION = {
       "The owner's click on Run now is the decision; one press is one run of public read-only fetches and managed notes in the owner's own vault (D-17, PRD 7.12).",
   },
 
+  // Phase 8 (plan 08-09, D-13, PRD 12.3): the owner's own export of the diagnostic bundle. The probes
+  // behind it are read-only local queries and get no row (D-40).
+  "diagnostics.export-bundle": {
+    class: "direct-gesture",
+    reason:
+      "The owner asks for a sanitized diagnostic bundle and chooses to copy or save it; it is built from an allowlist, checked before it is offered, and never leaves this machine by itself (D-12, D-13, PRD 12.3).",
+  },
+
   // --- no-approval: allowed without a decision, with the reason ------------
   "vault.write-note": {
     class: "no-approval",

@@ -481,11 +481,11 @@ export const BUNDLE_REFUSAL_CODES = [
   "schema-invalid",
   "too-large",
 ] as const;
-export type RefusalCode = (typeof BUNDLE_REFUSAL_CODES)[number];
+export type BundleRefusalCode = (typeof BUNDLE_REFUSAL_CODES)[number];
 
 export type VerifyResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly rule: RefusalCode };
+  | { readonly ok: false; readonly rule: BundleRefusalCode };
 
 /** The owner data the denylist is built from. The plugin holds all of it already. */
 export interface DenylistInput {
@@ -496,7 +496,7 @@ export interface DenylistInput {
   readonly userName: string | null;
 }
 
-type DenylistRule = Extract<RefusalCode, `denylist-${string}`>;
+type DenylistRule = Extract<BundleRefusalCode, `denylist-${string}`>;
 
 interface DenylistEntry {
   readonly rule: DenylistRule;
@@ -612,7 +612,7 @@ export const PRIVACY_RULES = {
   base64Run: "[A-Za-z0-9+/_=-]{32,}",
 } as const;
 
-// Case-insensitive: macOS file systems are, so `/users/name` is the same folder as `/Users/name`.
+// Case-insensitive: macOS file systems are, so a lower-case spelling of the users folder names the same folder.
 const HOME_PATH = new RegExp(PRIVACY_RULES.homePath.source, "gi");
 const EMAIL = new RegExp(PRIVACY_RULES.email.source, "g");
 const EMAIL_EXEMPT = new RegExp(PRIVACY_RULES.email.exemptSource);
@@ -655,7 +655,7 @@ function hasToken(text: string): boolean {
 }
 
 /** The first shape rule a text breaks, or null. The order is the order of {@link BUNDLE_REFUSAL_CODES}. */
-function shapeRuleOf(text: string): RefusalCode | null {
+function shapeRuleOf(text: string): BundleRefusalCode | null {
   if (hasHomePath(text) || PATH_SHAPES.some((shape) => shape.test(text))) return "home-path";
   if (TILDE_SHAPES.some((shape) => shape.test(text))) return "tilde-path";
   if (hasEmail(text)) return "email";
@@ -745,7 +745,7 @@ function denylistRuleOf(text: string, denylist: Denylist): DenylistRule | null {
  * The rule one string breaks, or null: the shape rules first (on every spelling of the string), then
  * the owner's denylist, which skips strings the schema types as a token, an instant or a version.
  */
-export function checkLeaf(value: string, denylist: Denylist): RefusalCode | null {
+export function checkLeaf(value: string, denylist: Denylist): BundleRefusalCode | null {
   if (isSchemaTyped(value)) return null;
   for (const variant of variantsOf(value)) {
     const rule = shapeRuleOf(variant);
@@ -802,7 +802,7 @@ export const BUNDLE_KEY_VOCABULARY: ReadonlySet<string> = new Set([
   "at",
 ]);
 
-function checkKey(key: string, denylist: Denylist): RefusalCode | null {
+function checkKey(key: string, denylist: Denylist): BundleRefusalCode | null {
   if (BUNDLE_KEY_VOCABULARY.has(key)) return null;
   return checkLeaf(key, denylist);
 }

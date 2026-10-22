@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import * as approvalCorpus from "./approval-corpus.js";
+import * as diagnosticCorpus from "./diagnostic-corpus.js";
 import * as browser from "./index.browser.js";
 import * as full from "./index.js";
 import * as pathContainment from "./path-containment.js";
@@ -23,7 +24,7 @@ const NODE_ONLY_MODULES = ["./path-containment.js"];
  * out: the hostile-text corpus is not product code, so no browser bundle should
  * carry it (plan 06-04, D-40).
  */
-const INDEX_ONLY_MODULES = ["./approval-corpus.js", "./task-corpus.js"];
+const INDEX_ONLY_MODULES = ["./approval-corpus.js", "./diagnostic-corpus.js", "./task-corpus.js"];
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -44,6 +45,7 @@ describe("the browser barrel (index.browser.ts)", () => {
     const nodeOnly = new Set([
       ...Object.keys(pathContainment),
       ...Object.keys(approvalCorpus),
+      ...Object.keys(diagnosticCorpus),
       ...Object.keys(taskCorpus),
     ]);
     const expected = Object.keys(full)
@@ -72,6 +74,27 @@ describe("the browser barrel (index.browser.ts)", () => {
       expect(Object.keys(full), name).toContain(name);
       expect(Object.keys(browser), name).toContain(name);
     }
+  });
+
+  it("exports the diagnostic bundle from both barrels and its hostile corpus from the full one only (plan 08-09)", () => {
+    expect(reExports("index.ts")).toContain("./diagnostic-bundle.js");
+    expect(reExports("index.browser.ts")).toContain("./diagnostic-bundle.js");
+    expect(reExports("index.ts")).toContain("./diagnostic-corpus.js");
+    expect(reExports("index.browser.ts")).not.toContain("./diagnostic-corpus.js");
+    for (const name of [
+      "buildDiagnosticBundle",
+      "buildDenylist",
+      "verifyBundle",
+      "serialiseBundle",
+      "DiagnosticBundleSchema",
+      "BUNDLE_REFUSAL_CODES",
+      "PRIVACY_RULES",
+    ]) {
+      expect(Object.keys(full), name).toContain(name);
+      expect(Object.keys(browser), name).toContain(name);
+    }
+    expect(Object.keys(full)).toContain("HOSTILE_SHAPE_SAMPLES");
+    expect(Object.keys(browser)).not.toContain("HOSTILE_SHAPE_SAMPLES");
   });
 
   it("both barrels declare nothing but re-exports", () => {

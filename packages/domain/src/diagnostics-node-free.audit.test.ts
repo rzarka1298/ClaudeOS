@@ -1,6 +1,7 @@
 // Plan 08-01 audit: the diagnostics domain files must be Node-free (they are
 // reachable from the plugin's browser bundle) and reachable through the browser
-// barrel, not just listed there. 08-09 extends the file list.
+// barrel, not just listed there. Plan 08-09 extends the file list with the diagnostic bundle and
+// its hostile corpus.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +9,12 @@ import { describe, expect, it } from "vitest";
 import * as browser from "./index.browser.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const NEW_FILES = ["diagnostics.ts", "display-path.ts"];
+const NEW_FILES = [
+  "diagnostics.ts",
+  "display-path.ts",
+  "diagnostic-bundle.ts",
+  "diagnostic-corpus.ts",
+];
 
 function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -48,6 +54,10 @@ describe("the diagnostics domain files are Node-free (plan 08-01)", () => {
       "HOOK_SILENT_THRESHOLD_MS",
       "toDisplayPath",
       "DisplayPathSchema",
+      "buildDiagnosticBundle",
+      "verifyBundle",
+      "buildDenylist",
+      "DiagnosticBundleSchema",
     ]) {
       expect(Object.keys(browser), name).toContain(name);
     }

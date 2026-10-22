@@ -609,3 +609,31 @@ describe("research classification (07-05 Task 1 Tests 1 to 3)", () => {
     }
   });
 });
+
+describe("Phase 8 diagnostics export (plan 08-09; D-13, D-40, PRD 12.3)", () => {
+  it("classifies the export gesture as a direct gesture with exactly a class and a reason", () => {
+    const row = CLASSIFICATION["diagnostics.export-bundle"];
+    expect(row.class).toBe("direct-gesture");
+    expect(Object.keys(row).sort()).toEqual(["class", "reason"]);
+    expect(row.reason.trim().length).toBeGreaterThan(0);
+    // The owner chooses to copy or save; the bundle is built from an allowlist and checked first.
+    expect(row.reason).toMatch(/allowlist/i);
+    expect(row.reason).toMatch(/copy or save/i);
+  });
+
+  it("adds no row for the read-only probes, and no other diagnostics row", () => {
+    expect(Object.keys(CLASSIFICATION).filter((name) => name.startsWith("diagnostics."))).toEqual([
+      "diagnostics.export-bundle",
+    ]);
+    expect(Object.keys(CLASSIFICATION)).not.toContain("diagnostics.probe");
+    expect(Object.keys(CLASSIFICATION)).not.toContain("diagnostics.health");
+  });
+
+  it("names no capability for it: export is a Diagnostics button, not a quick-action descriptor", () => {
+    expect(Object.values(CAPABILITY_OPERATION)).not.toContain("diagnostics.export-bundle");
+    expect(
+      Object.keys(CAPABILITY_OPERATION).filter((key) => key.startsWith("diagnostics")),
+    ).toEqual([]);
+    expect(classifyCapability("diagnostics:export-bundle")).toBeUndefined();
+  });
+});

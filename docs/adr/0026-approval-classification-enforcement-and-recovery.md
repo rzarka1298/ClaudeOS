@@ -74,6 +74,7 @@ with the same class, status, lifetime, maximum approval age and retry policy.
 | `usage.delete-analytics` | direct-gesture | - | - | - | - |
 | `connect.navigate` | direct-gesture | - | - | - | - |
 | `research.run-now` | direct-gesture | - | - | - | - |
+| `diagnostics.export-bundle` | direct-gesture | - | - | - | - |
 | `vault.write-note` | no-approval | - | - | - | - |
 | `vault.initialize` | no-approval | - | - | - | - |
 | `vault.repair-index` | no-approval | - | - | - | - |

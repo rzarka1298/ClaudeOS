@@ -5,8 +5,8 @@
  * equivalent; this is inherently service-only logic, not a bundling
  * limitation).
  *
- * `approval-corpus.ts` and `task-corpus.ts` are also left out: they are test
- * data (the hostile-text and hostile-task corpora), not product code, so no
+ * `approval-corpus.ts`, `task-corpus.ts` and `diagnostic-corpus.ts` are also left out: they are
+ * test data (the hostile-text, hostile-task and hostile-bundle corpora), not product code, so no
  * browser bundle should carry them. They are exported from the full barrel only.
  *
  * Every other domain file is now free of top-level Node built-in imports
@@ -41,6 +41,7 @@ export * from "./codex-api.js";
 export * from "./codex-integration.js";
 export * from "./codex-sessions.js";
 export * from "./codex-usage.js";
+export * from "./diagnostic-bundle.js";
 export * from "./diagnostics.js";
 export * from "./display-path.js";
 export * from "./events.js";
