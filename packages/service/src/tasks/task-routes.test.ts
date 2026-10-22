@@ -286,6 +286,8 @@ describe("read routes: answers", () => {
     expect(missing.body).toEqual({ error: "not-found" });
     const feed = await call(TASK_DUE_TODAY_PATH, { body: ZONE_BODY });
     expect(TaskDueTodayResponseSchema.parse(feed.body)).toBeDefined();
+    // 08-03: the same route carries the next open task (earliest due, else most recent).
+    expect(TaskDueTodayResponseSchema.parse(feed.body).nextOpen?.taskId).toBe(noteId(1));
     const attention = await call(TASK_ATTENTION_PATH, { body: {} });
     expect(TaskAttentionResponseSchema.parse(attention.body).total).toBe(0);
   });

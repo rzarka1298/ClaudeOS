@@ -998,7 +998,7 @@ export function listDueToday(
   // flips between calls. Same OPEN predicate and scope clause as the lists; one row.
   const next = db
     .prepare(
-      `SELECT ${columns} FROM task_index t WHERE ${OPEN}${scoped} ORDER BY (t.due_sort IS NULL) ASC, ${DUE_KEY} ASC, t.updated_at DESC, t.note_id ASC LIMIT 1`,
+      `SELECT ${columns} FROM task_index t WHERE ${OPEN}${scoped} ORDER BY ${DUE_KEY} ASC, t.updated_at DESC, t.note_id ASC LIMIT 1`,
     )
     .get(params) as FeedRowSql | undefined;
   return {

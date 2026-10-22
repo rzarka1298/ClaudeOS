@@ -558,6 +558,48 @@ describe("Task 2 Test 6 (due-today)", () => {
   });
 });
 
+describe("08-03 Task 2 (next open task through the service)", () => {
+  it("answers the earliest-due open task, null when nothing is open, and follows the scope", () => {
+    const empty = services.dueToday({ zone: ZONE });
+    if (!empty.ok) throw new Error("due-today refused");
+    expect(empty.value.nextOpen).toBeNull();
+
+    seedTasks(fx.store, [
+      taskRecord(1, { due: "2026-11-20" }),
+      taskRecord(2, { due: "2026-11-02" }),
+      taskRecord(3, { status: "done", due: "2026-10-01", completed: "2026-10-02T10:00:00Z" }),
+      taskRecord(4, { status: "proposed", due: "2026-10-02" }),
+      taskRecord(5, {
+        due: "2026-10-09",
+        scope: WS_SCOPE,
+        path: `workspaces/${WS}/tasks/task-5.md`,
+      }),
+    ]);
+    const all = services.dueToday({ zone: ZONE });
+    const scoped = services.dueToday({ zone: ZONE, scope: WS_SCOPE });
+    const global = services.dueToday({ zone: ZONE, scope: "global" });
+    if (!all.ok || !scoped.ok || !global.ok) throw new Error("due-today refused");
+    expect(all.value.nextOpen?.taskId).toBe(noteId(5));
+    expect(scoped.value.nextOpen?.taskId).toBe(noteId(5));
+    expect(global.value.nextOpen?.taskId).toBe(noteId(2));
+  });
+
+  it("keeps nextOpen inside the byte budget: the lists give way first and the row is never dropped", () => {
+    const title = "漢".repeat(200);
+    seedTasks(fx.store, [
+      ...Array.from({ length: 50 }, (_, i) => taskRecord(100 + i, { title, due: "2026-10-07" })),
+      ...Array.from({ length: 50 }, (_, i) => taskRecord(300 + i, { title, due: "2026-10-01" })),
+    ]);
+    const result = services.dueToday({ zone: ZONE });
+    if (!result.ok) throw new Error("due-today refused");
+    expect(result.value.nextOpen).not.toBeNull();
+    expect(result.value.nextOpen?.title).toBe(title);
+    expect(Buffer.byteLength(JSON.stringify(result.value), "utf8")).toBeLessThanOrEqual(56 * 1024);
+    // 100 maximal rows do not fit, so the lists were trimmed, not the next open task.
+    expect(result.value.due.length + result.value.overdue.length).toBeLessThan(100);
+  });
+});
+
 describe("Task 2 Test 7 (attention)", () => {
   function attentionFixture(count: number) {
     return Array.from({ length: count }, (_, i) => ({
