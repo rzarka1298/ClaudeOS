@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DIAGNOSTICS_ERROR_CODES, DIAGNOSTICS_HEALTH_PATH } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import {
@@ -6,7 +10,11 @@ import {
   getDiagnosticsHealth,
 } from "./diagnostics-client.js";
 import type { SocketApiClient, SocketRequestOptions, SocketResponse } from "./socket-api-client.js";
-import { SocketUnreachableError } from "./socket-api-client.js";
+import {
+  createSocketApiClient,
+  SocketUnreachableError,
+  VaultSetupRequestError,
+} from "./socket-api-client.js";
 
 /**
  * Plan 08-07 Task 1 Test 3 (client; D-02, T-08-15): the diagnostics health client. A fake
@@ -211,5 +219,81 @@ describe("the error mapping", () => {
     const { client } = recording(500, { error: "internal" });
     const error = await rejection(getDiagnosticsHealth(client));
     expect(DIAGNOSTICS_ERROR_CODES).toContain(error.code);
+  });
+});
+
+describe("FIX2A F10: the transport's own refusal of a body it cannot use is a closed code, keeping the status", () => {
+  const refusal = (status: number) =>
+    new VaultSetupRequestError(
+      status,
+      "The service returned a response this client does not recognise. (/Users/USERNAME/x)",
+    );
+
+  it("maps a non-JSON body (the transport throws VaultSetupRequestError) to unrecognised-response with the HTTP status", async () => {
+    for (const status of [200, 500, 502]) {
+      const error = await rejection(getDiagnosticsHealth(failing(refusal(status))));
+      expect(error.code).toBe("unrecognised-response");
+      expect(error.status).toBe(status);
+      expect(error.message).toBe("unrecognised-response");
+    }
+  });
+
+  it("maps an over-64-KiB body the same way, and carries none of the transport's text", async () => {
+    const error = await rejection(getDiagnosticsHealth(failing(refusal(200))));
+    expect(error.code).toBe("unrecognised-response");
+    expect(JSON.stringify({ message: error.message, code: error.code })).not.toContain("USERNAME");
+    expect(error).not.toBeInstanceOf(VaultSetupRequestError);
+  });
+
+  it("still lets an error it does not know escape, and still maps an unreachable socket", async () => {
+    await expect(getDiagnosticsHealth(failing(new TypeError("boom")))).rejects.toThrow(TypeError);
+    const error = await rejection(getDiagnosticsHealth(failing(unreachable("ETIMEDOUT"))));
+    expect(error.code).toBe("timeout");
+  });
+});
+
+describe("FIX2A F10: through the real transport", () => {
+  async function against(
+    handler: (res: ServerResponse) => void,
+    run: (client: SocketApiClient) => Promise<void>,
+  ): Promise<void> {
+    const dir = mkdtempSync(join(tmpdir(), "ccc-diag-sock-"));
+    const socketPath = join(dir, "t.sock");
+    const server = createServer((_req, res) => handler(res));
+    await new Promise<void>((done) => server.listen(socketPath, done));
+    try {
+      await run(createSocketApiClient({ socketPath, timeoutMs: 2000 }));
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("a proxy error page (not JSON) reads unrecognised-response and keeps the HTTP status", async () => {
+    await against(
+      (res) => {
+        res.writeHead(502, { "content-type": "text/html" });
+        res.end("<html>Bad gateway at /Users/USERNAME/x</html>");
+      },
+      async (client) => {
+        const error = await rejection(getDiagnosticsHealth(client));
+        expect(error.code).toBe("unrecognised-response");
+        expect(error.status).toBe(502);
+      },
+    );
+  });
+
+  it("a body over 64 KiB reads unrecognised-response and keeps the HTTP status", async () => {
+    await against(
+      (res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ padding: "x".repeat(70 * 1024) }));
+      },
+      async (client) => {
+        const error = await rejection(getDiagnosticsHealth(client));
+        expect(error.code).toBe("unrecognised-response");
+        expect(error.status).toBe(200);
+      },
+    );
   });
 });
