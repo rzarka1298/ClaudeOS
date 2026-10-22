@@ -333,6 +333,8 @@ describe("the guard environment reaches the service fixture only through the bra
     dbPath: "/tmp/ccc-uat.AbCdEf/rt/operational.db",
     claudeConfigDir: "/tmp/ccc-uat.AbCdEf/claude",
     codexHome: "/tmp/ccc-uat.AbCdEf/codex",
+    codexCandidatesDir: "/tmp/ccc-uat.AbCdEf/codex-candidates",
+    codexBridgeHome: "/tmp/ccc-uat.AbCdEf/codex-bridge",
   };
 
   it("merges the guard variables into the service environment", async () => {
