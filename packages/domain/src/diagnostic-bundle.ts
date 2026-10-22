@@ -4,6 +4,7 @@ import {
   COLLECTORS_REASON_STATUS,
   COLLECTORS_REASONS,
   type DiagnosticsHealthResponse,
+  DOTTED_VERSION_PATTERN,
   HOOKS_REASON_STATUS,
   HOOKS_REASONS,
   LAUNCHER_PART_IDS,
@@ -59,8 +60,9 @@ export const BUNDLE_DIAGNOSTIC_SOURCES = ["layout"] as const;
 /**
  * The diagnostic codes the plugin writes today (override-invalid, override-unreadable and
  * override-apply-failed from the layout file, and the three layout skip reasons). They are developer
- * constants, so they count as the bundle's own vocabulary; any other well-formed code is still
- * admitted (a later writer) but is then checked like free text.
+ * constants, so they count as the bundle's own vocabulary. The bundle schema admits exactly these
+ * (FIX2A F3): an unknown code is skipped by the builder and refused by the schema, never passed. A new
+ * writer adds its code here, which is a reviewed change.
  */
 export const KNOWN_PLUGIN_DIAGNOSTIC_CODES = [
   "override-invalid",
@@ -78,13 +80,13 @@ const ARCHITECTURES = ["arm64", "x64"] as const;
 const STORED_LAUNCHER_IDS = ["antigravity", "claude-code", "claude-desktop", "codex"] as const;
 export type StoredLauncherKey = (typeof STORED_LAUNCHER_IDS)[number];
 
-/** A dotted version such as `0.1.0` or `2.1.5-beta.1`. Mirrors the health contract's pattern. */
-const DOTTED_VERSION_PATTERN = /^\d+(?:\.\d+){1,3}(?:-[A-Za-z0-9.]{1,32})?$/;
-const KEBAB_CODE_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
+/** The pre-release words a version may carry: part of the bundle's own vocabulary, never a name. */
+const PRE_RELEASE_WORDS = ["alpha", "beta", "rc"] as const;
 const DottedVersionSchema = z.string().max(64).regex(DOTTED_VERSION_PATTERN, {
   message: "must be a dotted version",
 });
-const KebabCodeSchema = z.string().regex(KEBAB_CODE_PATTERN, { message: "must be a kebab code" });
+/** A code the plugin actually writes (FIX2A F3): a closed enum, so free text cannot ride in a code. */
+const PluginDiagnosticCodeSchema = z.enum(KNOWN_PLUGIN_DIAGNOSTIC_CODES);
 const IsoUtcSchema = z.iso.datetime();
 const CountSchema = z.int().nonnegative().nullable();
 
@@ -169,7 +171,7 @@ const LAUNCHER_PART_REASONS = Object.fromEntries(
 
 const PluginDiagnosticSchema = z.strictObject({
   source: z.enum(BUNDLE_DIAGNOSTIC_SOURCES),
-  code: KebabCodeSchema,
+  code: PluginDiagnosticCodeSchema,
   at: IsoUtcSchema,
 });
 
@@ -263,6 +265,7 @@ export const BUNDLE_VOCABULARY: ReadonlySet<string> = new Set(
     "darwin",
     ...BUNDLE_DIAGNOSTIC_SOURCES,
     ...KNOWN_PLUGIN_DIAGNOSTIC_CODES,
+    ...PRE_RELEASE_WORDS,
   ].map((token) => token.toLowerCase()),
 );
 
@@ -310,7 +313,7 @@ export interface DiagnosticBundleInput {
   readonly pluginDiagnostics: readonly BundlePluginDiagnostic[];
 }
 
-/** A version that is a dotted version, else null: free text is never passed through. */
+/** A version of the closed shape, else null: free text is never passed through (FIX2A F2). */
 function dotted(value: string | null): string | null {
   return value !== null && value.length <= 64 && DOTTED_VERSION_PATTERN.test(value) ? value : null;
 }
@@ -398,12 +401,16 @@ function pickedDiagnostics(
     const at = utc(record.at);
     if (
       !(BUNDLE_DIAGNOSTIC_SOURCES as readonly string[]).includes(record.source) ||
-      !KEBAB_CODE_PATTERN.test(record.code) ||
+      !(KNOWN_PLUGIN_DIAGNOSTIC_CODES as readonly string[]).includes(record.code) ||
       at === null
     ) {
       continue;
     }
-    kept.push({ source: record.source as "layout", code: record.code, at });
+    kept.push({
+      source: record.source as "layout",
+      code: record.code as (typeof KNOWN_PLUGIN_DIAGNOSTIC_CODES)[number],
+      at,
+    });
   }
   return kept.slice(-BUNDLE_MAX_DIAGNOSTICS);
 }
@@ -459,7 +466,11 @@ export function buildDiagnosticBundle(input: DiagnosticBundleInput): DiagnosticB
   });
 }
 
-/** The one string that is previewed, copied and saved: built once, after the verifier passes. */
+/**
+ * The serialisation of a bundle. Prefer {@link verifyAndSerialise}, the one entry point plans 08-13
+ * and 08-16 use for the preview, Copy and Save string; this stays for tests and for the verifier's own
+ * size check.
+ */
 export function serialiseBundle(bundle: DiagnosticBundle): string {
   return JSON.stringify(bundle, null, 2);
 }
@@ -718,14 +729,13 @@ function variantsOf(text: string): string[] {
 const INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 
 /**
- * A string that is, by the strict schema, not user text: a closed token, a UTC instant or a dotted
- * version. It cannot break a shape rule, and the denylist skips it (a project called `2026` or
- * `setup` would otherwise be found inside every instant and token and block export for good).
+ * A string that is, by the strict schema, not user text: a closed token or a UTC instant. It cannot
+ * break a shape rule, and the denylist skips it (a project called `2026` or `setup` would otherwise be
+ * found inside every instant and token and block export for good). A dotted version is deliberately
+ * NOT here (FIX2A F2): it is checked, see {@link checkLeaf}.
  */
 function isSchemaTyped(text: string): boolean {
-  return (
-    BUNDLE_VOCABULARY.has(text) || INSTANT_PATTERN.test(text) || DOTTED_VERSION_PATTERN.test(text)
-  );
+  return BUNDLE_VOCABULARY.has(text) || INSTANT_PATTERN.test(text);
 }
 
 function denylistRuleOf(text: string, denylist: Denylist): DenylistRule | null {
@@ -753,7 +763,12 @@ export function checkLeaf(value: string, denylist: Denylist): BundleRefusalCode 
     const rule = shapeRuleOf(variant);
     if (rule !== null) return rule;
   }
-  return denylistRuleOf(value, denylist);
+  // A version leaf is position-aware (FIX2A F2): it is still run through the denylist, but its numeric
+  // components are exempt, so a project called `2026` or `1.13` cannot match inside `1.13.7`. What is left
+  // of a closed-shape version is at most a pre-release word of the bundle's own vocabulary; a leaf in a
+  // version position that is not of that shape keeps its whole text and is checked like any other string.
+  const subject = DOTTED_VERSION_PATTERN.test(value) ? value.replace(/[0-9.]+/g, "") : value;
+  return denylistRuleOf(subject, denylist);
 }
 
 /**
@@ -894,4 +909,37 @@ export function verifyBundle(bundle: unknown, denylist: Denylist): VerifyResult 
     return { ok: false, rule: "too-large" };
   }
   return { ok: true };
+}
+
+/** The one offered string, or the rule that refused. */
+export type VerifiedSerialisation =
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly rule: BundleRefusalCode };
+
+/**
+ * THE entry point for the preview, Copy and Save string (FIX2A F4; plans 08-13 and 08-16 must offer
+ * nothing else). It serialises the bundle exactly once, parses that same text back, and runs
+ * {@link verifyBundle} on the parsed copy and the shape rules on the text itself. The `text` it
+ * returns is the text that was checked: a getter or `toJSON` that changes after this call cannot
+ * change what is offered, because the bundle is never read again. A value that cannot be serialised
+ * (a cycle, a throwing getter) is `schema-invalid`.
+ */
+export function verifyAndSerialise(bundle: unknown, denylist: Denylist): VerifiedSerialisation {
+  let text: string | undefined;
+  let parsed: unknown;
+  try {
+    text = JSON.stringify(bundle, null, 2);
+    if (text === undefined) return { ok: false, rule: "schema-invalid" };
+    parsed = JSON.parse(text);
+  } catch {
+    return { ok: false, rule: "schema-invalid" };
+  }
+  const verdict = verifyBundle(parsed, denylist);
+  if (!verdict.ok) return verdict;
+  for (const variant of variantsOf(text)) {
+    const rule = shapeRuleOf(variant);
+    if (rule !== null) return { ok: false, rule };
+  }
+  if (utf8Length(text) > BUNDLE_MAX_BYTES) return { ok: false, rule: "too-large" };
+  return { ok: true, text };
 }
