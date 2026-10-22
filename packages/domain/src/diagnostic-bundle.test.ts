@@ -6,6 +6,7 @@ import {
   type DenylistInput,
   type DiagnosticBundleInput,
   DiagnosticBundleSchema,
+  KNOWN_PLUGIN_DIAGNOSTIC_CODES,
   serialiseBundle,
   verifyBundle,
 } from "./diagnostic-bundle.js";
@@ -329,25 +330,27 @@ describe("Test 2: explicit picks", () => {
 
   it("skips plugin diagnostics the allowlist cannot hold instead of failing the export, and keeps the newest 100", () => {
     const records = [
-      { source: "layout", code: "ok-code", message: "m", at: T0 },
-      { source: "somewhere-else", code: "ok-code", message: "m", at: T0 },
+      { source: "layout", code: "duplicate", message: "m", at: T0 },
+      { source: "somewhere-else", code: "duplicate", message: "m", at: T0 },
       { source: "layout", code: "Has Space/Slash", message: "m", at: T0 },
-      { source: "layout", code: "fine", message: "m", at: "not a time" },
+      { source: "layout", code: "unknown-widget", message: "m", at: "not a time" },
+      // Well-formed but not a code the plugin writes (FIX2A F3): skipped, never passed.
+      { source: "layout", code: "ok-code", message: "m", at: T0 },
     ];
     const bundle = buildDiagnosticBundle(input({ pluginDiagnostics: records }));
-    expect(bundle.pluginDiagnostics).toEqual([{ source: "layout", code: "ok-code", at: T0 }]);
+    expect(bundle.pluginDiagnostics).toEqual([{ source: "layout", code: "duplicate", at: T0 }]);
     expect(bundle.counts.pluginDiagnostics).toBe(1);
 
     const many = Array.from({ length: 130 }, (_, index) => ({
       source: "layout",
-      code: `code-${index}`,
+      code: KNOWN_PLUGIN_DIAGNOSTIC_CODES[index % KNOWN_PLUGIN_DIAGNOSTIC_CODES.length] as string,
       message: "m",
-      at: T0,
+      at: `2026-10-22T09:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
     }));
     const capped = buildDiagnosticBundle(input({ pluginDiagnostics: many }));
     expect(capped.pluginDiagnostics).toHaveLength(100);
-    expect(capped.pluginDiagnostics[0]?.code).toBe("code-30");
-    expect(capped.pluginDiagnostics.at(-1)?.code).toBe("code-129");
+    expect(capped.pluginDiagnostics[0]?.at).toBe(many[30]?.at);
+    expect(capped.pluginDiagnostics.at(-1)?.at).toBe(many[129]?.at);
   });
 
   it("turns a version that is not a dotted version into null rather than passing text through", () => {

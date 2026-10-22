@@ -17,13 +17,16 @@ import { bounded, noAnswer } from "./probe-kit.js";
  * minutes are not a fault (research Pitfall 5).
  *
  * The probe returns a reason code, an optional copy action and, for silence, the threshold. It
- * never returns the last-event time or a path. Its ports are one synchronous read of the settings
- * facts (two bounded file reads in the usage services, no process) and a clock.
+ * never returns the last-event time or a path. Its ports are one asynchronous read of the settings
+ * facts (FIX2A F1: two bounded file reads through the thread pool in the usage services, no
+ * process, the probe's signal handed down) and a clock. No settings file at all is
+ * `hooks-not-installed` with the copy action (FIX2A F5); only an unreadable one is
+ * `hooks-state-unreadable`.
  */
 
 export interface HooksProbePorts {
   /** Re-reads Claude's settings facts and the install record (no `claude --version`), then answers the status. */
-  readonly refreshSettingsFacts: () => ClaudeIntegrationStatus;
+  readonly refreshSettingsFacts: (signal: AbortSignal) => Promise<ClaudeIntegrationStatus>;
   readonly now: () => Date;
 }
 
@@ -45,7 +48,7 @@ export async function probeHooks(
   ports: HooksProbePorts,
   signal: AbortSignal,
 ): Promise<ProbeOutcome> {
-  const read = await bounded(signal, () => ports.refreshSettingsFacts());
+  const read = await bounded(signal, () => ports.refreshSettingsFacts(signal));
   if (read.kind === "timeout") return noAnswer("hooks", "probe-timeout");
   if (read.kind === "error") return noAnswer("hooks", "probe-error");
   const status = read.value;

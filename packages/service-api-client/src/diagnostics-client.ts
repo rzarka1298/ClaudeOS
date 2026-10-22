@@ -7,7 +7,7 @@ import {
   type HealthTrigger,
 } from "@ccc/domain";
 import type { SocketApiClient } from "./socket-api-client.js";
-import { SocketUnreachableError } from "./socket-api-client.js";
+import { SocketUnreachableError, VaultSetupRequestError } from "./socket-api-client.js";
 
 /**
  * The diagnostics health route through one typed, validated client (plan 08-07; D-02, T-08-15).
@@ -46,7 +46,8 @@ export class DiagnosticsRequestError extends Error {
  * never send a gesture by accident (plan 08-07, Amendment A1).
  *
  * A transport failure maps by `errno` (`ETIMEDOUT` to `timeout`, anything else to
- * `service-disconnected`); a non-200 body maps to its closed code, or to `unrecognised-response`
+ * `service-disconnected`); a body the transport itself refused (not JSON, or over its size cap)
+ * maps to `unrecognised-response` with the HTTP status kept; a non-200 body maps to its closed code, or to `unrecognised-response`
  * when it names none; a 200 body the strict schema refuses is `unrecognised-response`.
  */
 export async function getDiagnosticsHealth(
@@ -67,6 +68,12 @@ export async function getDiagnosticsHealth(
         0,
         error.errno === "ETIMEDOUT" ? "timeout" : "service-disconnected",
       );
+    }
+    // The transport rejects a body that is not JSON and a body over its size cap with a
+    // VaultSetupRequestError that carries the HTTP status and its own text. Neither may escape
+    // uncoded (FIX2A F10): the status is kept, the text is dropped, the code is closed.
+    if (error instanceof VaultSetupRequestError) {
+      throw new DiagnosticsRequestError(error.status, "unrecognised-response");
     }
     throw error;
   }

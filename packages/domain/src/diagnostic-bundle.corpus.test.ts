@@ -69,7 +69,15 @@ describe("Test 1 (canary, D-14): no free-text source field reaches the bundle", 
       health: {
         ...base.health,
         paths: { vault: `~/${canary}`, runtimeDir: `~/${canary}`, socket: `~/${canary}/svc.sock` },
-        service: { ...base.health?.service, version: "0.1.0" },
+        // FIX2A F2: the canary rides on every version the builder is given (the service's own and the
+        // three the plugin reads from the host); none of them may reach the bundle.
+        service: { ...base.health?.service, version: `0.1.0-${canary}` },
+      },
+      versions: {
+        plugin: "0.1.0",
+        obsidian: `1.13.7-${canary}`,
+        electron: `37.2.1-${canary}`,
+        node: `24.20.0-${canary}`,
       },
       pluginDiagnostics: [
         {

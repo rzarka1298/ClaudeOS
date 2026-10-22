@@ -536,11 +536,14 @@ check_rule \
   $UNTRUSTED_FILES
 
 # --- Rule 18: no non-test file under packages/service/src/diagnostics/ names a
-# network module or primitive, or reaches a process directly (plan 08-08, D-05,
-# T-08-22). The health probes are read-only and offline (DIAG-02): nothing in the
-# folder may open a socket or spawn a child itself. A process-backed probe port
-# (the bounded bundle lookup, the Keychain presence check) is built outside the
-# folder, from the fixed-argv, no-shell command runner, and handed in. It scans
+# network module or primitive, reaches a process directly, or reaches either by a
+# route that is not an import statement (plan 08-08, D-05, T-08-22; hardened in
+# FIX2A F7). The health probes are read-only and offline (DIAG-02): nothing in the
+# folder may open a socket or spawn a child itself, and nothing on the request
+# path may call the file system synchronously (an `fs.statSync` on a stalled mount
+# would hold the event loop past the probe caps). A process-backed probe port (the
+# bounded bundle lookup, the Keychain presence check) is built outside the folder,
+# from the fixed-argv, no-shell command runner, and handed in. It scans
 # NON_TEST_FILES (every module extension) anchored to the folder with a trailing
 # slash, so the look-alike `diagnostics-extra/` is not in scope. Alternatives, all
 # written without a backslash:
@@ -553,15 +556,32 @@ check_rule \
 #     and the names XMLHttpRequest, WebSocket and EventSource, boundary on both
 #     sides;
 #   - the name child_process anywhere, and a quoted execa (or execa/... subpath)
-#     specifier.
+#     specifier;
+#   - the routes around an import (mirroring rule 17): getBuiltinModule,
+#     process.binding, process.dlopen and a bracketed process access, createRequire
+#     and a require( call, a bracketed globalThis access, the word Reflect, the word
+#     eval, a Function( call, and an import( whose argument is not a plain quoted
+#     literal (a bare name, a concatenation, or a parenthesis that ends its line);
+#   - a synchronous file-system call: any identifier ending in Sync followed by a
+#     parenthesis (existsSync, statSync, readFileSync, and so on).
+# A second scan holds the import specifiers themselves: a quoted relative
+# specifier that climbs (a ../ segment anywhere in it, including ./../) must be one
+# of the three service modules the folder may use (logging, route-kit,
+# vault-root-policy; which names it takes from them is checked by the test leg,
+# packages/service/src/diagnostics/diagnostics-source-scan.audit.test.ts), and no
+# relative specifier may name a test or spec file.
 # Comment lines are skipped by grep_noncomment. ---
 DIAGNOSTICS_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep '^packages/service/src/diagnostics/' || true)
-DIAGNOSTICS_NET_SPAWN_PATTERN="(^|[^A-Za-z0-9_])fetch([^A-Za-z0-9_]|$)|[\"'\`](node:)?(https?|http2|net|tls|dgram|dns|undici|node-fetch)(/promises)?[\"'\`]|(^|[^A-Za-z0-9_])(XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|child_process|[\"'\`]execa(/[^\"'\`]*)?[\"'\`]"
+DIAGNOSTICS_NET_SPAWN_PATTERN="(^|[^A-Za-z0-9_])fetch([^A-Za-z0-9_]|$)|[\"'\`](node:)?(https?|http2|net|tls|dgram|dns|undici|node-fetch)(/promises)?[\"'\`]|(^|[^A-Za-z0-9_])(XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|child_process|[\"'\`]execa(/[^\"'\`]*)?[\"'\`]|(^|[^A-Za-z0-9_])getBuiltinModule([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])process[[:space:]]*([.][[:space:]]*(binding|dlopen)([^A-Za-z0-9_]|$)|[[])|(^|[^A-Za-z0-9_])createRequire([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_.])require[[:space:]]*[(]|(^|[^A-Za-z0-9_])globalThis[[:space:]]*[[]|(^|[^A-Za-z0-9_])Reflect([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])eval([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_])Function[[:space:]]*[(]|(^|[^A-Za-z0-9_.])import[[:space:]]*[(][[:space:]]*([^\"'\`[:space:]]|$)|(^|[^A-Za-z0-9_.])import[[:space:]]*[(][[:space:]]*[\"'\`][^\"'\`]*[\"'\`][[:space:]]*[+]|(^|[^A-Za-z0-9_])[A-Za-z0-9_]*Sync[[:space:]]*[(]"
+DIAGNOSTICS_SPECIFIER_PATTERN="[\"'\`]([.][.]/|[.]/[.][.]/|[^\"'\`]*/[.][.]/)|[\"'\`][.][^\"'\`]*[.](test|spec)([.][^\"'\`]*)?[\"'\`]"
+DIAGNOSTICS_ALLOWED_SPECIFIER="from[[:space:]]*[\"'\`][.][.]/(logging|route-kit|vault-root-policy)[.]js[\"'\`]"
 # shellcheck disable=SC2086
-check_rule \
-  "a diagnostics probe file under packages/service/src/diagnostics/ names a network module or primitive (an http, https, http2, net, tls, dgram or dns module, undici, node-fetch, fetch, XMLHttpRequest, WebSocket or EventSource) or reaches a process directly (child_process, execa); the health probes are read-only and offline, plan 08-08, D-05" \
-  "$DIAGNOSTICS_NET_SPAWN_PATTERN" \
-  $DIAGNOSTICS_FILES
+diagnostics_net_hits=$(grep_noncomment "$DIAGNOSTICS_NET_SPAWN_PATTERN" $DIAGNOSTICS_FILES || true)
+# shellcheck disable=SC2086
+diagnostics_specifier_hits=$(grep_noncomment "$DIAGNOSTICS_SPECIFIER_PATTERN" $DIAGNOSTICS_FILES | grep -v -E "$DIAGNOSTICS_ALLOWED_SPECIFIER" || true)
+report_rule \
+  "a diagnostics probe file under packages/service/src/diagnostics/ names a network module or primitive (an http, https, http2, net, tls, dgram or dns module, undici, node-fetch, fetch, XMLHttpRequest, WebSocket or EventSource), reaches a process directly (child_process, execa), reaches either without an import (getBuiltinModule, process.binding, process.dlopen, createRequire, require(, a bracketed globalThis or process access, Reflect, eval, Function(, a computed import(), calls the file system synchronously (a *Sync( call), imports a module from outside the folder other than the logger, the route kit and the vault root policy, or imports a test file; the health probes are read-only and offline, plan 08-08, D-05, FIX2A F7" \
+  "$(printf '%s\n%s\n' "$diagnostics_net_hits" "$diagnostics_specifier_hits" | grep -v '^$' | sort -u || true)"
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: checked ${RULES} rules."

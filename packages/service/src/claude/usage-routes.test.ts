@@ -182,6 +182,7 @@ beforeEach(async () => {
         spooledSink = sink;
       },
       dropCount: () => 0,
+      dropFacts: async () => ({ count: 0, lastDropAt: null }),
     },
     logger,
     env: {},
@@ -655,8 +656,8 @@ describe("POST usage/session and GET integration (Tests 6-7, PR-23, PR-24)", () 
     });
     expect(res.status).toBe(200);
     const status = ClaudeIntegrationStatusSchema.parse(res.body);
-    // The synthetic Claude config dir holds no settings.json.
-    expect(status.hooks).toBe("unknown");
+    // The synthetic Claude config dir holds no settings.json: nothing is installed (FIX2A F5).
+    expect(status.hooks).toBe("not-installed");
     expect(status.transcriptAnalysis).toEqual({ enabled: false });
     expect(JSON.stringify(res.body)).not.toContain(dir);
 

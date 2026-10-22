@@ -212,9 +212,14 @@ const PLUTIL = "/usr/bin/plutil";
 const RUN_ENV: Readonly<Record<string, string>> = { PATH: "/usr/bin:/bin", LC_ALL: "C" };
 const MDFIND_TIMEOUT_MS = 5000;
 const PLUTIL_TIMEOUT_MS = 2000;
-/** The health probe's own caps (D-05: the whole probe fits in the 2 s per-probe cap). */
-export const PROBE_MDFIND_TIMEOUT_MS = 1500;
-export const PROBE_PLUTIL_TIMEOUT_MS = 500;
+/**
+ * The health probe's own caps (D-05: the whole probe fits in the 2 s per-probe cap). FIX2A m8: the two
+ * add up to 1.5 s, not 2 s, so the lookup finishes with half a second to spare for the spawn, the
+ * port plumbing and the other parts of the launchers row; a lookup that used the whole cap would
+ * always lose the race to the runner's timer.
+ */
+export const PROBE_MDFIND_TIMEOUT_MS = 1100;
+export const PROBE_PLUTIL_TIMEOUT_MS = 400;
 const PROBE_BUDGET_MS = PROBE_MDFIND_TIMEOUT_MS + PROBE_PLUTIL_TIMEOUT_MS;
 /** At most this many target hits have their Info.plist read by one probe. */
 const PROBE_MAX_PLIST_READS = 2;
@@ -529,7 +534,7 @@ export function createDetector(deps: DetectorDeps): Detector {
       }
 
       // At most the first PROBE_MAX_PLIST_READS hits are read, all inside one
-      // shared plutil budget (so two reads still fit the 500 ms plutil cap).
+      // shared plutil budget (so two reads still fit the 400 ms plutil cap).
       // A third hit is not read: the answer stays "indeterminate".
       const plutilStartedAt = Date.now();
       const plutilBudgetMs = Math.min(

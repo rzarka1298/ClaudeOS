@@ -99,6 +99,27 @@ export function toDisplayPath(absolute: string, homeDir: string | null): string 
   return `${ELLIPSIS}/${shown.join("/")}`;
 }
 
+/**
+ * {@link toDisplayPath}, but never longer than the schema allows (FIX2A F9). A path whose display form
+ * is over {@link DISPLAY_PATH_MAX_LENGTH} (one very long folder name) falls back to its last segment,
+ * `~/…/<name>` inside home and `…/<name>` outside, truncated on a code-point boundary to fit. Returns
+ * null only for what {@link toDisplayPath} refuses. The result always passes {@link isDisplayPath},
+ * so a hostile or accidental long path can never make a whole health response fail its schema.
+ */
+export function toBoundedDisplayPath(absolute: string, homeDir: string | null): string | null {
+  const shown = toDisplayPath(absolute, homeDir);
+  if (shown === null || isDisplayPath(shown)) return shown;
+  const prefix = shown.startsWith("~/") ? `~/${ELLIPSIS}/` : `${ELLIPSIS}/`;
+  const room = DISPLAY_PATH_MAX_LENGTH - prefix.length;
+  let name = "";
+  for (const character of shown.split("/").at(-1) ?? "") {
+    if (name.length + character.length > room) break;
+    name += character;
+  }
+  const bounded = `${prefix}${name}`;
+  return isDisplayPath(bounded) ? bounded : null;
+}
+
 /** The shape check behind {@link DisplayPathSchema}, exported for the pure callers. */
 export function isDisplayPath(value: string): boolean {
   if (value.length === 0 || value.length > DISPLAY_PATH_MAX_LENGTH) return false;

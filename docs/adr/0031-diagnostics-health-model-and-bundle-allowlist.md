@@ -40,9 +40,16 @@ and its setup action and facts are that part's.
 
 `unknown` is used for idleness and for not having looked: hooks that are installed but silent are `unknown`
 (`no-events-yet`, `events-silent`), never `degraded`, because the last-event time is process memory and idle is not a
-fault (D-35). A probe that did not finish is `unknown` (`probe-timeout`, `probe-error`, `subsystem-not-wired`); a
+fault (D-35). A Claude `settings.json` that does not exist is a fact, not an unknown: nothing of ours is installed, so the
+hooks and status-line parts read `setup-needed` with the copy-command action; only a file that exists and cannot be read
+(permissions, a FIFO or device, a directory, over 1 MiB, invalid JSON) reads `unknown`. A probe that did not finish is `unknown` (`probe-timeout`, `probe-error`, `subsystem-not-wired`); a
 service the plugin cannot reach clears every service-dependent row to `unknown` (`service-not-running`), never to a last
 good value (D-03).
+
+The dropped-hook-records part is **stateless** (D-37a): `degraded` while the dropped-records file is non-empty and was last
+written within 24 hours, otherwise `ok` with the count kept as a fact. The service remembers nothing about earlier probes,
+so drops made while it was down read `degraded` on the first probe, a reconnect consumes nothing, and a day-old drop stops
+being news without anyone clearing the file. The facts are `dropCount` and `lastDropAt` (a UTC instant).
 
 The companion-service row is computed in the plugin from its connection state. Two reasons, the vault mismatch
 (`vault-mismatch`, `vault-check-unavailable`) and `service-not-running`, are produced only by the plugin; the strict
@@ -53,11 +60,14 @@ service response refuses them, and a row carrying one has a different type from 
 One authenticated fixed-path route, `GET /api/v1/diagnostics/health`, runs five probes (vault, hooks, collectors,
 scheduler, launchers). The Phase 1 health route and its schema are untouched (D-02). Each probe takes narrow injected
 ports and an abort signal and returns a row without its check time. The runner gives each probe its own 2 second cap and
-all of them a 5 second cap, joined with `AbortSignal.any`, so aborting also kills any child a probe started. A probe that
+all of them a 5 second cap, joined with `AbortSignal.any`, so aborting also kills any child a probe started. **No probe
+and no port it is handed makes a synchronous file-system call**: every read is asynchronous and raced against the signal, so
+a path on a stalled network mount holds a thread-pool thread while the timers fire and the row reads `probe-timeout`; a
+synchronous call would hold the event loop past both caps. A probe that
 is cut reads `unknown` / `probe-timeout`; one that throws, or returns a row the strict schema refuses, reads `unknown` /
 `probe-error`; both carry freshness `unavailable`; a result that arrives after its cap is discarded; every timer is
-cleared. A request shares the run already in flight for its trigger and a result younger than 2 seconds is served as
-`cached` with its original check time, so a hostile or buggy local client cannot start a storm of lookups.
+cleared. A request shares the run already in flight for its trigger and a result younger than 2 seconds (measured on a monotonic
+clock, so a stepped wall clock cannot freeze a stale result) is served as `cached` with its original check time, so a hostile or buggy local client cannot start a storm of lookups.
 
 A probe launches nothing, installs nothing, writes nothing and uses no network (D-05). It projects the status the
 service already holds (`refreshSettingsFacts`, the cached Codex status, the research status, the saved launcher rows) and
@@ -65,7 +75,11 @@ never runs `codex doctor`, `claude --version` or a Codex refresh. The only proce
 argv, absolute-binary, `shell: false` lookups added for this purpose: one `mdfind` and up to two `plutil` reads for a
 saved app (D-49) and an attribute-only `security find-generic-password` for the research key (D-38, ADR 0017). Backstop
 rule 18 and a source scan keep the diagnostics folder free of any network module, direct `child_process` or `execa`
-import and file-system write.
+import, file-system write or synchronous file-system call, and of the routes around an import statement
+(`getBuiltinModule`, `process.binding`, `createRequire`, `require(`, a computed `globalThis`/`process` access, `Reflect`,
+`eval`, `Function(`, a computed `import(`). Imports are normalised against the folder: one may leave it only for the
+logger, the route kit's `withAuth`/`sendJson`/`Handler` and the vault root policy's `isForbiddenRoot`, by name, and none may
+name a test file. The scan strips comments with a string-aware reader, so a comment opener inside a string hides nothing.
 
 The Keychain presence check runs **only on an owner gesture**. The route takes `trigger=gesture|reconnect`; only an exact
 single `gesture` is a gesture, and the cache is keyed by trigger. A reconnect answers from the last gesture's result in
@@ -76,18 +90,25 @@ memory, or `research-key-not-checked`.
 The persisted vault root is service-private. The response carries `{ salt, digest }`: a random salt drawn once per service
 process and the first 16 hex characters of SHA-256 over `salt`, a colon and the root. The plugin hashes its own vault path
 with the same salt and compares. The root, a display path of it and the fingerprint never enter the bundle. The vault
-probe itself reads only the persisted root: it checks it with asynchronous calls (a stalled mount cannot block the event
-loop), refuses a forbidden location, checks read and write access without writing, checks the Obsidian marker and only
-then runs the synchronous managed-tree plan. Every error maps to a closed code; an error message is never read.
+probe itself reads only the persisted root (and a failure to read it is that row's `probe-error`, never a failed
+response): it checks it with asynchronous calls (a stalled mount cannot block the event loop), refuses a forbidden
+location, checks read and write access without writing, checks the Obsidian marker and only then `stat`s each managed
+folder, also asynchronously and one after another, stopping at the first missing one. Every error maps to a closed code;
+an error message is never read.
 
 Display paths in the response (the runtime folder, the socket, the vault) are `~/...` or `.../parent/name` strings built
-by one browser-safe helper; the owner's user segment never appears, and none is persisted.
+by one browser-safe helper; the owner's user segment never appears, and none is persisted. A path whose display form
+would exceed the schema's 512 characters falls back to its last segment (`~/…/name`, truncated to fit), so one hostile
+folder name cannot make the whole response fail.
 
 ### 4. The bundle is built from an allowlist, never scrubbed (D-10, OD-5)
 
 The bundle schema is strict at every level and admits versions, the platform, the connection **state** (never its reason),
 the six subsystem rows as status plus reason code plus times plus parts of id, status and reason, nullable integer counts
-(null, never zero, when unknown), feature flags, and the plugin's diagnostic records reduced to source, code and time. It
+(null, never zero, when unknown), feature flags, and the plugin's diagnostic records reduced to source, code and time, where
+the code is one of a closed list of six that the plugin writes (any other code is skipped by the builder and refused by
+the schema). A version is two to four numeric components with at most one `-alpha`, `-beta` or `-rc` suffix (and a counter);
+anything else, including `0.1.0-SomeName`, is null. It
 contains no log line, path, display path, title, name, free-text message, fingerprint or keychain value. The builder takes a
 narrow typed input and constructs the output by **explicit field picks**, then parses it; a type-level test fails when the
 input gains a key that is not mapped. A canary placed in every free-text source field of the input never appears in the
@@ -95,7 +116,7 @@ output.
 
 ### 5. A verifier is the second, independent check (D-11, D-14)
 
-Before a bundle is offered, `verifyBundle` runs, in this order: the shape rules and the owner's denylist on every key and
+Before a bundle is offered, the verifier runs (`verifyAndSerialise`, which wraps `verifyBundle`), in this order: the shape rules and the owner's denylist on every key and
 string value, in every spelling (as written, JSON-unescaped, percent-decoded once and twice, and normalised with
 compatibility characters folded and zero-width characters removed); the same shape rules on the serialisation; the strict
 schema; the size (32 KiB). Privacy rules run first, so a bundle that is both malformed and leaky is refused for the leak.
@@ -111,7 +132,9 @@ removed. `.privacy-denylist.local` is not used: it does not exist on another ins
 
 False refusals would make export permanently impossible, so the verifier is built not to refuse the builder's own output:
 entries shorter than four characters or equal to a token of the bundle's own closed vocabulary are dropped, and the
-denylist skips strings the schema types as a closed token, a UTC instant or a dotted version, and the schema's own keys.
+denylist skips strings the schema types as a closed token or a UTC instant, and the schema's own keys; a version is
+checked with its numeric components ignored (so a name such as `2026` or `1.13` cannot match inside it, while a name riding
+on a version suffix is refused).
 A property test over 500 generated clean inputs proves the verifier accepts everything the builder produces.
 
 The refusal is one of eleven closed codes: `home-path`, `tilde-path`, `email`, `token-shaped`, `denylist-project`,
@@ -120,8 +143,10 @@ never the value, in the result, the UI and any log.
 
 ### 6. Delivery: copy or save, once, outside the vault (D-12, D-13)
 
-The Diagnostics section shows a preview of the exact string and offers Copy and Save. One serialisation is built after the
-verifier passes and the preview, Copy and Save all use that string. Save goes through Electron's save dialog (with a typed
+The Diagnostics section shows a preview of the exact string and offers Copy and Save. `verifyAndSerialise` serialises the
+bundle exactly once, parses that same text back, verifies the parsed copy and scans the text, and returns `{ ok, text }` or
+the refusing rule; the preview, Copy and Save all use that returned text and nothing else, so a getter or `toJSON` that
+changes after the check cannot change what is offered. Save goes through Electron's save dialog (with a typed
 fallback to Copy only) and refuses a location inside the open vault; the bundle is never written into the vault, never
 persisted in the plugin's settings, and the service has no bundle-writing route. Export is a new `direct-gesture` row
 (`diagnostics.export-bundle`) in the static classification table and in the table of ADR 0026; the probes get no row,
@@ -138,8 +163,9 @@ facts, no log lines and no free text, delivered by Copy and a Save dialog.
 
 - A new subsystem state is a new reason code with a status in a table and a line of copy; the build fails until both exist.
 - The bundle cannot grow a free-text field without a schema change, a type-test change and a corpus entry.
-- The verifier is stricter than the builder needs to be on purpose. A real owner name that is also a vocabulary token or a
-  version string is, by construction, not user text and is not refused.
+- The verifier is stricter than the builder needs to be on purpose. A real owner name that is also a vocabulary token (or one
+  of the pre-release words) is, by construction, not user text and is not refused; a name that merely appears among the
+  numbers of a version is not refused either.
 - Homoglyph substitution (a Cyrillic letter for a Latin one) is not folded; the builder never places a name in the bundle,
   so this is a limit of the second check only.
 - Backstop rule 18 means a probe that needs a process or a socket must ask for a port the composition root builds, which is

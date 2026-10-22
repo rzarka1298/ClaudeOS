@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DisplayPathSchema, toDisplayPath } from "./display-path.js";
+import {
+  DisplayPathSchema,
+  isDisplayPath,
+  toBoundedDisplayPath,
+  toDisplayPath,
+} from "./display-path.js";
 
 const HOME = "/Users/USERNAME";
 
@@ -200,5 +205,46 @@ describe("Task 3 Test 3: DisplayPathSchema", () => {
       expect(DisplayPathSchema.safeParse(value).success, JSON.stringify(value)).toBe(false);
     }
     expect(DisplayPathSchema.safeParse(`~/${"a".repeat(510)}`).success).toBe(true);
+  });
+});
+
+describe("FIX2A F9: toBoundedDisplayPath always answers something the schema accepts, or null", () => {
+  it("is toDisplayPath for an ordinary path", () => {
+    expect(toBoundedDisplayPath("/Users/USERNAME/Obsidian/vault", HOME)).toBe("~/Obsidian/vault");
+    expect(toBoundedDisplayPath("/Volumes/Notes/vault", HOME)).toBe("…/Notes/vault");
+    expect(toBoundedDisplayPath("relative/path", HOME)).toBeNull();
+  });
+
+  it("keeps the last segment of an over-long path inside home as ~/…/<name>", () => {
+    const deep = `/Users/USERNAME/${"d".repeat(300)}/${"e".repeat(300)}/vault`;
+    const shown = toBoundedDisplayPath(deep, HOME);
+    expect(shown).toBe("~/…/vault");
+    expect(isDisplayPath(shown ?? "")).toBe(true);
+  });
+
+  it("truncates a 607-character vault folder name to fit the 512-character limit", () => {
+    const name = "v".repeat(600);
+    const inside = toBoundedDisplayPath(`/Users/USERNAME/${name}`, HOME);
+    expect(inside).not.toBeNull();
+    expect((inside ?? "").length).toBeLessThanOrEqual(512);
+    expect(inside?.startsWith("~/…/v")).toBe(true);
+    expect(isDisplayPath(inside ?? "")).toBe(true);
+
+    const outside = toBoundedDisplayPath(`/Volumes/${name}`, HOME);
+    expect(outside).not.toBeNull();
+    expect((outside ?? "").length).toBeLessThanOrEqual(512);
+    expect(outside?.startsWith("…/v")).toBe(true);
+    expect(isDisplayPath(outside ?? "")).toBe(true);
+    expect(DisplayPathSchema.safeParse(outside).success).toBe(true);
+  });
+
+  it("never cuts a surrogate pair in half", () => {
+    const name = "😀".repeat(400);
+    const shown = toBoundedDisplayPath(`/Users/USERNAME/${name}`, HOME) ?? "";
+    expect(shown.length).toBeLessThanOrEqual(512);
+    expect(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(shown),
+    ).toBe(false);
+    expect(isDisplayPath(shown)).toBe(true);
   });
 });

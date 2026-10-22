@@ -71,7 +71,11 @@ function start(extra: Partial<UsageServicesDeps> = {}): UsageServices {
     db: store.db,
     bus,
     pipeline,
-    poller: { setStatusLineSink() {}, dropCount: () => 0 },
+    poller: {
+      setStatusLineSink() {},
+      dropCount: () => 0,
+      dropFacts: async () => ({ count: 0, lastDropAt: null }),
+    },
     logger,
     env: {},
     now: () => new Date(),
@@ -180,7 +184,7 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
     };
   }
 
-  it("Test 1: sees an edited settings file at once and never starts the version prober", () => {
+  it("Test 1: sees an edited settings file at once and never starts the version prober", async () => {
     writeSettings({});
     const prober = fakeProber();
     const services = start({ versionProbe: prober.deps });
@@ -190,7 +194,7 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
     // Without the refresh the cached facts still say false.
     expect(services.integration().disableAllHooks).toBe(false);
 
-    const status = services.refreshSettingsFacts();
+    const status = await services.refreshSettingsFacts();
     expect(status.disableAllHooks).toBe(true);
     expect(services.integration().disableAllHooks).toBe(true);
     expect(prober.execFile).toHaveBeenCalledTimes(0);
@@ -206,13 +210,13 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
     expect(prober.execFile).toHaveBeenCalledTimes(1);
 
     writeSettings({ disableAllHooks: true });
-    const status = services.refreshSettingsFacts();
+    const status = await services.refreshSettingsFacts();
     expect(status.disableAllHooks).toBe(true);
     expect(status.detectedClaudeVersion).toBe("2.1.5");
     expect(prober.execFile).toHaveBeenCalledTimes(1);
   });
 
-  it("re-reads the hook install record too, so a drill that edits it is seen at once", () => {
+  it("re-reads the hook install record too, so a drill that edits it is seen at once", async () => {
     const handler = { command: "/nonexistent/node", args: [join(dir, "hooks", "handler.js")] };
     writeSettings({ hooks: { SessionStart: [{ hooks: [handler] }] } });
     const services = start({ versionProbe: fakeProber().deps });
@@ -224,7 +228,7 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
     writeFileSync(presentNode, "");
     writeInstallRecord({ nodePath: presentNode });
     expect(services.integration().hookRuntimeMissing).toBe(true);
-    expect(services.refreshSettingsFacts().hookRuntimeMissing).toBe(false);
+    expect((await services.refreshSettingsFacts()).hookRuntimeMissing).toBe(false);
   });
 
   it("MINOR 5: publishes claude-integration.updated once when the facts changed (subscribers see the same state), and never calls the refresh listener", async () => {
@@ -238,11 +242,11 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
     const before = updates();
 
     // Nothing changed: nothing is published.
-    services.refreshSettingsFacts();
+    await services.refreshSettingsFacts();
     expect(updates()).toBe(before);
 
     writeSettings({ disableAllHooks: true });
-    const status = services.refreshSettingsFacts();
+    const status = await services.refreshSettingsFacts();
     expect(status.disableAllHooks).toBe(true);
     expect(updates()).toBe(before + 1);
     const last = publish.mock.calls
@@ -252,7 +256,7 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
     expect(onIntegrationRefresh).not.toHaveBeenCalled();
 
     // The same state is not published twice: a repeat and the next background refresh stay quiet.
-    services.refreshSettingsFacts();
+    await services.refreshSettingsFacts();
     await services.refreshIntegration();
     expect(updates()).toBe(before + 1);
     expect(onIntegrationRefresh).toHaveBeenCalledTimes(1);
@@ -266,10 +270,10 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
     expect((await services.refreshIntegration()).detectedClaudeVersion).toBe("2.1.5");
 
     // Same binary: the cached version stays.
-    expect(services.refreshSettingsFacts().detectedClaudeVersion).toBe("2.1.5");
+    expect((await services.refreshSettingsFacts()).detectedClaudeVersion).toBe("2.1.5");
 
     writeInstallRecord({ claudeBin: "/opt/other/claude" });
-    expect(services.refreshSettingsFacts().detectedClaudeVersion).toBeNull();
+    expect((await services.refreshSettingsFacts()).detectedClaudeVersion).toBeNull();
     expect(services.integration().detectedClaudeVersion).toBeNull();
     expect(prober.execFile).toHaveBeenCalledTimes(1);
 
@@ -279,13 +283,51 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
 
     // Removing the record clears it too.
     rmSync(join(dir, "hooks", "install.json"));
-    expect(services.refreshSettingsFacts().detectedClaudeVersion).toBeNull();
+    expect((await services.refreshSettingsFacts()).detectedClaudeVersion).toBeNull();
   });
 
-  it("never throws on a missing or unreadable settings file; the status reads unknown", () => {
+  it("FIX2A F5: a fresh install with no settings.json at all reads hooks and status line not-installed, not unknown", async () => {
     const services = start({ versionProbe: fakeProber().deps });
-    const status = services.refreshSettingsFacts();
+    const status = await services.refreshSettingsFacts();
+    expect(status.hooks).toBe("not-installed");
+    expect(status.statusLine).toBe("not-installed");
+    expect(status.disableAllHooks).toBe(false);
+    expect(status.hookRuntimeMissing).toBe(false);
+  });
+
+  it("FIX2A F5: an unreadable settings file (a directory where the file should be) still reads unknown, and never throws", async () => {
+    mkdirSync(join(dir, "claude", "settings.json"), { recursive: true });
+    const services = start({ versionProbe: fakeProber().deps });
+    const status = await services.refreshSettingsFacts();
     expect(status.hooks).toBe("unknown");
+    expect(status.statusLine).toBe("unknown");
     expect(status.disableAllHooks).toBeNull();
+  });
+
+  it("FIX2A F1: a signal that has fired rejects the refresh and leaves the cached facts as they were", async () => {
+    writeSettings({ disableAllHooks: true });
+    const services = start({ versionProbe: fakeProber().deps });
+    expect(services.integration().disableAllHooks).toBe(true);
+    writeSettings({ disableAllHooks: false });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(services.refreshSettingsFacts(controller.signal)).rejects.toThrow();
+    expect(services.integration().disableAllHooks).toBe(true);
+  });
+
+  it("FIX2A F1: the hook runtime check is made asynchronously for a real node path", async () => {
+    const handler = {
+      command: "/nonexistent/node-for-fix2a",
+      args: [join(dir, "hooks", "handler.js")],
+    };
+    writeSettings({ hooks: { SessionStart: [{ hooks: [handler] }] } });
+    const services = start({ versionProbe: fakeProber().deps });
+    // No injected pathExists here: the default must answer through the async check.
+    expect((await services.refreshSettingsFacts()).hookRuntimeMissing).toBe(true);
+  });
+
+  it("FIX2A F6: the spool facts are the dropped-records file's size and mtime, read asynchronously", async () => {
+    const services = start({ versionProbe: fakeProber().deps });
+    expect(await services.spoolFacts()).toEqual({ count: 0, lastDropAt: null });
   });
 });

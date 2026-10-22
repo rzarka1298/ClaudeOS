@@ -541,8 +541,13 @@ export type SetupAction = z.infer<typeof SetupActionSchema>;
 
 const IsoInstantSchema = z.iso.datetime({ offset: true });
 
-/** A dotted version such as `0.1.0` or `2.1.5-beta.1`. Never free text. */
-const DOTTED_VERSION_PATTERN = /^\d+(?:\.\d+){1,3}(?:-[A-Za-z0-9.]{1,32})?$/;
+/**
+ * A dotted version such as `0.1.0` or `2.1.5-beta.1`. Never free text (FIX2A F2): two to four numeric
+ * components and, at most, one of the closed pre-release words `alpha`, `beta` or `rc` with an optional
+ * numeric counter. Any other suffix, such as `0.1.0-SomeName`, is not a version. The diagnostic bundle
+ * shares this one pattern.
+ */
+export const DOTTED_VERSION_PATTERN = /^\d+(?:\.\d+){1,3}(?:-(?:alpha|beta|rc)(?:\.\d+)?)?$/;
 const DottedVersionSchema = z.string().max(64).regex(DOTTED_VERSION_PATTERN, {
   message: "must be a dotted version",
 });
@@ -556,7 +561,10 @@ export const HealthFactsSchema = z.strictObject({
   claudeVersion: DottedVersionSchema.exactOptional(),
   minimumVersion: DottedVersionSchema.exactOptional(),
   dropCount: z.int().nonnegative().exactOptional(),
+  /** No longer produced (FIX2A F6, D-37a); kept optional so an older response still parses. */
   dropsSince: IsoInstantSchema.exactOptional(),
+  /** When the newest dropped record was written (the dropped-records file's mtime), as a UTC instant. */
+  lastDropAt: IsoInstantSchema.exactOptional(),
   silenceThresholdMs: z.int().positive().exactOptional(),
   sourceCount: z.int().nonnegative().exactOptional(),
   lastSuccessAt: IsoInstantSchema.exactOptional(),

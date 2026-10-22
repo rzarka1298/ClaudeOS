@@ -8,6 +8,7 @@ import {
   statSync,
   unlinkSync,
 } from "node:fs";
+import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Logger } from "pino";
 import type { ClaudePipeline } from "./pipeline.js";
@@ -75,6 +76,17 @@ export interface SpoolPollerStats {
   readonly statusLineDropped: number;
 }
 
+/**
+ * The dropped-records file as the health check reads it (FIX2A F6, D-37a): its size and the instant it
+ * was last written. A pure file fact, independent of when this service started or who asked.
+ */
+export interface SpoolDropFacts {
+  /** The byte size of `hooks.dropped` (the hook writes one byte per record it dropped); 0 when absent. */
+  readonly count: number;
+  /** The file's modification time as a UTC instant; null when the file is absent or empty. */
+  readonly lastDropAt: string | null;
+}
+
 export interface SpoolPoller {
   /** Startup: renames and reads at once (both phases), hook spool then status line. */
   drainNow(): Promise<number>;
@@ -82,6 +94,11 @@ export interface SpoolPoller {
   tick(): Promise<number>;
   /** Records the hook dropped at the spool cap: the byte size of `hooks.dropped`. */
   dropCount(): number;
+  /**
+   * The drop count and the newest drop's instant through an asynchronous `stat` (FIX2A F1: the health
+   * request path makes no synchronous file-system call). Never rejects.
+   */
+  dropFacts(): Promise<SpoolDropFacts>;
   stats(): SpoolPollerStats;
   /** Registers the status-line sink; a snapshot held since startup is delivered on the next tick. */
   setStatusLineSink(sink: (snapshot: unknown) => void): void;
@@ -344,6 +361,19 @@ export function startSpoolPoller(options: SpoolPollerOptions): SpoolPoller {
         return statSync(dropPath).size;
       } catch {
         return 0;
+      }
+    },
+    async dropFacts() {
+      try {
+        const info = await stat(dropPath);
+        if (info.size === 0) return { count: 0, lastDropAt: null };
+        const at = new Date(info.mtimeMs);
+        return {
+          count: info.size,
+          lastDropAt: Number.isNaN(at.getTime()) ? null : at.toISOString(),
+        };
+      } catch {
+        return { count: 0, lastDropAt: null };
       }
     },
     stats: () => ({ fragmentsDiscarded, unparsableLines, statusLineDropped }),

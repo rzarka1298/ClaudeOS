@@ -415,7 +415,9 @@ export function writeFakeExecutable(
 /**
  * Appends `bytes` bytes to the sandbox spool's dropped-records file, `<runtimeDir>/spool/
  * hooks.dropped`: the hook writes one byte per record it dropped at the spool cap, so the size
- * is the drop count (D-37). Returns the file path.
+ * is the drop count, and the write time is the drop time (D-37a): the first health probe after this
+ * write reads `spool-dropped-records` whatever happened before, and the part reads clean again once
+ * the file is older than 24 hours or empty. Returns the file path.
  */
 export function writeSpoolDrops(paths: RunRootPaths, bytes: number, deps: DrillDeps = {}): string {
   if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_SPOOL_DROP_BYTES) {

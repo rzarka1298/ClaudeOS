@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -126,6 +127,43 @@ describe("removeRunRoot (Test 6)", () => {
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+
+  it("FIX2A F8: never changes the mode of a regular file, so a hard link to a file outside the sandbox keeps its mode", () => {
+    const paths = createRunRoot({ base });
+    const outside = mkdtempSync("/tmp/ccc-e2e-rr-out.");
+    try {
+      const readOnly = join(outside, "read-only.txt");
+      const sealed = join(outside, "sealed.txt");
+      writeFileSync(readOnly, "x", { mode: 0o444 });
+      writeFileSync(sealed, "y", { mode: 0o000 });
+      chmodSync(readOnly, 0o444);
+      chmodSync(sealed, 0o000);
+      // The links live in a locked folder inside the sandbox, so teardown must reach them.
+      const locked = join(paths.vaultsDir, "locked");
+      mkdirSync(locked, { recursive: true });
+      linkSync(readOnly, join(locked, "read-only-link.txt"));
+      linkSync(sealed, join(locked, "sealed-link.txt"));
+      chmodSync(locked, 0o000);
+      removeRunRoot(paths.root, { base });
+      expect(existsSync(paths.root)).toBe(false);
+      expect(mode(readOnly)).toBe(0o444);
+      expect(mode(sealed)).toBe(0o000);
+    } finally {
+      chmodSync(join(outside, "sealed.txt"), 0o600);
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("FIX2A F8: still restores a locked folder so a read-only file inside it cannot block the removal", () => {
+    const paths = createRunRoot({ base });
+    const dir = join(paths.vaultsDir, "frozen-tree");
+    mkdirSync(join(dir, "deep"), { recursive: true });
+    writeFileSync(join(dir, "deep", "ro.txt"), "x", { mode: 0o400 });
+    chmodSync(join(dir, "deep"), 0o500);
+    chmodSync(dir, 0o500);
+    removeRunRoot(paths.root, { base });
+    expect(existsSync(paths.root)).toBe(false);
   });
 
   it("refuses anything that fails the shape check and leaves it alone", () => {

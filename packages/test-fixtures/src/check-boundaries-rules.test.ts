@@ -255,6 +255,42 @@ const RULE18_FIRE_CASES: ReadonlyArray<readonly [name: string, source: string]> 
   ["an import of child_process without the prefix", `import cp from ${q("child_process")};\n`],
   ["an import of execa", `import { execa } from ${q("execa")};\n`],
   ["a single-quoted execa import", "import { execa } from 'execa';\n"],
+
+  // FIX2A F7: the routes around an import statement, and the synchronous file-system calls.
+  ["getBuiltinModule", `export const h = process.${"getBuiltinModule"}(${q("node:ht" + "tp")});\n`],
+  ["a bare getBuiltinModule", `const g = ${"getBuiltinModule"};\n`],
+  ["process.binding", `export const t = process.${"binding"}(${q("tcp_wrap")});\n`],
+  ["process.dlopen", `process.${"dlopen"}(m, file);\n`],
+  [
+    "a bracketed process access",
+    `export const t = process[${q("bind" + "ing")}](${q("tcp_wrap")});\n`,
+  ],
+  ["createRequire", `import { ${"createRequire"} } from ${q("node:module")};\n`],
+  ["a require( call", `export const h = ${"require"}(${q("node:ht" + "tp")});\n`],
+  ["a bracketed globalThis access", `export const f = globalThis[${q("fe" + "tch")}];\n`],
+  ["Reflect.get", `export const f = ${"Reflect"}.get(globalThis, ${q("fe" + "tch")});\n`],
+  ["eval", `${"eval"}(${q("1")});\n`],
+  ["(0, eval)", `export const e = (0, ${"eval"})(${q("1")});\n`],
+  ["Function(", `export const f = new ${"Function"}(${q("return 1")})();\n`],
+  ["a computed import(", "export const m = await import(name);\n"],
+  ["a concatenated import(", `export const m = await import(${q("node:")} + n);\n`],
+  ["an import( that ends its line", "export const m = await import(\n  name);\n"],
+  ["existsSync(", "export const t = existsSync(path);\n"],
+  ["a member statSync(", "export const t = fs.statSync(path);\n"],
+  ["readFileSync(", "export const t = readFileSync(path);\n"],
+  ["a specifier that climbs out and back in", `import { x } from ${q("./../other/x.js")};\n`],
+  [
+    "a specifier that climbs through a sibling folder",
+    `import { x } from ${q("./a/../../other/x.js")};\n`,
+  ],
+  [
+    "a service module that is not on the list",
+    `import { x } from ${q("../projects/detection.js")};\n`,
+  ],
+  ["the old vault root reader", `import { x } from ${q("../vault-root.js")};\n`],
+  ["an import of a test file", `import { x } from ${q("./vault-probe.test.js")};\n`],
+  ["an import of a spec file by a bare name", `import { x } from ${q("./helper.spec")};\n`],
+  ["a dynamic import of a test file", `export const m = await import(${q("./helper.test.js")});\n`],
 ];
 
 describe("check-boundaries.sh rule 18 (diagnostics probes stay offline and spawn-free)", () => {
@@ -294,6 +330,51 @@ describe("check-boundaries.sh rule 18 (diagnostics probes stay offline and spawn
         " * A probe never calls fetch( and never imports child_process.",
         " */",
         "export const ok = 1;",
+        "",
+      ].join("\n"),
+    });
+    expect(result.status).toBe(0);
+    expect(result.out).not.toContain(RULE18);
+  });
+
+  it("FIX2A F7: still sees code that follows a string holding a comment opener", () => {
+    const result = backstop({
+      [DIAG_PROBE]: [
+        `const opener = ${q("/*")};`,
+        "export const send = fetch(u);",
+        `const closer = ${q("*/")};`,
+        "",
+      ].join("\n"),
+    });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain(RULE18);
+    expect(result.out).toContain(`${DIAG_PROBE}:2:`);
+  });
+
+  it("FIX2A F7: allows the logger, the route kit and the vault root policy by specifier, and imports inside the folder", () => {
+    const result = backstop({
+      [DIAG_PROBE]: [
+        `import { logger } from ${q("../logging.js")};`,
+        `import { type Handler, sendJson, withAuth } from ${q("../route-kit.js")};`,
+        `import { isForbiddenRoot } from ${q("../vault-root-policy.js")};`,
+        `import { probeKit } from ${q("./probe-kit.js")};`,
+        `import { deep } from ${q("./deep/inner.js")};`,
+        "export const calls = [logger, sendJson, withAuth, isForbiddenRoot, probeKit, deep];",
+        "",
+      ].join("\n"),
+    });
+    expect(result.status).toBe(0);
+    expect(result.out).not.toContain(RULE18);
+  });
+
+  it("FIX2A F7: stays quiet for look-alike words (evaluate, Functional, resync, processed) and an import( with a plain literal", () => {
+    const result = backstop({
+      [DIAG_PROBE]: [
+        "export const evaluate = 1;",
+        "export const Functional = 2;",
+        "export const resync = 3;",
+        "export const processed = 4;",
+        `export const m = await import(${q("@ccc/domain")});`,
         "",
       ].join("\n"),
     });
