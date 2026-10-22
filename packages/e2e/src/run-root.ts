@@ -92,10 +92,12 @@ export function pathsForRoot(root: string, runId: string): RunRootPaths {
 }
 
 /**
- * Gives the owner back read, write and search on everything below `path` (u+rwx on folders,
- * u+rw on files), so a drill that was interrupted while it held a locked folder or a read-only
- * file cannot block the removal. Links are never followed or changed; an entry that cannot be
- * changed is skipped and the removal reports whatever is left.
+ * Gives the owner back read, write and search on every FOLDER below `path` (u+rwx), so a drill that
+ * was interrupted while it held a locked folder cannot block the removal. Files are never touched
+ * (FIX2A F8): removing a file needs write access to its folder, not to the file, and a regular file
+ * can be a hard link to an inode outside the sandbox, whose mode is not ours to change. Links are
+ * never followed or changed; an entry that cannot be changed is skipped and the removal reports
+ * whatever is left.
  */
 function resetModes(path: string): void {
   let info: ReturnType<typeof lstatSync>;
@@ -104,17 +106,12 @@ function resetModes(path: string): void {
   } catch {
     return;
   }
-  if (info.isSymbolicLink()) return;
+  if (!info.isDirectory()) return;
   try {
-    if (info.isDirectory()) {
-      if ((info.mode & 0o700) !== 0o700) chmodSync(path, (info.mode & 0o7777) | 0o700);
-    } else if ((info.mode & 0o600) !== 0o600) {
-      chmodSync(path, (info.mode & 0o7777) | 0o600);
-    }
+    if ((info.mode & 0o700) !== 0o700) chmodSync(path, (info.mode & 0o7777) | 0o700);
   } catch {
     return;
   }
-  if (!info.isDirectory()) return;
   let names: string[];
   try {
     names = readdirSync(path);
