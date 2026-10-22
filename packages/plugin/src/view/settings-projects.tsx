@@ -24,13 +24,12 @@ import { useScanState } from "./use-scan-state.js";
 
 export const PROJECTS_SECTION_DESCRIPTION =
   "Register project folders and choose folders to scan for projects.";
-export const PROJECT_REGISTERED_NOTICE = "Project registered.";
 /** The S1 note shown under a service-owned section's description while the service is away. */
 export const SERVICE_OWNED_AWAY_NOTE =
   "Projects, launchers and paths are managed by the companion service, which isn't running. They are read-only until it is back.";
-/** The existing Projects-destination line for a list that could not be read. */
+/** The line for a list that could not be read (no pointer at Diagnostics until that section exists). */
 const SCAN_LOAD_ERROR =
-  "▲ Couldn't load projects. Check the service in Settings → Diagnostics, then refresh.";
+  "▲ Couldn't load projects. Check that the service is running, then try again.";
 /** R-F1: a destination is a view, named in lower case after a lower-case word. */
 export const GO_TO_PROJECTS_VIEW = "Go to the projects view";
 
@@ -54,7 +53,7 @@ export function ProjectsSettings({
 }: ProjectsSettingsProps): VNode {
   const reasonId = useId();
   const away = connection.kind === "disconnected";
-  const phase = useScanState(scanActions, connection);
+  const { phase, reload } = useScanState(scanActions, connection);
   const state = scanState.value;
 
   // What the scan list can say. A state in hand is always shown (a reconnect re-reads behind
@@ -82,15 +81,18 @@ export function ProjectsSettings({
       <RegisterFlow
         actions={projectsActions}
         pickFolder={pickFolder}
-        onRegistered={() => notify(PROJECT_REGISTERED_NOTICE)}
-        // The flow's own status already says which project it is; nothing to add up here.
+        // The flow's own words ("Registered demo.") are the one message for the event: it posts
+        // them to the status line itself, so nothing is said again here.
+        onRegistered={() => {}}
         onDuplicate={() => {}}
         unavailable={away ? { reasonId } : undefined}
+        announce={notify}
       />
       <AddScanFolderFlow
         actions={scanActions}
         pickFolder={pickFolder}
         unavailable={away ? { reasonId } : undefined}
+        announce={notify}
       />
       {loading && (
         <div aria-busy="true">
@@ -100,8 +102,20 @@ export function ProjectsSettings({
           <p className="ccc-skeleton-line" />
         </div>
       )}
-      {failed && <p className="ccc-state-body">{SCAN_LOAD_ERROR}</p>}
-      {!loading && !failed && <ScanFolders state={state} actions={scanActions} now={now} />}
+      {failed && (
+        <>
+          <p className="ccc-state-body">{SCAN_LOAD_ERROR}</p>
+          {/* Offered only when the service is there to ask; a reconnect re-reads by itself. */}
+          {!away && (
+            <button type="button" className="ccc-list-more" onClick={reload}>
+              Try again
+            </button>
+          )}
+        </>
+      )}
+      {!loading && !failed && (
+        <ScanFolders state={state} actions={scanActions} now={now} announce={notify} />
+      )}
       <button
         type="button"
         className="ccc-list-more"

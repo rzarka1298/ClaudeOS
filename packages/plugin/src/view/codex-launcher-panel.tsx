@@ -36,6 +36,7 @@ import {
   terminalInSentence,
   terminalTestSentences,
 } from "./launcher-panel-kit.js";
+import { type Announce, statusRole, useAnnounceOnChange } from "./quiet-announce.js";
 import { checkTemplate, refusalCopy, TemplateEditor } from "./template-editor.js";
 
 /**
@@ -54,6 +55,8 @@ export interface CodexLauncherPanelProps {
   readonly now: number;
   /** The sample project's display path for `{projectPath}` in the preview (RR-24). */
   readonly sampleDisplayPath: string;
+  /** Quiet mode (FIX2B M1): the status lines are plain paragraphs whose words go here. */
+  readonly announce?: Announce | undefined;
 }
 
 type SavedCodex = NonNullable<LauncherConfigView["codex"]>;
@@ -249,6 +252,7 @@ export function CodexLauncherPanel({
   connection,
   now,
   sampleDisplayPath,
+  announce,
 }: CodexLauncherPanelProps): VNode {
   const headingId = useId();
   const executableGroup = useId();
@@ -273,6 +277,7 @@ export function CodexLauncherPanel({
   const canSave = current.executable !== null && !saving && !disabled;
   const errors = errorsFor(session.saveErrors.value.codex, current);
   const doctor = session.codexDoctor.value;
+  const healthRef = useAnnounceOnChange<HTMLParagraphElement>(announce, doctor);
 
   // Codex opens in the Claude Code row's terminal: a read-only mirror of the
   // SAVED choice, or of that panel's draft or proposal when nothing is saved.
@@ -523,6 +528,7 @@ export function CodexLauncherPanel({
         id="codex"
         status={status}
         now={now}
+        announce={announce}
         copy={{
           appName: CODEX_PANEL_NAME,
           question: sentences.question,
@@ -557,7 +563,8 @@ export function CodexLauncherPanel({
         )}
       </div>
       <p
-        role="status"
+        ref={healthRef}
+        role={statusRole(announce)}
         className="ccc-launch-status"
         data-codex-health=""
         data-tone={

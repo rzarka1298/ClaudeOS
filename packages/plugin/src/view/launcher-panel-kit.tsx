@@ -23,6 +23,7 @@ import {
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import { SYSTEM_SETTINGS_OPEN_FAILED_NOTICE } from "../projects/system-settings-opener.js";
 import { formatRelativeTime } from "../widgets/relative-time.js";
+import { type Announce, statusRole, useAnnounceOnChange } from "./quiet-announce.js";
 
 /**
  * What every S6 launcher panel shares (plan 04-12): the per-view session
@@ -521,12 +522,16 @@ export function PanelStatusLine({
   status,
   now,
   copy,
+  announce,
 }: {
   readonly id: PanelId;
   readonly status: PanelStatus;
   readonly now: number;
   readonly copy: TestCopy;
+  /** Quiet mode (FIX2B M1): a plain paragraph whose words go to `announce` instead. */
+  readonly announce?: Announce | undefined;
 }): VNode {
+  const ref = useAnnounceOnChange<HTMLParagraphElement>(announce, status);
   const problem = problemLines(status, id, copy);
   const tone =
     problem !== null
@@ -535,7 +540,7 @@ export function PanelStatusLine({
         ? "success"
         : undefined;
   return (
-    <p role="status" className="ccc-launch-status" data-tone={tone}>
+    <p ref={ref} role={statusRole(announce)} className="ccc-launch-status" data-tone={tone}>
       {(status.kind === "saving" || status.kind === "confirming") && "Saving…"}
       {status.kind === "saved" && (
         <>

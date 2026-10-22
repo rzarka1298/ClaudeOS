@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import type { ScanActions } from "../projects/projects-actions.js";
 import { applyScanState } from "../projects/scan-state.js";
@@ -15,6 +15,13 @@ import { applyScanState } from "../projects/scan-state.js";
  */
 export type ScanLoadPhase = "idle" | "loading" | "ready" | "failed";
 
+/** What {@link useScanState} returns: where the first load stands, and a way to ask again. */
+export interface ScanState {
+  readonly phase: ScanLoadPhase;
+  /** Reads the state once more (the `Try again` after a failed read). A no-op unless live. */
+  readonly reload: () => void;
+}
+
 /**
  * Reads the scan folders and suggestions the service holds, shared by the Projects destination
  * and the Settings Projects section (plan 08-11, Task 2).
@@ -26,8 +33,10 @@ export type ScanLoadPhase = "idle" | "loading" | "ready" | "failed";
  * into the shared `scanState` signal (memory only, D-43); this hook returns only the phase.
  * `actions` is a stable host-built object, not a dependency to track.
  */
-export function useScanState(actions: ScanActions, connection: ConnectionState): ScanLoadPhase {
+export function useScanState(actions: ScanActions, connection: ConnectionState): ScanState {
   const [phase, setPhase] = useState<ScanLoadPhase>("idle");
+  // Bumped by `reload`, so a failed read can be asked for again without remounting the surface.
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (connection.kind !== "live") return;
     let cancelled = false;
@@ -50,6 +59,7 @@ export function useScanState(actions: ScanActions, connection: ConnectionState):
     return () => {
       cancelled = true;
     };
-  }, [connection.kind]);
-  return phase;
+  }, [connection.kind, attempt]);
+  const reload = useCallback(() => setAttempt((count) => count + 1), []);
+  return { phase, reload };
 }

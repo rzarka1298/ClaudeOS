@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { ProjectsActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
+import { type Announce, statusRole, useAnnounceOnChange } from "./quiet-announce.js";
 
 /**
  * The S4 register-a-project flow (Task 2, D-03, D-04, D-29, PR-11).
@@ -31,6 +32,12 @@ export interface RegisterFlowProps {
    * text once; the flow never uses the native `disabled` attribute, so focus stays reachable.
    */
   readonly unavailable?: { readonly reasonId: string } | undefined;
+  /**
+   * Set when the flow is embedded in a surface that owns the one live region (the Settings
+   * destination, FIX2B M1): the flow's status becomes a plain paragraph, and each message is
+   * posted here instead. Absent, the flow keeps its own `role="status"` paragraph.
+   */
+  readonly announce?: Announce | undefined;
 }
 
 type Step =
@@ -92,6 +99,7 @@ export function RegisterFlow({
   onDuplicate,
   openerRef,
   unavailable,
+  announce,
 }: RegisterFlowProps): VNode {
   const blocked = unavailable !== undefined;
   const blockedAttrs = blocked
@@ -100,7 +108,11 @@ export function RegisterFlow({
   const [step, setStep] = useState<Step>({ kind: "idle" });
   const [typedPath, setTypedPath] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [status, setStatus] = useState("");
+  // An object per message, so a repeated identical outcome is still a new event to announce.
+  const [statusLine, setStatusLine] = useState<{ readonly text: string }>({ text: "" });
+  const status = statusLine.text;
+  const setStatus = (text: string): void => setStatusLine({ text });
+  const statusRef = useAnnounceOnChange<HTMLParagraphElement>(announce, statusLine);
   const [busy, setBusyState] = useState(false);
   // The rendered `busy` only reaches handlers on the next render; the ref is
   // read synchronously, so a second click or submit in the same tick is
@@ -298,7 +310,7 @@ export function RegisterFlow({
           Type a path instead
         </button>
       </div>
-      <p role="status" className="ccc-state-body">
+      <p ref={statusRef} role={statusRole(announce)} className="ccc-state-body">
         {status}
       </p>
       {step.kind === "form" && (
