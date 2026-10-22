@@ -554,6 +554,261 @@ export function buildDenylist(input: DenylistInput): Denylist {
   return { entries };
 }
 
+// ---------------------------------------------------------------------------
+// The privacy rules
+
+/**
+ * The shapes the verifier refuses, as data. The first two ({@link PRIVACY_RULES.homePath} and
+ * {@link PRIVACY_RULES.email}) are ported from `scripts/check-privacy.sh` and a gate in
+ * `packages/test-fixtures` (`privacy-rules-parity.test.ts`) keeps their source text, the placeholder
+ * list and the example-domain exemption equal to the script's, so the script and the verifier cannot
+ * drift. The rest are new: the script has no `/home/`, `~/`, token or temporary-folder rule.
+ *
+ * Every `source` is the text of a regular expression written without flags; the code builds the
+ * `RegExp` objects once, below.
+ */
+export const PRIVACY_RULES = {
+  /** Script rule 1: a macOS home path whose user segment is not one of the documented placeholders. */
+  homePath: {
+    source: "\\/Users\\/[A-Za-z0-9._$<>-]+\\/?",
+    placeholderSegments: ["USERNAME", "username", "<username>", "$USER", "you"] as const,
+  },
+  /** Script rule 2: an email address that is not on a reserved example domain. */
+  email: {
+    source: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+    exemptSource: "@example\\.(com|org|net)$",
+  },
+  /** Other absolute-path shapes that name a machine or a run: reported as `home-path`. */
+  pathShapes: [
+    "(^|[^A-Za-z0-9_.-])\\/home\\/[A-Za-z0-9._$<>-]+",
+    "file:\\/\\/",
+    "\\/(private\\/)?var\\/folders\\/",
+    "(^|[^A-Za-z0-9_.-])\\/(private\\/)?tmp\\/",
+  ],
+  /** Shell home spellings: reported as `tilde-path`. */
+  tildeShapes: ["(^|[^A-Za-z0-9_])~\\/", "[$][{]?HOME[}]?([^A-Za-z0-9_]|$)"],
+  /** Token shapes with a recognisable prefix or structure: reported as `token-shaped`. */
+  tokenShapes: [
+    // This project's bearer token (.gitleaks.toml rule ccc-bearer-token).
+    "v1\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{20,}",
+    "sk-ant-[A-Za-z0-9_-]{8,}",
+    "(^|[^A-Za-z0-9])sk-[A-Za-z0-9]{20,}",
+    "gh[pousr]_[A-Za-z0-9]{20,}",
+    "github_pat_[A-Za-z0-9_]{20,}",
+    "AKIA[0-9A-Z]{16}",
+    "xox[baprs]-[A-Za-z0-9-]{10,}",
+    "eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}",
+    "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    "(^|[^A-Za-z0-9])[0-9a-fA-F]{32,}([^A-Za-z0-9]|$)",
+  ],
+  /** A long run of base64-like characters (the runner sanitiser's heuristic). */
+  base64Run: "[A-Za-z0-9+/_=-]{32,}",
+} as const;
+
+const HOME_PATH = new RegExp(PRIVACY_RULES.homePath.source, "g");
+const EMAIL = new RegExp(PRIVACY_RULES.email.source, "g");
+const EMAIL_EXEMPT = new RegExp(PRIVACY_RULES.email.exemptSource);
+const PATH_SHAPES = PRIVACY_RULES.pathShapes.map((source) => new RegExp(source));
+const TILDE_SHAPES = PRIVACY_RULES.tildeShapes.map((source) => new RegExp(source));
+const TOKEN_SHAPES = PRIVACY_RULES.tokenShapes.map((source) => new RegExp(source));
+const BASE64_RUN = new RegExp(PRIVACY_RULES.base64Run, "g");
+
+/** Mixed upper, lower and digit; or single-case letters and digits with a digit. Kebab names are neither. */
+function looksLikeToken(run: string): boolean {
+  const mixed = /[A-Z]/.test(run) && /[a-z]/.test(run) && /\d/.test(run);
+  const singleCase = /^[a-z0-9]+$/.test(run) !== /^[A-Z0-9]+$/.test(run) && /\d/.test(run);
+  return mixed || singleCase;
+}
+
+function hasHomePath(text: string): boolean {
+  for (const match of text.matchAll(HOME_PATH)) {
+    let segment = match[0].slice("/Users/".length);
+    if (segment.endsWith("/")) segment = segment.slice(0, -1);
+    if (!(PRIVACY_RULES.homePath.placeholderSegments as readonly string[]).includes(segment)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasEmail(text: string): boolean {
+  for (const match of text.matchAll(EMAIL)) {
+    if (!EMAIL_EXEMPT.test(match[0])) return true;
+  }
+  return false;
+}
+
+function hasToken(text: string): boolean {
+  if (TOKEN_SHAPES.some((shape) => shape.test(text))) return true;
+  for (const match of text.matchAll(BASE64_RUN)) {
+    if (looksLikeToken(match[0])) return true;
+  }
+  return false;
+}
+
+/** The first shape rule a text breaks, or null. The order is the order of {@link BUNDLE_REFUSAL_CODES}. */
+function shapeRuleOf(text: string): RefusalCode | null {
+  if (hasHomePath(text) || PATH_SHAPES.some((shape) => shape.test(text))) return "home-path";
+  if (TILDE_SHAPES.some((shape) => shape.test(text))) return "tilde-path";
+  if (hasEmail(text)) return "email";
+  if (hasToken(text)) return "token-shaped";
+  return null;
+}
+
+/** JSON-style escapes undone, so an escaped slash or a unicode-escaped slash cannot hide a path. */
+function unescapeText(text: string): string {
+  return text
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_m, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\\//g, "/");
+}
+
+/** Percent-escapes undone once; an invalid sequence leaves the text as it was, except plain ASCII escapes. */
+function percentDecode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text.replace(/%([0-7][0-9a-fA-F])/g, (_m, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+  }
+}
+
+/** The spellings of a string the rules look at: as written, unescaped, percent-decoded, and both. */
+function variantsOf(text: string): string[] {
+  if (!/[\\%]/.test(text)) return [text];
+  const unescaped = unescapeText(text);
+  const decoded = percentDecode(text);
+  return [...new Set([text, unescaped, decoded, unescapeText(decoded), percentDecode(unescaped)])];
+}
+
+const INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+
+/**
+ * A string that is, by the strict schema, not user text: a closed token, a UTC instant or a dotted
+ * version. It cannot break a shape rule, and the denylist skips it (a project called `2026` or
+ * `setup` would otherwise be found inside every instant and token and block export for good).
+ */
+function isSchemaTyped(text: string): boolean {
+  return (
+    BUNDLE_VOCABULARY.has(text) || INSTANT_PATTERN.test(text) || DOTTED_VERSION_PATTERN.test(text)
+  );
+}
+
+function denylistRuleOf(text: string, denylist: Denylist): DenylistRule | null {
+  if (denylist.entries.length === 0) return null;
+  for (const variant of variantsOf(text)) {
+    const folded = foldForComparison(variant);
+    for (const entry of denylist.entries) {
+      if (folded.includes(entry.folded)) return entry.rule;
+    }
+  }
+  return null;
+}
+
+/**
+ * The rule one string breaks, or null: the shape rules first (on every spelling of the string), then
+ * the owner's denylist, which skips strings the schema types as a token, an instant or a version.
+ */
+export function checkLeaf(value: string, denylist: Denylist): RefusalCode | null {
+  if (isSchemaTyped(value)) return null;
+  for (const variant of variantsOf(value)) {
+    const rule = shapeRuleOf(variant);
+    if (rule !== null) return rule;
+  }
+  return denylistRuleOf(value, denylist);
+}
+
+/**
+ * Every key the strict schema can emit. Keys are fixed by the schema, so the denylist skips them
+ * (a project called `status` or `plugin` must not block export); a key not on this list is checked
+ * like any other string.
+ */
+export const BUNDLE_KEY_VOCABULARY: ReadonlySet<string> = new Set([
+  "bundleVersion",
+  "generatedAt",
+  "versions",
+  "plugin",
+  "service",
+  "obsidian",
+  "electron",
+  "node",
+  "storeSchema",
+  "platform",
+  "os",
+  "arch",
+  "connection",
+  "state",
+  "subsystems",
+  "id",
+  "status",
+  "reasonCode",
+  "checkedAt",
+  "freshness",
+  "parts",
+  "partId",
+  "counts",
+  "projects",
+  "scanFolders",
+  "openTasks",
+  "reports",
+  "pluginDiagnostics",
+  "features",
+  "reducedMotion",
+  "transcriptAnalysis",
+  "notifyApprovals",
+  "launchers",
+  "antigravity",
+  "claude-code",
+  "claude-desktop",
+  "codex",
+  "source",
+  "code",
+  "at",
+]);
+
+function checkKey(key: string, denylist: Denylist): RefusalCode | null {
+  if (BUNDLE_KEY_VOCABULARY.has(key)) return null;
+  return checkLeaf(key, denylist);
+}
+
+/** The most strings and the deepest nesting the verifier walks; past either the value is not a bundle. */
+const MAX_WALK_NODES = 50_000;
+const MAX_WALK_DEPTH = 64;
+
+interface Strings {
+  readonly keys: Set<string>;
+  readonly leaves: Set<string>;
+  readonly overflow: boolean;
+}
+
+/** Every key and every string value inside a value, without recursion, within a budget. */
+function stringsOf(root: unknown): Strings {
+  const keys = new Set<string>();
+  const leaves = new Set<string>();
+  const stack: { value: unknown; depth: number }[] = [{ value: root, depth: 0 }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const { value, depth } = stack.pop() as { value: unknown; depth: number };
+    nodes += 1;
+    if (nodes > MAX_WALK_NODES || depth > MAX_WALK_DEPTH) return { keys, leaves, overflow: true };
+    if (typeof value === "string") leaves.add(value);
+    else if (Array.isArray(value)) {
+      for (const item of value) stack.push({ value: item, depth: depth + 1 });
+    } else if (value !== null && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        keys.add(key);
+        stack.push({ value: item, depth: depth + 1 });
+      }
+    }
+  }
+  return { keys, leaves, overflow: false };
+}
+
 /** The serialised size in UTF-8 bytes, computed without a text encoder (this file is Node-free). */
 function utf8Length(text: string): number {
   let bytes = 0;
@@ -565,10 +820,40 @@ function utf8Length(text: string): number {
 }
 
 /**
- * Checks a bundle before it is offered. Task 1 of plan 08-09 verifies the structure and the size;
- * the privacy rules and the denylist are added with the corpus.
+ * Checks a value before it is offered as a bundle, in this order:
+ *
+ * 1. every key and every string value, in every spelling (as written, JSON-unescaped,
+ *    percent-decoded), against the shape rules and then the denylist ({@link checkLeaf});
+ * 2. the serialisation and its percent-decoded copy against the shape rules, so nothing a leaf
+ *    walk could miss survives;
+ * 3. the strict schema (`schema-invalid`), then the size (`too-large`).
+ *
+ * The privacy rules run first on purpose: a bundle that is both malformed and leaky is refused for
+ * the leak, which is the more useful answer. The result names the rule and never the value.
  */
-export function verifyBundle(bundle: unknown, _denylist: Denylist): VerifyResult {
+export function verifyBundle(bundle: unknown, denylist: Denylist): VerifyResult {
+  const strings = stringsOf(bundle);
+  if (strings.overflow) return { ok: false, rule: "too-large" };
+  for (const key of strings.keys) {
+    const rule = checkKey(key, denylist);
+    if (rule !== null) return { ok: false, rule };
+  }
+  for (const leaf of strings.leaves) {
+    const rule = checkLeaf(leaf, denylist);
+    if (rule !== null) return { ok: false, rule };
+  }
+
+  let text: string;
+  try {
+    text = JSON.stringify(bundle) ?? "";
+  } catch {
+    return { ok: false, rule: "schema-invalid" };
+  }
+  for (const variant of variantsOf(text)) {
+    const rule = shapeRuleOf(variant);
+    if (rule !== null) return { ok: false, rule };
+  }
+
   if (!DiagnosticBundleSchema.safeParse(bundle).success) {
     return { ok: false, rule: "schema-invalid" };
   }

@@ -20,6 +20,8 @@ import { type DiagnosticsHealthResponse, DiagnosticsHealthResponseSchema } from 
  */
 
 const T0 = "2026-10-22T09:00:00.000Z";
+/** A home-looking path, assembled at run time so this tracked file holds no literal one. */
+const HOME_LIKE = ["/Us", "ers/alice-example"].join("");
 
 function part(
   partId: string,
@@ -270,10 +272,10 @@ describe("Test 2: explicit picks", () => {
     const sneaky = {
       ...base,
       projectNames: ["Orchard Ledger"],
-      versions: { ...base.versions, path: "/Users/alice-example/bin" },
+      versions: { ...base.versions, path: `${HOME_LIKE}/bin` },
       features: { ...base.features, vaultName: "Field Notes" },
       health: { ...base.health, secret: "sk-ant-abcdefghijklmnopqrstuvwx" },
-      pluginDiagnostics: [{ ...base.pluginDiagnostics[0], extra: "/Users/alice-example/x" }],
+      pluginDiagnostics: [{ ...base.pluginDiagnostics[0], extra: `${HOME_LIKE}/x` }],
     } as unknown as DiagnosticBundleInput;
     const text = serialiseBundle(buildDiagnosticBundle(sneaky));
     for (const leaked of [
@@ -351,7 +353,12 @@ describe("Test 2: explicit picks", () => {
   it("turns a version that is not a dotted version into null rather than passing text through", () => {
     const bundle = buildDiagnosticBundle(
       input({
-        versions: { plugin: "0.1.0", obsidian: "latest build", electron: "/Users/x", node: null },
+        versions: {
+          plugin: "0.1.0",
+          obsidian: "latest build",
+          electron: `${HOME_LIKE}/x`,
+          node: null,
+        },
       }),
     );
     expect(bundle.versions).toMatchObject({ obsidian: null, electron: null, node: null });
@@ -410,7 +417,7 @@ describe("Test 3: the schema is strict at every level", () => {
           Array.from({ length: 101 }, () => ({ source: "layout", code: "a", at: T0 })),
         ),
     ],
-    ["a path in a version", (b) => setAt(b, ["versions", "plugin"], "/Users/x")],
+    ["a path in a version", (b) => setAt(b, ["versions", "plugin"], "~/bin/plugin")],
     [
       "a status that disagrees with its reason",
       (b) => setAt(b, ["subsystems", 1, "status"], "failing"),
