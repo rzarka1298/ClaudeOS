@@ -795,7 +795,8 @@ export const DiagnosticsHealthResponseSchema = z.strictObject({
   service: z.strictObject({
     version: DottedVersionSchema,
     startedAt: IsoInstantSchema,
-    storeSchemaVersion: z.int().nonnegative(),
+    /** Null when the schema-version table is empty or unreadable: never an invented number (08-07). */
+    storeSchemaVersion: z.int().nonnegative().nullable(),
   }),
   /** The five service-side rows in the fixed display order; the service row is the plugin's. */
   rows: z.tuple([

@@ -31,6 +31,12 @@ export {
   openCodexTranscript,
   runCodexDoctor,
 } from "./codex-client.js";
+// Phase 8 (plan 08-07): the diagnostics health client.
+export {
+  DIAGNOSTICS_CLIENT_TIMEOUT_MS,
+  DiagnosticsRequestError,
+  getDiagnosticsHealth,
+} from "./diagnostics-client.js";
 export type {
   CreateEventClientOptions,
   EventClient,
