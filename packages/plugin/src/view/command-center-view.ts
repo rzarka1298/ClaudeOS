@@ -24,6 +24,7 @@ import { createObsidianCodexUi } from "./codex-modals.js";
 import type { DestinationId } from "./destinations.js";
 import { registerSwitcherScope } from "./quick-switcher.js";
 import { createObsidianSessionActionUi } from "./session-modals.js";
+import type { SettingsHost } from "./settings-host.js";
 import { Shell } from "./shell.js";
 
 export const VIEW_TYPE = "claude-command-center-view";
@@ -57,6 +58,12 @@ export interface CommandCenterViewHost {
    * projects alone.
    */
   readonly onServiceLive?: (() => void) | undefined;
+  /**
+   * The plugin's one Settings seam (plan 08-11, D-15), built once in `main.ts` and shared with the
+   * native settings tab. Absent in hosts that predate it; the Settings destination then renders
+   * with an inert host.
+   */
+  readonly settingsHost?: SettingsHost | undefined;
 }
 
 /**
@@ -139,6 +146,8 @@ export class CommandCenterView extends ItemView {
         // Nothing here runs until the owner opens Settings (D-30).
         launchersActions: createLaunchersActions(this.host.client),
         pickFolder,
+        // The one Settings seam the plugin built (08-11); absent, the shell uses an inert host.
+        ...(this.host.settingsHost === undefined ? {} : { settingsHost: this.host.settingsHost }),
         // Built here, from the view's own authenticated client — never
         // constructed inside `agent-runs-detail.tsx` (05-13 acceptance
         // criteria: no `@ccc/service-api-client` import there).

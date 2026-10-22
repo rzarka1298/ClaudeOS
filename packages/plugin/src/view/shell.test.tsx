@@ -248,6 +248,13 @@ describe("Shell — Settings › Launchers (D-37, D-30)", () => {
     connectionState.value = { kind: "live" };
     render(<Shell launchersActions={fakeLaunchersActions()} />);
     fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+    // Phase 8 (08-11): one section at a time, Projects first; Launchers is a nav item away.
+    expect(screen.queryByRole("heading", { level: 3, name: "Launchers" })).toBeNull();
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Settings sections" })).getByRole("button", {
+        name: "Launchers",
+      }),
+    );
     expect(screen.getByRole("heading", { level: 3, name: "Launchers" })).toBeTruthy();
   });
 
@@ -284,8 +291,9 @@ describe("Shell — Settings › Launchers (D-37, D-30)", () => {
     await act(async () => {
       await Promise.resolve();
     });
+    expect(document.activeElement).toBe(tab);
     expect(document.activeElement).not.toBe(
-      screen.getByRole("heading", { level: 3, name: "Launchers" }),
+      screen.getByRole("heading", { level: 3, name: "Projects" }),
     );
   });
 });

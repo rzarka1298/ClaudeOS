@@ -271,6 +271,9 @@ export function normalizePath(path: string): string {
 /** Obsidian draws the icon; under test there is nothing to draw. */
 export function setIcon(_element: unknown, _iconId: string): void {}
 
+/** Obsidian's own version string. A fixed value under test; the real one comes from the app. */
+export const apiVersion = "1.13.0";
+
 export class FileSystemAdapter {
   private readonly basePath: string;
 

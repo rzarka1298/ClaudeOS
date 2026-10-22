@@ -1,3 +1,4 @@
+import { homedir, userInfo } from "node:os";
 import { HANDSHAKE_PATH, type HandshakeResponse } from "@ccc/domain";
 import type { AuthenticatedSocketApiClient, EventClient } from "@ccc/service-api-client";
 import {
@@ -13,7 +14,7 @@ import {
   refreshProjects,
   setTranscriptAnalysis,
 } from "@ccc/service-api-client";
-import { type Events, Notice, Plugin, TFolder, type WorkspaceLeaf } from "obsidian";
+import { apiVersion, type Events, Notice, Plugin, TFolder, type WorkspaceLeaf } from "obsidian";
 import { wireApprovals } from "./approvals/wiring.js";
 import { connectionState } from "./connection-state.js";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
@@ -33,7 +34,11 @@ import {
   DEFAULT_SETTINGS,
   mergeSettings,
 } from "./settings.js";
-import { createObsidianVaultSetupUi, registerVaultSetupCommand } from "./setup-command.js";
+import {
+  createObsidianVaultSetupUi,
+  registerVaultSetupCommand,
+  runVaultSetup,
+} from "./setup-command.js";
 import { resolveSocketPath } from "./socket-path.js";
 import { taskEditVault } from "./tasks/task-update.js";
 import { wireTasks } from "./tasks/wiring.js";
@@ -50,6 +55,7 @@ import {
   ProjectSwitcherModal,
   registerSwitcherCommand,
 } from "./view/quick-switcher.js";
+import type { SettingsHost } from "./view/settings-host.js";
 import { CommandCenterSettingTab } from "./view/settings-tab.js";
 import { startClock } from "./widgets/clock.js";
 import { createAdapterLayoutSource, startLayoutPolling } from "./widgets/layout-source.js";
@@ -69,6 +75,15 @@ import { createAdapterLayoutSource, startLayoutPolling } from "./widgets/layout-
  * widgets are added.
  */
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+/** The macOS short user name, or `null` where the OS cannot say (never thrown from `onload`). */
+function macOsUserName(): string | null {
+  try {
+    return userInfo().username;
+  } catch {
+    return null;
+  }
+}
 
 export default class ClaudeCommandCenterPlugin extends Plugin {
   settings: CommandCenterSettings = DEFAULT_SETTINGS;
@@ -93,6 +108,12 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
    * the view and the switcher both attach the event client with it.
    */
   onServiceLive: () => void = () => {};
+  /**
+   * The one Settings seam (plan 08-11, D-15): built once in `onload`, handed to the native
+   * settings tab, and read by every command-center view (its host is this plugin) so the Settings
+   * destination and the tab cannot drift.
+   */
+  settingsHost: SettingsHost | undefined;
   private hostRegistry!: HostRegistry;
 
   async onload(): Promise<void> {
@@ -281,57 +302,76 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       }),
     );
 
+    // Vault setup (VAULT-01) and the Settings destination's `Set up vault` share one UI seam.
+    const vaultSetupUi = createObsidianVaultSetupUi(this.app);
+
+    // The ONE Settings seam, shared by the native tab and the command-center destination
+    // (plan 08-11, D-15). Its display inputs are read once and live in memory only: nothing here
+    // is ever written to `data.json` (`assertNoPrivatePathValues` stays in force, D-16).
+    const settingsHost: SettingsHost = {
+      settings: this.settings,
+      saveSettings: () => this.saveSettings(),
+      mql: window.matchMedia(REDUCED_MOTION_QUERY),
+      // The Claude section's service seam (UI-SPEC S5). Built from the
+      // existing authenticated client -- the tab never reaches the
+      // service any other way, and nothing here touches plugin settings.
+      claude: {
+        getIntegration: () => getClaudeIntegration(this.client),
+        setTranscriptAnalysis: (enabled: boolean) => setTranscriptAnalysis(this.client, enabled),
+        deleteUsageAnalytics: () => deleteUsageAnalytics(this.client),
+        copyText: (text: string) => navigator.clipboard.writeText(text),
+      },
+      // The Codex group (plan 05.1-19, D-30): status read, the copy-only install
+      // steps and the Launchers hand-off. Nothing here installs or writes anything.
+      codex: {
+        getIntegration: () => getCodexIntegration(this.client),
+        copyText: (text: string) => navigator.clipboard.writeText(text),
+        // Same hand-off as the Set up launchers command: focus request first,
+        // then the Settings destination, then the view.
+        openLauncherSettings: () => {
+          requestLaunchersFocus();
+          requestDestination("settings");
+          void this.revealView();
+        },
+      },
+      // The Approvals group: Send a test approval and its availability.
+      approvals: {
+        sendTestApproval: () => approvals.testAction.press(),
+        serviceAvailable: () => connectionState.value.kind !== "disconnected",
+      },
+      // The Tasks group: Rebuild task index and its availability.
+      tasks: {
+        rebuildTaskIndex: () => tasks.rebuild(),
+        serviceAvailable: () => connectionState.value.kind !== "disconnected",
+      },
+      // Row 6's confirmation modal (UI-SPEC S4-d). Behind the same seam
+      // pattern as every other modal opener in this plugin.
+      openDeleteUsageModal: (horizonDate: string | null, analysisOn: boolean) =>
+        openDeleteUsageModalDialog(this.app, horizonDate, analysisOn),
+      copyText: (text: string) => navigator.clipboard.writeText(text),
+      // The existing vault-setup flow, confirm modal and all; the destination only invokes it.
+      runVaultSetup: () => runVaultSetup(vaultSetupUi, this.client),
+      display: {
+        homeDir: homedir(),
+        socketPath,
+        vaultBasePath: vaultSetupUi.resolveVaultPath(),
+        vaultName: this.app.vault.getName(),
+        userName: macOsUserName(),
+        pluginVersion: this.manifest.version,
+        obsidianVersion: apiVersion,
+      },
+    };
+    this.settingsHost = settingsHost;
+
     // The Settings tab, through the same seam as everything else so its
     // release on unload is counted rather than assumed (threat T-03-07).
-    this.hostRegistry.settingTab(
-      new CommandCenterSettingTab(this.app, this, {
-        settings: this.settings,
-        saveSettings: () => this.saveSettings(),
-        mql: window.matchMedia(REDUCED_MOTION_QUERY),
-        // The Claude section's service seam (UI-SPEC S5). Built from the
-        // existing authenticated client -- the tab never reaches the
-        // service any other way, and nothing here touches plugin settings.
-        claude: {
-          getIntegration: () => getClaudeIntegration(this.client),
-          setTranscriptAnalysis: (enabled: boolean) => setTranscriptAnalysis(this.client, enabled),
-          deleteUsageAnalytics: () => deleteUsageAnalytics(this.client),
-          copyText: (text: string) => navigator.clipboard.writeText(text),
-        },
-        // The Codex group (plan 05.1-19, D-30): status read, the copy-only install
-        // steps and the Launchers hand-off. Nothing here installs or writes anything.
-        codex: {
-          getIntegration: () => getCodexIntegration(this.client),
-          copyText: (text: string) => navigator.clipboard.writeText(text),
-          // Same hand-off as the Set up launchers command: focus request first,
-          // then the Settings destination, then the view.
-          openLauncherSettings: () => {
-            requestLaunchersFocus();
-            requestDestination("settings");
-            void this.revealView();
-          },
-        },
-        // The Approvals group: Send a test approval and its availability.
-        approvals: {
-          sendTestApproval: () => approvals.testAction.press(),
-          serviceAvailable: () => connectionState.value.kind !== "disconnected",
-        },
-        // The Tasks group: Rebuild task index and its availability.
-        tasks: {
-          rebuildTaskIndex: () => tasks.rebuild(),
-          serviceAvailable: () => connectionState.value.kind !== "disconnected",
-        },
-        // Row 6's confirmation modal (UI-SPEC S4-d). Behind the same seam
-        // pattern as every other modal opener in this plugin.
-        openDeleteUsageModal: (horizonDate: string | null, analysisOn: boolean) =>
-          openDeleteUsageModalDialog(this.app, horizonDate, analysisOn),
-      }),
-    );
+    this.hostRegistry.settingTab(new CommandCenterSettingTab(this.app, this, settingsHost));
 
     // Vault setup (VAULT-01). Registered through the same seam as
     // everything else, and given the authenticated client — the plugin
     // never reaches the filesystem for this: it hands the service a path
     // and renders the plan the service sends back.
-    registerVaultSetupCommand(this.hostRegistry, createObsidianVaultSetupUi(this.app), this.client);
+    registerVaultSetupCommand(this.hostRegistry, vaultSetupUi, this.client);
 
     // The quick-switcher (PROJ-16, D-31 – D-34), from the palette with no
     // default hotkey (D-33). Opening it attaches the event client lazily, so

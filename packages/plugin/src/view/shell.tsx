@@ -34,7 +34,6 @@ import { AgentRuns } from "./agent-runs.js";
 import { detailFocusRequested, selectedRunId } from "./agent-runs-state.js";
 import { DestinationTabs } from "./destination-tabs.js";
 import { DESTINATIONS, type DestinationId, nextDestination } from "./destinations.js";
-import { launchersFocusRequested } from "./launchers-focus.js";
 import { createLaunchersSession, type LaunchersSession } from "./launchers-settings.js";
 import { navigationRequest, taskFormRequested } from "./navigation-request.js";
 import { Overview } from "./overview.js";
@@ -45,7 +44,13 @@ import {
   type SessionActionDeps,
   type SessionActionHost,
 } from "./session-action-runner.js";
-import { SettingsDestination } from "./settings-destination.js";
+import {
+  createSettingsSession,
+  SettingsDestination,
+  type SettingsSession,
+} from "./settings-destination.js";
+import { createInertSettingsHost, type SettingsHost } from "./settings-host.js";
+import { settingsSectionRequested } from "./settings-sections.js";
 import { TasksDestination } from "./tasks.js";
 import { taskDetailFocusRequested } from "./tasks-view-state.js";
 
@@ -151,6 +156,13 @@ export interface ShellProps {
    * seam; absent, every `session:*` control answers unavailable.
    */
   sessionActions?: SessionActionHost;
+  /**
+   * The Settings destination's one seam to the plugin (plan 08-11, D-15): preferences and their
+   * save, the Claude, Codex, approvals and tasks seams, the clipboard, the vault-setup runner and
+   * the display inputs. `main.ts` builds it once and shares it with the native tab; absent, the
+   * shell uses an inert host that reports everything as away, so it renders honestly alone.
+   */
+  settingsHost?: SettingsHost;
 }
 
 function noNotify(_message: string): void {}
@@ -218,6 +230,10 @@ export interface DestinationViewProps {
   readonly onProjectFocusMissing?: (() => void) | undefined;
   /** Loads one Run's own usage for the Agent runs detail pane (05-07). */
   readonly loadSessionUsage?: ((runId: string) => Promise<SessionUsage>) | undefined;
+  /** The Settings destination's plugin seam (plan 08-11). */
+  readonly settingsHost: SettingsHost;
+  /** The Settings destination's in-memory last-visited section (R-01). */
+  readonly settingsSession: SettingsSession;
 }
 
 const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewProps) => VNode>> = {
@@ -264,8 +280,17 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
   "agent-runs": ({ now, onQuickAction, loadSessionUsage }) => (
     <AgentRuns now={now} onQuickAction={onQuickAction} loadSessionUsage={loadSessionUsage} />
   ),
-  settings: ({ connection, now, launchersActions, launchersSession }) => (
+  settings: ({
+    connection,
+    now,
+    launchersActions,
+    launchersSession,
+    settingsHost,
+    settingsSession,
+  }) => (
     <SettingsDestination
+      settingsHost={settingsHost}
+      settingsSession={settingsSession}
       launchersActions={launchersActions}
       launchersSession={launchersSession}
       connection={connection}
@@ -276,11 +301,13 @@ const DESTINATION_VIEWS: Partial<Record<DestinationId, (props: DestinationViewPr
 
 /**
  * Destinations whose view renders its own level-2 heading (UI-SPEC R1, "Heading structure": h2
- * Research, then h3 sections). The shell leaves its generic heading out for these, so the page
- * never carries two level-2 headings with the same name.
+ * Research, then h3 sections; 08-UI-SPEC S1: h2 Settings, then h3 sections). The shell leaves
+ * its generic heading out for these, so the page never carries two level-2 headings with the
+ * same name.
  */
 const DESTINATIONS_WITH_OWN_HEADING: ReadonlySet<DestinationId> = new Set<DestinationId>([
   "research",
+  "settings",
 ]);
 
 function connectionStatusText(state: ConnectionState): string {
@@ -322,10 +349,15 @@ export function Shell({
   launchersActions = noLaunchersActions,
   loadSessionUsage,
   sessionActions,
+  settingsHost,
 }: ShellProps) {
   const [activeId, setActiveId] = useState<DestinationId>(initialDestination ?? "overview");
   // One per view: leaving Settings keeps detection and drafts in memory (RR-25).
   const [launchersSession] = useState(createLaunchersSession);
+  // The Settings destination's last-visited section, held the same way (memory only, R-01).
+  const [settingsSession] = useState(createSettingsSession);
+  // Used only when the host passed none: a fresh, inert one per view (its preferences are mutable).
+  const [inertHost] = useState(createInertSettingsHost);
   const tabRefs = useRef<Partial<Record<DestinationId, HTMLButtonElement>>>({});
   // S9's `Go to {project}`, held until the Projects destination takes it.
   const [projectFocus, setProjectFocus] = useState<ProjectId | null>(null);
@@ -417,12 +449,13 @@ export function Shell({
   // `Set up launchers` command (plan 04-14) — is consumed once and cleared:
   // a request made before this shell mounted is honoured on mount.
   const request = navigationRequest.value;
-  // Read in the same render as the request: `Set up launchers` sets both, and
-  // the Launchers section — already mounted when Settings is open or is the
-  // initial destination — moves focus to its heading. Focusing the Settings
+  // Read in the same render as the request: `Set up launchers` (and every other
+  // deep link into a Settings section, 08-11) sets both, and the Settings
+  // destination — already mounted when Settings is open or is the initial
+  // destination — moves focus to the section's heading. Focusing the Settings
   // tab here would overwrite that, whichever effect runs first (wave-7
   // finding 1).
-  const launchersFocusPending = launchersFocusRequested.value;
+  const settingsSectionPending = settingsSectionRequested.value !== null;
   // `select`/`focusDestination` are per-render closures over stable setters;
   // the request value alone decides when this runs.
   useEffect(() => {
@@ -443,7 +476,7 @@ export function Shell({
       return;
     }
     if (request.focusProjectId === undefined) {
-      if (request.destination === "settings" && launchersFocusPending) select("settings");
+      if (request.destination === "settings" && settingsSectionPending) select("settings");
       else focusDestination(request.destination);
       return;
     }
@@ -537,6 +570,8 @@ export function Shell({
                 onProjectFocusTaken={() => setProjectFocus(null)}
                 onProjectFocusMissing={() => tabRefs.current.projects?.focus()}
                 loadSessionUsage={loadSessionUsage}
+                settingsHost={settingsHost ?? inertHost}
+                settingsSession={settingsSession}
               />
             ) : (
               <p>{active.description}</p>
