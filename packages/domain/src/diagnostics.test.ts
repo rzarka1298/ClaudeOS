@@ -1,10 +1,39 @@
 import { describe, expect, it } from "vitest";
 import { HEALTH_PATH } from "./auth.js";
 import {
+  COLLECTORS_PART_IDS,
+  COLLECTORS_PART_REASONS,
+  COLLECTORS_REASON_STATUS,
+  COLLECTORS_REASONS,
+  DIAGNOSTICS_ERROR_CODES,
   DIAGNOSTICS_HEALTH_PATH,
+  DiagnosticsErrorBodySchema,
   DiagnosticsHealthResponseSchema,
+  HOOK_SILENT_THRESHOLD_MS,
+  HOOKS_REASON_STATUS,
+  HOOKS_REASONS,
+  LAUNCHER_PART_IDS,
+  LAUNCHERS_REASON_STATUS,
+  LAUNCHERS_REASONS,
+  NOT_IN_VERSION_GLYPH,
+  rollupStatus,
+  SCHEDULER_PART_IDS,
+  SCHEDULER_REASON_STATUS,
+  SCHEDULER_REASONS,
+  SERVICE_REASON_STATUS,
+  SETTINGS_SECTION_IDS,
+  SETUP_COMMAND_IDS,
+  SetupActionSchema,
+  SUBSYSTEM_IDS,
+  SUBSYSTEM_STATUS_DISPLAY,
+  SUBSYSTEM_STATUSES,
+  type SubsystemStatus,
   summariseRows,
+  VAULT_REASON_STATUS,
+  VAULT_REASONS,
+  VaultFingerprintSchema,
 } from "./diagnostics.js";
+import { RUN_ERROR_CODES, type RunErrorCode } from "./research.js";
 
 const T0 = "2026-10-22T09:00:00.000Z";
 
@@ -76,5 +105,549 @@ describe("Task 1 (tracer): a fresh-install health response", () => {
 
     const extraTop = { ...freshInstall(), error: "x" };
     expect(DiagnosticsHealthResponseSchema.safeParse(extraTop).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: every reason, every part, the roll-up, setup actions and the display map
+
+const SHARED: Record<string, SubsystemStatus> = {
+  "probe-timeout": "unknown",
+  "probe-error": "unknown",
+  "subsystem-not-wired": "unknown",
+  "service-not-running": "unknown",
+};
+
+/** Hand-written expectations, row by row from the UI-SPEC "Reason copy" tables. */
+const EXPECTED: Record<string, Record<string, SubsystemStatus>> = {
+  service: {
+    "service-live": "ok",
+    "service-connecting": "unknown",
+    "service-unreachable": "failing",
+  },
+  vault: {
+    "vault-ready": "ok",
+    "vault-not-set-up": "setup-needed",
+    "managed-tree-incomplete": "degraded",
+    "not-an-obsidian-vault": "degraded",
+    "vault-mismatch": "degraded",
+    "vault-root-missing": "failing",
+    "vault-root-not-directory": "failing",
+    "vault-root-unreadable": "failing",
+    "vault-root-not-writable": "failing",
+    "vault-root-refused": "failing",
+    "vault-check-unavailable": "unknown",
+    ...SHARED,
+  },
+  hooks: {
+    "hooks-receiving": "ok",
+    "hooks-not-installed": "setup-needed",
+    "hooks-disabled-in-claude": "degraded",
+    "hook-runtime-missing": "failing",
+    "hooks-state-unreadable": "unknown",
+    "no-events-yet": "unknown",
+    "events-silent": "unknown",
+    ...SHARED,
+  },
+  collectors: {
+    "telemetry-ok": "ok",
+    "telemetry-shape-changed": "degraded",
+    "telemetry-unsupported-version": "degraded",
+    "statusline-reporting": "ok",
+    "statusline-not-installed": "setup-needed",
+    "statusline-awaiting-report": "unknown",
+    "statusline-state-unreadable": "unknown",
+    "analysis-on": "ok",
+    "analysis-off": "setup-needed",
+    "spool-clean": "ok",
+    "spool-dropped-records": "degraded",
+    "codex-installed": "ok",
+    "codex-not-installed": "setup-needed",
+    "codex-hooks-receiving": "ok",
+    "codex-hooks-not-installed": "setup-needed",
+    "codex-hooks-no-events": "unknown",
+    "codex-hooks-state-unreadable": "unknown",
+    "codex-bridge-ready": "ok",
+    "codex-bridge-not-installed": "setup-needed",
+    "codex-bridge-outdated": "degraded",
+    "codex-bridge-different-folder": "degraded",
+    "codex-doctor-ok": "ok",
+    "codex-doctor-not-run": "setup-needed",
+    "codex-doctor-warning": "degraded",
+    "codex-doctor-failed": "degraded",
+    "codex-doctor-unrecognised": "unknown",
+    ...SHARED,
+  },
+  scheduler: {
+    "last-run-succeeded": "ok",
+    "run-in-flight": "ok",
+    "never-run": "setup-needed",
+    "run-summariser-unconfigured": "setup-needed",
+    "run-summariser-failed": "degraded",
+    "run-summariser-refused": "degraded",
+    "run-summariser-invalid-output": "degraded",
+    "run-all-sources-failed": "degraded",
+    "run-vault-write-failed": "degraded",
+    "run-interrupted": "unknown",
+    "research-key-present": "ok",
+    "research-key-missing": "setup-needed",
+    "research-key-check-failed": "unknown",
+    "sources-configured": "ok",
+    "sources-config-unusable": "degraded",
+    ...SHARED,
+  },
+  launchers: {
+    "launcher-ready": "ok",
+    "launcher-not-set-up": "setup-needed",
+    "launcher-untested": "setup-needed",
+    "bundle-not-found": "failing",
+    "executable-not-found": "failing",
+    "terminal-not-found": "failing",
+    "bundle-check-unavailable": "unknown",
+    ...SHARED,
+  },
+};
+
+const TABLES: Record<
+  string,
+  { reasons: readonly string[]; table: Record<string, SubsystemStatus> }
+> = {
+  service: { reasons: Object.keys(SERVICE_REASON_STATUS), table: SERVICE_REASON_STATUS },
+  vault: { reasons: VAULT_REASONS, table: VAULT_REASON_STATUS },
+  hooks: { reasons: HOOKS_REASONS, table: HOOKS_REASON_STATUS },
+  collectors: { reasons: COLLECTORS_REASONS, table: COLLECTORS_REASON_STATUS },
+  scheduler: { reasons: SCHEDULER_REASONS, table: SCHEDULER_REASON_STATUS },
+  launchers: { reasons: LAUNCHERS_REASONS, table: LAUNCHERS_REASON_STATUS },
+};
+
+describe("Task 2 Test 1 (tables): every reason has exactly the UI-SPEC status", () => {
+  it.each(Object.keys(EXPECTED))("%s", (id) => {
+    const entry = TABLES[id];
+    expect(entry?.table).toEqual(EXPECTED[id]);
+    // The ordered list and the status table name exactly the same codes.
+    expect([...(entry?.reasons ?? [])].sort()).toEqual(Object.keys(EXPECTED[id] ?? {}).sort());
+  });
+});
+
+describe("Task 2 Test 2 (roll-up)", () => {
+  it("failing beats degraded beats unknown beats ok", () => {
+    expect(rollupStatus(["ok", "degraded", "failing", "unknown"])).toBe("failing");
+    expect(rollupStatus(["ok", "degraded", "unknown", "setup-needed"])).toBe("degraded");
+    expect(rollupStatus(["ok", "unknown", "setup-needed"])).toBe("unknown");
+    expect(rollupStatus(["ok", "ok"])).toBe("ok");
+  });
+
+  it("is setup-needed only when every part is setup-needed; a mix with ok is ok", () => {
+    expect(rollupStatus(["setup-needed", "setup-needed"])).toBe("setup-needed");
+    expect(rollupStatus(["ok", "setup-needed", "setup-needed"])).toBe("ok");
+  });
+
+  it("never invents ok for nothing", () => {
+    expect(rollupStatus([])).toBe("unknown");
+  });
+
+  it("refuses a collectors row whose status disagrees with its parts' roll-up", () => {
+    const good = collectorsResponse({
+      parts: collectorParts({ spool: "spool-dropped-records" }),
+      status: "degraded",
+      reasonCode: "spool-dropped-records",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(good).success).toBe(true);
+
+    const wrongRollup = collectorsResponse({
+      parts: collectorParts({ spool: "spool-dropped-records" }),
+      status: "ok",
+      reasonCode: "telemetry-ok",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(wrongRollup).success).toBe(false);
+  });
+
+  it("requires the row's reason to be the deciding part's reason", () => {
+    const wrongReason = collectorsResponse({
+      parts: collectorParts({ spool: "spool-dropped-records" }),
+      status: "degraded",
+      reasonCode: "telemetry-shape-changed",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(wrongReason).success).toBe(false);
+  });
+
+  it("refuses a part whose status differs from its reason's, or whose reason belongs to another part", () => {
+    const parts = collectorParts({});
+    const wrongStatus = collectorsResponse({
+      parts: parts.map((p) => (p.partId === "telemetry" ? { ...p, status: "failing" } : p)),
+      status: "failing",
+      reasonCode: "telemetry-ok",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(wrongStatus).success).toBe(false);
+
+    const wrongPart = collectorsResponse({
+      parts: parts.map((p) => (p.partId === "telemetry" ? { ...p, reasonCode: "analysis-on" } : p)),
+      status: "ok",
+      reasonCode: "analysis-on",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(wrongPart).success).toBe(false);
+  });
+});
+
+/** All eight collectors parts at their ok reasons, with per-part overrides. */
+const OK_COLLECTOR_REASONS: Record<string, string> = {
+  telemetry: "telemetry-ok",
+  "status-line": "statusline-reporting",
+  "transcript-analysis": "analysis-on",
+  spool: "spool-clean",
+  "codex-install": "codex-installed",
+  "codex-hooks": "codex-hooks-receiving",
+  "codex-bridge": "codex-bridge-ready",
+  "codex-doctor": "codex-doctor-ok",
+};
+
+function collectorParts(overrides: Record<string, string>) {
+  return Object.entries(OK_COLLECTOR_REASONS).map(([partId, reason]) => {
+    const reasonCode = overrides[partId] ?? reason;
+    return {
+      partId,
+      status: EXPECTED.collectors?.[reasonCode] as SubsystemStatus,
+      reasonCode,
+    };
+  });
+}
+
+function collectorsResponse(rowOverrides: Record<string, unknown>) {
+  const base = freshInstall();
+  base.rows[2] = row("collectors", "telemetry-ok", rowOverrides) as never;
+  return base;
+}
+
+describe("Task 2 Test 3 (parts)", () => {
+  it("collectors parts are exactly the eight, scheduler three, launchers five", () => {
+    expect([...COLLECTORS_PART_IDS]).toEqual([
+      "telemetry",
+      "status-line",
+      "transcript-analysis",
+      "spool",
+      "codex-install",
+      "codex-hooks",
+      "codex-bridge",
+      "codex-doctor",
+    ]);
+    expect([...SCHEDULER_PART_IDS]).toEqual(["last-run", "research-key", "sources"]);
+    expect([...LAUNCHER_PART_IDS]).toEqual([
+      "antigravity",
+      "claude-code",
+      "claude-desktop",
+      "codex",
+      "terminal",
+    ]);
+  });
+
+  it("has six subsystems in the fixed order and no codex subsystem (D-41)", () => {
+    expect([...SUBSYSTEM_IDS]).toEqual([
+      "service",
+      "vault",
+      "hooks",
+      "collectors",
+      "scheduler",
+      "launchers",
+    ]);
+    expect(SUBSYSTEM_IDS as readonly string[]).not.toContain("codex");
+  });
+
+  it("each collectors part has its own reason list and together they cover the table", () => {
+    const union = new Set<string>(Object.values(COLLECTORS_PART_REASONS).flat());
+    for (const reason of Object.keys(EXPECTED.collectors ?? {})) {
+      if (reason in SHARED) continue;
+      expect(union.has(reason), reason).toBe(true);
+    }
+  });
+
+  it("refuses parts that are missing, out of order, duplicated or unknown", () => {
+    const parts = collectorParts({});
+    const reorder = [...parts].reverse();
+    const missing = parts.slice(0, 7);
+    const unknown = [
+      ...parts.slice(0, 7),
+      { partId: "codex", status: "ok", reasonCode: "codex-doctor-ok" },
+    ];
+    for (const bad of [reorder, missing, unknown]) {
+      const response = collectorsResponse({ parts: bad, status: "ok", reasonCode: "telemetry-ok" });
+      expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(false);
+    }
+  });
+
+  it("accepts launchers with four parts, or five with terminal last", () => {
+    const part = (partId: string) => ({
+      partId,
+      status: "setup-needed",
+      reasonCode: "launcher-not-set-up",
+    });
+    const four = ["antigravity", "claude-code", "claude-desktop", "codex"].map(part);
+    const five = [...four, part("terminal")];
+    for (const parts of [four, five]) {
+      const response = freshInstall();
+      response.rows[4] = row("launchers", "launcher-not-set-up", { parts }) as never;
+      expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+    }
+    const misplaced = freshInstall();
+    misplaced.rows[4] = row("launchers", "launcher-not-set-up", {
+      parts: [part("terminal"), ...four],
+    }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(misplaced).success).toBe(false);
+  });
+
+  it("accepts scheduler parts and refuses a launcher reason on a scheduler part", () => {
+    const parts = [
+      { partId: "last-run", status: "setup-needed", reasonCode: "never-run" },
+      { partId: "research-key", status: "setup-needed", reasonCode: "research-key-missing" },
+      { partId: "sources", status: "ok", reasonCode: "sources-configured" },
+    ];
+    const ok = freshInstall();
+    ok.rows[3] = row("scheduler", "never-run", { parts }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(ok).success).toBe(false); // roll-up is ok, row says setup-needed
+    ok.rows[3] = row("scheduler", "sources-configured", { parts, status: "ok" }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(ok).success).toBe(true);
+    const bad = freshInstall();
+    bad.rows[3] = row("scheduler", "never-run", {
+      parts: [{ ...parts[0], reasonCode: "launcher-not-set-up" }, parts[1], parts[2]],
+    }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe("Task 2 Test 4 (run errors)", () => {
+  it("maps every RUN_ERROR_CODES member to a run-<code> scheduler reason", () => {
+    const expected: Record<RunErrorCode, SubsystemStatus> = {
+      "summariser-unconfigured": "setup-needed",
+      "summariser-failed": "degraded",
+      "summariser-refused": "degraded",
+      "summariser-invalid-output": "degraded",
+      "all-sources-failed": "degraded",
+      "vault-write-failed": "degraded",
+      interrupted: "unknown",
+    };
+    for (const code of RUN_ERROR_CODES) {
+      expect(SCHEDULER_REASON_STATUS[`run-${code}`], code).toBe(expected[code]);
+    }
+    expect(Object.keys(expected).sort()).toEqual([...RUN_ERROR_CODES].sort());
+  });
+
+  it("fails the build when a run error code has no reason (compile-time check)", () => {
+    // If a RunErrorCode is added without a `run-<code>` entry, this assignment stops compiling.
+    const covered: Record<`run-${RunErrorCode}`, SubsystemStatus> = SCHEDULER_REASON_STATUS;
+    expect(Object.keys(covered).length).toBeGreaterThanOrEqual(RUN_ERROR_CODES.length);
+  });
+});
+
+describe("Task 2 Test 5 (setup actions)", () => {
+  it("accepts the three closed kinds with their ids", () => {
+    for (const command of SETUP_COMMAND_IDS) {
+      expect(SetupActionSchema.safeParse({ kind: "copy-command", command }).success).toBe(true);
+    }
+    expect([...SETUP_COMMAND_IDS]).toEqual([
+      "claude-hooks-install",
+      "codex-hooks-install",
+      "codex-bridge-install",
+      "research-key-setup",
+    ]);
+    for (const section of [...SETTINGS_SECTION_IDS, "research"]) {
+      expect(SetupActionSchema.safeParse({ kind: "go-to-section", section }).success).toBe(true);
+    }
+    expect([...SETTINGS_SECTION_IDS]).toEqual([
+      "projects",
+      "launchers",
+      "integrations",
+      "approvals-tasks",
+      "paths",
+      "visual",
+      "security",
+      "schedules",
+      "diagnostics",
+    ]);
+    expect(
+      SetupActionSchema.safeParse({ kind: "run-plugin-command", command: "vault-setup" }).success,
+    ).toBe(true);
+  });
+
+  it("refuses command text, an unknown id or section, an unknown plugin command and a fourth kind", () => {
+    const bad: unknown[] = [
+      { kind: "copy-command", command: "claude-hooks-install", text: "./scripts/x.sh" },
+      { kind: "copy-command", command: "./scripts/claude-hooks/install.sh" },
+      { kind: "copy-command", command: "rm -rf /" },
+      { kind: "go-to-section", section: "elsewhere" },
+      { kind: "run-plugin-command", command: "format-disk" },
+      { kind: "open-url", url: "https://example.com" },
+      { kind: "go-to-section" },
+    ];
+    for (const value of bad) {
+      expect(SetupActionSchema.safeParse(value).success, JSON.stringify(value)).toBe(false);
+    }
+  });
+
+  it("carries a setup action on a row and on a part", () => {
+    const response = freshInstall();
+    response.rows[1] = row("hooks", "hooks-not-installed", {
+      setupAction: { kind: "copy-command", command: "claude-hooks-install" },
+    }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+
+    const onPart = collectorsResponse({
+      parts: collectorParts({ "status-line": "statusline-not-installed" }).map((p) =>
+        p.partId === "status-line"
+          ? { ...p, setupAction: { kind: "copy-command", command: "claude-hooks-install" } }
+          : p,
+      ),
+      status: "ok",
+      reasonCode: "telemetry-ok",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(onPart).success).toBe(true);
+  });
+});
+
+describe("Task 2 Test 6 (no free text)", () => {
+  it.each(["message", "error", "reason", "path", "detail", "stderr"])(
+    "refuses a row that carries a %s key",
+    (key) => {
+      const response = freshInstall();
+      response.rows[0] = { ...response.rows[0], [key]: "/Users/someone/vault" } as never;
+      expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(false);
+    },
+  );
+
+  it("accepts typed facts and nothing else", () => {
+    const facts = {
+      claudeVersion: "2.1.5",
+      minimumVersion: "2.0.0",
+      dropCount: 3,
+      dropsSince: T0,
+      silenceThresholdMs: 600000,
+      sourceCount: 4,
+      lastSuccessAt: T0,
+      lastFailureAt: T0,
+    };
+    const response = freshInstall();
+    response.rows[1] = row("hooks", "hooks-not-installed", { facts }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+
+    const refused: Record<string, unknown>[] = [
+      { claudeVersion: "/Users/someone/bin/claude" },
+      { claudeVersion: "version 2.1.5 (Claude Code)" },
+      { minimumVersion: "latest" },
+      { dropCount: -1 },
+      { dropCount: 1.5 },
+      { dropsSince: "yesterday" },
+      { silenceThresholdMs: "10 minutes" },
+      { sourceCount: "4" },
+      { lastSuccessAt: "2026-10-22" },
+      { note: "free text" },
+      { path: "~/x" },
+    ];
+    for (const bad of refused) {
+      const r = freshInstall();
+      r.rows[1] = row("hooks", "hooks-not-installed", { facts: { ...facts, ...bad } }) as never;
+      expect(DiagnosticsHealthResponseSchema.safeParse(r).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("refuses an absolute or control-character path and a non-display string anywhere in paths", () => {
+    for (const vault of ["/Users/someone/vault", "vault", "~/ok\u0000", "https://example.com"]) {
+      const r = freshInstall();
+      r.paths.vault = vault as never;
+      expect(DiagnosticsHealthResponseSchema.safeParse(r).success, vault).toBe(false);
+    }
+  });
+
+  it("refuses a service block or counts with free text, a negative or a fractional count", () => {
+    const a = freshInstall();
+    (a.service as Record<string, unknown>).version = "latest build";
+    expect(DiagnosticsHealthResponseSchema.safeParse(a).success).toBe(false);
+    const b = freshInstall();
+    (b.counts as Record<string, unknown>).projects = -1;
+    expect(DiagnosticsHealthResponseSchema.safeParse(b).success).toBe(false);
+    const c = freshInstall();
+    (c.keychain as Record<string, unknown>).researchKey = "sk-ant-secret";
+    expect(DiagnosticsHealthResponseSchema.safeParse(c).success).toBe(false);
+  });
+});
+
+describe("Task 2 Test 6b (vault fingerprint, D-36)", () => {
+  const salt = "0123456789abcdef0123456789abcdef";
+  const digest = "fedcba9876543210";
+
+  it("is null or a 32-hex salt and 16-hex digest", () => {
+    expect(VaultFingerprintSchema.safeParse(null).success).toBe(true);
+    expect(VaultFingerprintSchema.safeParse({ salt, digest }).success).toBe(true);
+    const r = freshInstall();
+    (r as Record<string, unknown>).vaultFingerprint = { salt, digest };
+    expect(DiagnosticsHealthResponseSchema.safeParse(r).success).toBe(true);
+  });
+
+  it("refuses path-shaped, longer, shorter, uppercase and extra-key values", () => {
+    const bad: unknown[] = [
+      { salt, digest: "/Users/someone/vault" },
+      { salt, digest: `${digest}0` },
+      { salt, digest: digest.slice(1) },
+      { salt: salt.toUpperCase(), digest },
+      { salt: `${salt}0`, digest },
+      { salt, digest, path: "~/vault" },
+      { salt },
+      "fedcba9876543210",
+    ];
+    for (const value of bad) {
+      expect(VaultFingerprintSchema.safeParse(value).success, JSON.stringify(value)).toBe(false);
+    }
+  });
+});
+
+describe("Task 2 Test 7 (display map)", () => {
+  it("holds the five words, glyphs and meaning lines of the UI-SPEC", () => {
+    expect(SUBSYSTEM_STATUS_DISPLAY).toEqual({
+      ok: { word: "Working", glyph: "✓", meaning: "Checked and behaving as expected." },
+      "setup-needed": {
+        word: "Needs setup",
+        glyph: "⊕",
+        meaning: "Not set up yet. Nothing is wrong; the next step is shown.",
+      },
+      degraded: {
+        word: "Degraded",
+        glyph: "▽",
+        meaning: "Working, but with a problem that reduces what you see.",
+      },
+      failing: {
+        word: "Failing",
+        glyph: "✕",
+        meaning: "Not working. The reason and the fix are shown.",
+      },
+      unknown: {
+        word: "Unknown",
+        glyph: "?",
+        meaning: "Couldn't be checked, or no evidence yet. Never assumed working.",
+      },
+    });
+    expect(Object.keys(SUBSYSTEM_STATUS_DISPLAY).sort()).toEqual([...SUBSYSTEM_STATUSES].sort());
+  });
+
+  it("uses five distinct glyphs, a disjoint not-in-version glyph and a ten-minute silence threshold", () => {
+    const glyphs = Object.values(SUBSYSTEM_STATUS_DISPLAY).map((d) => d.glyph);
+    expect(new Set(glyphs).size).toBe(5);
+    expect(NOT_IN_VERSION_GLYPH).toBe("∅");
+    expect(glyphs).not.toContain(NOT_IN_VERSION_GLYPH);
+    expect(HOOK_SILENT_THRESHOLD_MS).toBe(10 * 60 * 1000);
+  });
+});
+
+describe("Task 2: the closed error body", () => {
+  it("lists the four codes and refuses another code or an extra key", () => {
+    expect([...DIAGNOSTICS_ERROR_CODES]).toEqual([
+      "service-disconnected",
+      "timeout",
+      "internal",
+      "unrecognised-response",
+    ]);
+    for (const code of DIAGNOSTICS_ERROR_CODES) {
+      expect(DiagnosticsErrorBodySchema.safeParse({ error: code }).success).toBe(true);
+    }
+    expect(DiagnosticsErrorBodySchema.safeParse({ error: "boom" }).success).toBe(false);
+    expect(
+      DiagnosticsErrorBodySchema.safeParse({ error: "internal", message: "/Users/x" }).success,
+    ).toBe(false);
   });
 });

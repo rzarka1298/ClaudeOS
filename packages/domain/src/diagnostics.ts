@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
+import type { RunErrorCode } from "./research.js";
 import { FreshnessSchema } from "./usage.js";
 
 /**
- * The Diagnostics health contract (plan 08-01; D-02, D-06, D-34, D-43; DIAG-02,
- * DIAG-03; ADR-0002).
+ * The Diagnostics health contract (plan 08-01; D-02, D-04, D-06, D-08, D-34,
+ * D-35, D-39, D-41, D-43; DIAG-02, DIAG-03; ADR-0002).
  *
  * What crosses the socket is **codes, instants, integers and dotted versions**,
  * nothing else. There is no message, no error string, no connection reason and
@@ -14,8 +15,10 @@ import { FreshnessSchema } from "./usage.js";
  * `status` is never sent free: it is a pure function of the closed reason code
  * (the per-subsystem tables below, typed `satisfies Record<Reason,
  * SubsystemStatus>` so a missing mapping is a compile error), and the strict
- * schema refuses a row whose status disagrees with its reason's. The Diagnostics
- * view, the bundle and the tests therefore cannot disagree about a subsystem.
+ * schema refuses a row whose status disagrees with its reason's. For a row made
+ * of parts the status must also equal the roll-up of its parts' statuses
+ * ({@link rollupStatus}). The Diagnostics view, the bundle and the tests
+ * therefore cannot disagree about a subsystem.
  *
  * This file is Node-free: it is reachable from the plugin's browser bundle.
  */
@@ -49,6 +52,32 @@ export const SUBSYSTEM_IDS = [
 ] as const;
 export type SubsystemId = (typeof SUBSYSTEM_IDS)[number];
 
+/** The ranks the roll-up uses. `setup-needed` is handled separately (see {@link rollupStatus}). */
+const ROLLUP_RANK = {
+  failing: 4,
+  degraded: 3,
+  unknown: 2,
+  ok: 1,
+  "setup-needed": 1,
+} as const satisfies Record<SubsystemStatus, number>;
+
+/**
+ * The status of a row made of parts (D-06): `failing > degraded > unknown >
+ * ok`, and `setup-needed` only when **every** part is `setup-needed`, so one
+ * unconfigured optional part never masks a working one and one working part
+ * never hides that nothing else is set up. A mix of `ok` and `setup-needed` is
+ * `ok`. No parts at all is `unknown`: nothing is invented as working.
+ */
+export function rollupStatus(statuses: readonly SubsystemStatus[]): SubsystemStatus {
+  if (statuses.length === 0) return "unknown";
+  if (statuses.every((status) => status === "setup-needed")) return "setup-needed";
+  let worst: SubsystemStatus = "ok";
+  for (const status of statuses) {
+    if (ROLLUP_RANK[status] > ROLLUP_RANK[worst]) worst = status;
+  }
+  return worst;
+}
+
 // ---------------------------------------------------------------------------
 // Reason codes (closed, one status each)
 
@@ -71,6 +100,9 @@ const SHARED_REASON_STATUS = {
   "service-not-running": "unknown",
 } as const satisfies Record<SharedReason, SubsystemStatus>;
 
+/** The shared codes a single part can carry (the plugin clears whole rows for `service-not-running`). */
+const PART_PROBE_REASONS = ["probe-timeout", "probe-error", "subsystem-not-wired"] as const;
+
 /** The companion service row is computed by the plugin from its connection state (D-03). */
 export const SERVICE_REASONS = [
   "service-live",
@@ -84,52 +116,340 @@ export const SERVICE_REASON_STATUS = {
   "service-unreachable": "failing",
 } as const satisfies Record<ServiceReason, SubsystemStatus>;
 
-export const VAULT_REASONS = ["vault-ready", "vault-not-set-up", ...SHARED_REASONS] as const;
+// -- Vault access ------------------------------------------------------------
+
+/**
+ * `vault-mismatch` and `vault-check-unavailable` are overlaid by the plugin
+ * after it compares the salted fingerprint (D-36) with the vault open in
+ * Obsidian; the service never sends them.
+ */
+export const VAULT_REASONS = [
+  "vault-ready",
+  "vault-not-set-up",
+  "managed-tree-incomplete",
+  "not-an-obsidian-vault",
+  "vault-mismatch",
+  "vault-root-missing",
+  "vault-root-not-directory",
+  "vault-root-unreadable",
+  "vault-root-not-writable",
+  "vault-root-refused",
+  "vault-check-unavailable",
+  ...SHARED_REASONS,
+] as const;
 export type VaultReason = (typeof VAULT_REASONS)[number];
 export const VAULT_REASON_STATUS = {
   "vault-ready": "ok",
   "vault-not-set-up": "setup-needed",
+  "managed-tree-incomplete": "degraded",
+  "not-an-obsidian-vault": "degraded",
+  "vault-mismatch": "degraded",
+  "vault-root-missing": "failing",
+  "vault-root-not-directory": "failing",
+  "vault-root-unreadable": "failing",
+  "vault-root-not-writable": "failing",
+  "vault-root-refused": "failing",
+  "vault-check-unavailable": "unknown",
   ...SHARED_REASON_STATUS,
 } as const satisfies Record<VaultReason, SubsystemStatus>;
 
-export const HOOKS_REASONS = ["hooks-receiving", "hooks-not-installed", ...SHARED_REASONS] as const;
+// -- Claude Code hooks -------------------------------------------------------
+
+/**
+ * Precedence the hooks probe (08-08) applies, mirroring `hookStatusText`:
+ * not installed, then unreadable, then disabled, then runtime missing, then no
+ * events yet, then silent, then receiving. Idle hooks are `unknown`, never
+ * `degraded` (D-35): `lastEventAt` is process-lifetime memory, so a healthy
+ * install reads `no-events-yet` after a service restart and the system cannot
+ * tell idle from broken. Telemetry belongs to the collectors row.
+ */
+export const HOOKS_REASONS = [
+  "hooks-receiving",
+  "hooks-not-installed",
+  "hooks-disabled-in-claude",
+  "hook-runtime-missing",
+  "hooks-state-unreadable",
+  "no-events-yet",
+  "events-silent",
+  ...SHARED_REASONS,
+] as const;
 export type HooksReason = (typeof HOOKS_REASONS)[number];
 export const HOOKS_REASON_STATUS = {
   "hooks-receiving": "ok",
   "hooks-not-installed": "setup-needed",
+  "hooks-disabled-in-claude": "degraded",
+  "hook-runtime-missing": "failing",
+  "hooks-state-unreadable": "unknown",
+  "no-events-yet": "unknown",
+  "events-silent": "unknown",
   ...SHARED_REASON_STATUS,
 } as const satisfies Record<HooksReason, SubsystemStatus>;
 
-export const COLLECTORS_REASONS = ["analysis-on", "analysis-off", ...SHARED_REASONS] as const;
+/**
+ * How long without a hook event before the row reads `events-silent` (D-35).
+ * Defined once here; the plugin's Settings switches to this constant in 08-15.
+ */
+export const HOOK_SILENT_THRESHOLD_MS = 10 * 60 * 1000;
+
+// -- Usage collectors (Claude parts and, per D-41, Codex parts) ---------------
+
+export const COLLECTORS_PART_IDS = [
+  "telemetry",
+  "status-line",
+  "transcript-analysis",
+  "spool",
+  "codex-install",
+  "codex-hooks",
+  "codex-bridge",
+  "codex-doctor",
+] as const;
+export type CollectorsPartId = (typeof COLLECTORS_PART_IDS)[number];
+
+const TELEMETRY_REASONS = [
+  "telemetry-ok",
+  "telemetry-shape-changed",
+  "telemetry-unsupported-version",
+] as const;
+const STATUS_LINE_REASONS = [
+  "statusline-reporting",
+  "statusline-not-installed",
+  "statusline-awaiting-report",
+  "statusline-state-unreadable",
+] as const;
+const TRANSCRIPT_ANALYSIS_REASONS = ["analysis-on", "analysis-off"] as const;
+const SPOOL_REASONS = ["spool-clean", "spool-dropped-records"] as const;
+const CODEX_INSTALL_REASONS = ["codex-installed", "codex-not-installed"] as const;
+const CODEX_HOOKS_REASONS = [
+  "codex-hooks-receiving",
+  "codex-hooks-not-installed",
+  "codex-hooks-no-events",
+  "codex-hooks-state-unreadable",
+] as const;
+const CODEX_BRIDGE_REASONS = [
+  "codex-bridge-ready",
+  "codex-bridge-not-installed",
+  "codex-bridge-outdated",
+  "codex-bridge-different-folder",
+] as const;
+const CODEX_DOCTOR_REASONS = [
+  "codex-doctor-ok",
+  "codex-doctor-not-run",
+  "codex-doctor-warning",
+  "codex-doctor-failed",
+  "codex-doctor-unrecognised",
+] as const;
+
+/** The reasons each collectors part may carry (its own codes plus the probe-did-not-finish codes). */
+export const COLLECTORS_PART_REASONS = {
+  telemetry: [...TELEMETRY_REASONS, ...PART_PROBE_REASONS],
+  "status-line": [...STATUS_LINE_REASONS, ...PART_PROBE_REASONS],
+  "transcript-analysis": [...TRANSCRIPT_ANALYSIS_REASONS, ...PART_PROBE_REASONS],
+  spool: [...SPOOL_REASONS, ...PART_PROBE_REASONS],
+  "codex-install": [...CODEX_INSTALL_REASONS, ...PART_PROBE_REASONS],
+  "codex-hooks": [...CODEX_HOOKS_REASONS, ...PART_PROBE_REASONS],
+  "codex-bridge": [...CODEX_BRIDGE_REASONS, ...PART_PROBE_REASONS],
+  "codex-doctor": [...CODEX_DOCTOR_REASONS, ...PART_PROBE_REASONS],
+} as const satisfies Record<CollectorsPartId, readonly [string, ...string[]]>;
+
+export const COLLECTORS_REASONS = [
+  ...TELEMETRY_REASONS,
+  ...STATUS_LINE_REASONS,
+  ...TRANSCRIPT_ANALYSIS_REASONS,
+  ...SPOOL_REASONS,
+  ...CODEX_INSTALL_REASONS,
+  ...CODEX_HOOKS_REASONS,
+  ...CODEX_BRIDGE_REASONS,
+  ...CODEX_DOCTOR_REASONS,
+  ...SHARED_REASONS,
+] as const;
 export type CollectorsReason = (typeof COLLECTORS_REASONS)[number];
 export const COLLECTORS_REASON_STATUS = {
+  "telemetry-ok": "ok",
+  "telemetry-shape-changed": "degraded",
+  "telemetry-unsupported-version": "degraded",
+  "statusline-reporting": "ok",
+  "statusline-not-installed": "setup-needed",
+  "statusline-awaiting-report": "unknown",
+  "statusline-state-unreadable": "unknown",
   "analysis-on": "ok",
   "analysis-off": "setup-needed",
+  "spool-clean": "ok",
+  "spool-dropped-records": "degraded",
+  "codex-installed": "ok",
+  "codex-not-installed": "setup-needed",
+  "codex-hooks-receiving": "ok",
+  "codex-hooks-not-installed": "setup-needed",
+  "codex-hooks-no-events": "unknown",
+  "codex-hooks-state-unreadable": "unknown",
+  "codex-bridge-ready": "ok",
+  "codex-bridge-not-installed": "setup-needed",
+  "codex-bridge-outdated": "degraded",
+  "codex-bridge-different-folder": "degraded",
+  "codex-doctor-ok": "ok",
+  "codex-doctor-not-run": "setup-needed",
+  "codex-doctor-warning": "degraded",
+  "codex-doctor-failed": "degraded",
+  "codex-doctor-unrecognised": "unknown",
   ...SHARED_REASON_STATUS,
 } as const satisfies Record<CollectorsReason, SubsystemStatus>;
 
-export const SCHEDULER_REASONS = ["last-run-succeeded", "never-run", ...SHARED_REASONS] as const;
+// -- Scheduler ---------------------------------------------------------------
+
+export const SCHEDULER_PART_IDS = ["last-run", "research-key", "sources"] as const;
+export type SchedulerPartId = (typeof SCHEDULER_PART_IDS)[number];
+
+/**
+ * One reason per `RUN_ERROR_CODES` member (D-04). The two checks below make a
+ * new run error code fail the build until it has a health reason, in both
+ * directions: a code without a reason, and a reason without a code.
+ */
+export const RUN_REASONS = [
+  "run-summariser-unconfigured",
+  "run-summariser-failed",
+  "run-summariser-refused",
+  "run-summariser-invalid-output",
+  "run-all-sources-failed",
+  "run-vault-write-failed",
+  "run-interrupted",
+] as const;
+type RunReason = (typeof RUN_REASONS)[number];
+type MissingRunReason = Exclude<`run-${RunErrorCode}`, RunReason>;
+type ExtraRunReason = Exclude<RunReason, `run-${RunErrorCode}`>;
+const everyRunCodeHasAReason: [MissingRunReason] extends [never] ? true : never = true;
+const everyRunReasonHasACode: [ExtraRunReason] extends [never] ? true : never = true;
+void everyRunCodeHasAReason;
+void everyRunReasonHasACode;
+
+/** Keyed by `run-${RunErrorCode}`: a code added to `RUN_ERROR_CODES` is a compile error here until mapped. */
+export const RUN_REASON_STATUS = {
+  "run-summariser-unconfigured": "setup-needed",
+  "run-summariser-failed": "degraded",
+  "run-summariser-refused": "degraded",
+  "run-summariser-invalid-output": "degraded",
+  "run-all-sources-failed": "degraded",
+  "run-vault-write-failed": "degraded",
+  "run-interrupted": "unknown",
+} as const satisfies Record<`run-${RunErrorCode}`, SubsystemStatus>;
+
+const LAST_RUN_REASONS = [
+  "last-run-succeeded",
+  "run-in-flight",
+  "never-run",
+  ...RUN_REASONS,
+] as const;
+const RESEARCH_KEY_REASONS = [
+  "research-key-present",
+  "research-key-missing",
+  "research-key-check-failed",
+] as const;
+const SOURCES_REASONS = ["sources-configured", "sources-config-unusable"] as const;
+
+export const SCHEDULER_PART_REASONS = {
+  "last-run": [...LAST_RUN_REASONS, ...PART_PROBE_REASONS],
+  "research-key": [...RESEARCH_KEY_REASONS, ...PART_PROBE_REASONS],
+  sources: [...SOURCES_REASONS, ...PART_PROBE_REASONS],
+} as const satisfies Record<SchedulerPartId, readonly [string, ...string[]]>;
+
+export const SCHEDULER_REASONS = [
+  ...LAST_RUN_REASONS,
+  ...RESEARCH_KEY_REASONS,
+  ...SOURCES_REASONS,
+  ...SHARED_REASONS,
+] as const;
 export type SchedulerReason = (typeof SCHEDULER_REASONS)[number];
 export const SCHEDULER_REASON_STATUS = {
   "last-run-succeeded": "ok",
+  "run-in-flight": "ok",
   "never-run": "setup-needed",
+  ...RUN_REASON_STATUS,
+  "research-key-present": "ok",
+  "research-key-missing": "setup-needed",
+  "research-key-check-failed": "unknown",
+  "sources-configured": "ok",
+  "sources-config-unusable": "degraded",
   ...SHARED_REASON_STATUS,
 } as const satisfies Record<SchedulerReason, SubsystemStatus>;
 
-export const LAUNCHERS_REASONS = [
+// -- App launchers -----------------------------------------------------------
+
+/** `terminal` appears only for a custom terminal choice and is always last. */
+export const LAUNCHER_PART_IDS = [
+  "antigravity",
+  "claude-code",
+  "claude-desktop",
+  "codex",
+  "terminal",
+] as const;
+export type LauncherPartId = (typeof LAUNCHER_PART_IDS)[number];
+
+const LAUNCHER_OWN_REASONS = [
   "launcher-ready",
   "launcher-not-set-up",
-  ...SHARED_REASONS,
+  "launcher-untested",
+  "bundle-not-found",
+  "executable-not-found",
+  "terminal-not-found",
+  "bundle-check-unavailable",
 ] as const;
+
+/** Every launcher part may carry any launcher reason; the probe (08-08) decides which fits. */
+export const LAUNCHERS_REASONS = [...LAUNCHER_OWN_REASONS, ...SHARED_REASONS] as const;
 export type LaunchersReason = (typeof LAUNCHERS_REASONS)[number];
 export const LAUNCHERS_REASON_STATUS = {
   "launcher-ready": "ok",
   "launcher-not-set-up": "setup-needed",
+  "launcher-untested": "setup-needed",
+  "bundle-not-found": "failing",
+  "executable-not-found": "failing",
+  "terminal-not-found": "failing",
+  "bundle-check-unavailable": "unknown",
   ...SHARED_REASON_STATUS,
 } as const satisfies Record<LaunchersReason, SubsystemStatus>;
 
 // ---------------------------------------------------------------------------
-// Row building blocks (typed values only; no free text)
+// Setup actions (closed, D-08, D-39): the service sends ids, the plugin owns the text
+
+/** Existing owner-run scripts the plugin can copy. The service never sends command text. */
+export const SETUP_COMMAND_IDS = [
+  "claude-hooks-install",
+  "codex-hooks-install",
+  "codex-bridge-install",
+  "research-key-setup",
+] as const;
+export type SetupCommandId = (typeof SETUP_COMMAND_IDS)[number];
+
+/** The Settings destination's sections, in nav order (UI-SPEC S1); the ids are the deep-link keys. */
+export const SETTINGS_SECTION_IDS = [
+  "projects",
+  "launchers",
+  "integrations",
+  "approvals-tasks",
+  "paths",
+  "visual",
+  "security",
+  "schedules",
+  "diagnostics",
+] as const;
+export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
+
+/** Existing plugin commands a setup action may run. Each carries its own confirm modal or gesture rule. */
+export const SETUP_PLUGIN_COMMAND_IDS = ["vault-setup"] as const;
+
+export const SetupActionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("copy-command"), command: z.enum(SETUP_COMMAND_IDS) }),
+  z.strictObject({
+    kind: z.literal("go-to-section"),
+    section: z.enum([...SETTINGS_SECTION_IDS, "research"]),
+  }),
+  z.strictObject({
+    kind: z.literal("run-plugin-command"),
+    command: z.enum(SETUP_PLUGIN_COMMAND_IDS),
+  }),
+]);
+export type SetupAction = z.infer<typeof SetupActionSchema>;
+
+// ---------------------------------------------------------------------------
+// Typed values a reason sentence can interpolate (no free text)
 
 const IsoInstantSchema = z.iso.datetime({ offset: true });
 
@@ -138,6 +458,23 @@ const DOTTED_VERSION_PATTERN = /^\d+(?:\.\d+){1,3}(?:-[A-Za-z0-9.]{1,32})?$/;
 const DottedVersionSchema = z.string().max(64).regex(DOTTED_VERSION_PATTERN, {
   message: "must be a dotted version",
 });
+
+/**
+ * The only values a reason sentence may interpolate: versions, a count, an
+ * instant and a threshold. A member that is not listed here cannot cross the
+ * wire, so a path, a message or a log line has nowhere to go.
+ */
+export const HealthFactsSchema = z.strictObject({
+  claudeVersion: DottedVersionSchema.exactOptional(),
+  minimumVersion: DottedVersionSchema.exactOptional(),
+  dropCount: z.int().nonnegative().exactOptional(),
+  dropsSince: IsoInstantSchema.exactOptional(),
+  silenceThresholdMs: z.int().positive().exactOptional(),
+  sourceCount: z.int().nonnegative().exactOptional(),
+  lastSuccessAt: IsoInstantSchema.exactOptional(),
+  lastFailureAt: IsoInstantSchema.exactOptional(),
+});
+export type HealthFacts = z.infer<typeof HealthFactsSchema>;
 
 function hasControlCharacter(value: string): boolean {
   for (let i = 0; i < value.length; i += 1) {
@@ -159,15 +496,57 @@ const DisplayPathStringSchema = z
     (value) =>
       !hasControlCharacter(value) &&
       (value === "~" || value.startsWith("~/") || value.startsWith("…/")),
-    {
-      message: "must be a display path, never an absolute path",
-    },
+    { message: "must be a display path, never an absolute path" },
   );
 
-function statusMatchesReason<T extends { status: SubsystemStatus; reasonCode: string }>(
+// ---------------------------------------------------------------------------
+// Rows and parts
+
+interface PartLike {
+  readonly status: SubsystemStatus;
+  readonly reasonCode: string;
+}
+
+function statusMatchesReason(
   table: Readonly<Record<string, SubsystemStatus>>,
-): (row: T) => boolean {
-  return (row) => table[row.reasonCode] === row.status;
+): (value: PartLike) => boolean {
+  return (value) => table[value.reasonCode] === value.status;
+}
+
+/** A part's status is its own reason's status and its reason must belong to that part. */
+function partSchema<Id extends string, R extends readonly [string, ...string[]]>(
+  partId: Id,
+  reasons: R,
+  table: Readonly<Record<string, SubsystemStatus>>,
+) {
+  return z
+    .strictObject({
+      partId: z.literal(partId),
+      status: SubsystemStatusSchema,
+      reasonCode: z.enum(reasons),
+      setupAction: SetupActionSchema.exactOptional(),
+      facts: HealthFactsSchema.exactOptional(),
+    })
+    .refine(statusMatchesReason(table), {
+      message: "status must equal the status of the reason code",
+      path: ["status"],
+    });
+}
+
+/**
+ * A row made of parts: the status is the roll-up of its parts and the reason is
+ * the deciding part's. A row with no parts (a probe that timed out, or a
+ * tracer) carries any of the row's reasons and its own status.
+ */
+function rowWithPartsRefinement(row: {
+  status: SubsystemStatus;
+  reasonCode: string;
+  parts?: readonly PartLike[] | undefined;
+}): boolean {
+  const parts = row.parts;
+  if (parts === undefined) return true;
+  if (row.status !== rollupStatus(parts.map((part) => part.status))) return false;
+  return parts.some((part) => part.status === row.status && part.reasonCode === row.reasonCode);
 }
 
 function serviceSideRow<Id extends string, R extends readonly [string, ...string[]]>(
@@ -182,6 +561,8 @@ function serviceSideRow<Id extends string, R extends readonly [string, ...string
       reasonCode: z.enum(reasons),
       checkedAt: IsoInstantSchema,
       freshness: FreshnessSchema,
+      setupAction: SetupActionSchema.exactOptional(),
+      facts: HealthFactsSchema.exactOptional(),
     })
     .refine(statusMatchesReason(table), {
       message: "status must equal the status of the reason code",
@@ -189,22 +570,95 @@ function serviceSideRow<Id extends string, R extends readonly [string, ...string
     });
 }
 
+function serviceSideRowWithParts<
+  Id extends string,
+  R extends readonly [string, ...string[]],
+  P extends z.ZodType<readonly PartLike[]>,
+>(id: Id, reasons: R, table: Readonly<Record<string, SubsystemStatus>>, parts: P) {
+  return z
+    .strictObject({
+      id: z.literal(id),
+      status: SubsystemStatusSchema,
+      reasonCode: z.enum(reasons),
+      checkedAt: IsoInstantSchema,
+      freshness: FreshnessSchema,
+      parts: parts.exactOptional(),
+      setupAction: SetupActionSchema.exactOptional(),
+      facts: HealthFactsSchema.exactOptional(),
+    })
+    .refine(statusMatchesReason(table), {
+      message: "status must equal the status of the reason code",
+      path: ["status"],
+    })
+    .refine(rowWithPartsRefinement, {
+      message: "status must equal the roll-up of the parts and the reason must be a part's",
+      path: ["parts"],
+    });
+}
+
 export const VaultRowSchema = serviceSideRow("vault", VAULT_REASONS, VAULT_REASON_STATUS);
 export const HooksRowSchema = serviceSideRow("hooks", HOOKS_REASONS, HOOKS_REASON_STATUS);
-export const CollectorsRowSchema = serviceSideRow(
+
+const collectorPart = <Id extends CollectorsPartId>(id: Id) =>
+  partSchema(id, COLLECTORS_PART_REASONS[id], COLLECTORS_REASON_STATUS);
+
+/** The eight collectors parts, exactly, in the fixed order. */
+export const CollectorsPartsSchema = z.tuple([
+  collectorPart("telemetry"),
+  collectorPart("status-line"),
+  collectorPart("transcript-analysis"),
+  collectorPart("spool"),
+  collectorPart("codex-install"),
+  collectorPart("codex-hooks"),
+  collectorPart("codex-bridge"),
+  collectorPart("codex-doctor"),
+]);
+export const CollectorsRowSchema = serviceSideRowWithParts(
   "collectors",
   COLLECTORS_REASONS,
   COLLECTORS_REASON_STATUS,
+  CollectorsPartsSchema,
 );
-export const SchedulerRowSchema = serviceSideRow(
+
+const schedulerPart = <Id extends SchedulerPartId>(id: Id) =>
+  partSchema(id, SCHEDULER_PART_REASONS[id], SCHEDULER_REASON_STATUS);
+
+export const SchedulerPartsSchema = z.tuple([
+  schedulerPart("last-run"),
+  schedulerPart("research-key"),
+  schedulerPart("sources"),
+]);
+export const SchedulerRowSchema = serviceSideRowWithParts(
   "scheduler",
   SCHEDULER_REASONS,
   SCHEDULER_REASON_STATUS,
+  SchedulerPartsSchema,
 );
-export const LaunchersRowSchema = serviceSideRow(
+
+const launcherPart = <Id extends LauncherPartId>(id: Id) =>
+  partSchema(id, LAUNCHERS_REASONS, LAUNCHERS_REASON_STATUS);
+
+/** Four launchers, or five when a custom terminal is chosen (always last). */
+export const LauncherPartsSchema = z.union([
+  z.tuple([
+    launcherPart("antigravity"),
+    launcherPart("claude-code"),
+    launcherPart("claude-desktop"),
+    launcherPart("codex"),
+  ]),
+  z.tuple([
+    launcherPart("antigravity"),
+    launcherPart("claude-code"),
+    launcherPart("claude-desktop"),
+    launcherPart("codex"),
+    launcherPart("terminal"),
+  ]),
+]);
+export const LaunchersRowSchema = serviceSideRowWithParts(
   "launchers",
   LAUNCHERS_REASONS,
   LAUNCHERS_REASON_STATUS,
+  LauncherPartsSchema,
 );
 
 /** The companion service row, computed by the plugin from its connection state (D-03, D-43). */
@@ -227,6 +681,21 @@ export const ServiceRowSchema = z
 /** Whether a Keychain item exists. Presence only, never the value (D-17, D-38). */
 export const KEYCHAIN_PRESENCES = ["present", "absent", "unknown"] as const;
 export const KeychainPresenceSchema = z.enum(KEYCHAIN_PRESENCES);
+
+/**
+ * The salted fingerprint of the managed vault path (D-36). Both sides hash the
+ * input `salt + ":" + path` (the service with `node:crypto`, the plugin with
+ * WebCrypto) and compare the first 16 lowercase hex characters of the SHA-256
+ * digest; the path itself never crosses the wire and the fingerprint never
+ * enters the bundle. The domain fixes the format only: hashing needs Node or
+ * WebCrypto, which this Node-free file does not import.
+ */
+export const VaultFingerprintSchema = z
+  .strictObject({
+    salt: z.string().regex(/^[0-9a-f]{32}$/),
+    digest: z.string().regex(/^[0-9a-f]{16}$/),
+  })
+  .nullable();
 
 const CountSchema = z.int().nonnegative().nullable();
 
@@ -254,7 +723,7 @@ export const DiagnosticsHealthResponseSchema = z.strictObject({
     runtimeDir: DisplayPathStringSchema,
     socket: DisplayPathStringSchema,
   }),
-  vaultFingerprint: z.null(),
+  vaultFingerprint: VaultFingerprintSchema,
   counts: z.strictObject({
     projects: CountSchema,
     scanFolders: CountSchema,
@@ -263,6 +732,79 @@ export const DiagnosticsHealthResponseSchema = z.strictObject({
   }),
 });
 export type DiagnosticsHealthResponse = z.infer<typeof DiagnosticsHealthResponseSchema>;
+export type ServiceSideRow = DiagnosticsHealthResponse["rows"][number];
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/**
+ * What a probe returns: a row without `checkedAt` and `freshness`, which the
+ * service's probe runner adds (it knows whether this request ran the probe,
+ * the single-flight cache answered, or the cap fired).
+ */
+export type ProbeOutcome = DistributiveOmit<ServiceSideRow, "checkedAt" | "freshness">;
+
+// ---------------------------------------------------------------------------
+// Errors (the plugin owns the copy; no body carries a message or a path)
+
+export const DIAGNOSTICS_ERROR_CODES = [
+  "service-disconnected",
+  "timeout",
+  "internal",
+  "unrecognised-response",
+] as const;
+export type DiagnosticsErrorCode = (typeof DIAGNOSTICS_ERROR_CODES)[number];
+export const DiagnosticsErrorCodeSchema = z.enum(DIAGNOSTICS_ERROR_CODES);
+
+/** A closed code and nothing else. A body with another code or an extra key is not a diagnostics error. */
+export const DiagnosticsErrorBodySchema = z.strictObject({ error: DiagnosticsErrorCodeSchema });
+export type DiagnosticsErrorBody = z.infer<typeof DiagnosticsErrorBodySchema>;
+
+// ---------------------------------------------------------------------------
+// Display
+
+/**
+ * The single display map for a subsystem status (UI-SPEC "Vocabulary and
+ * glyphs"): read by the Diagnostics view, the Security section's keychain rows
+ * and the tests. Status is never colour alone: glyph, word and meaning.
+ *
+ * Plugin copy note (UI-SPEC R-note, for 08-13): the `ok` word for a reachable
+ * but idle companion service is `Running` and for a Keychain presence chip is
+ * `Present`; those are copy overrides in the plugin. This map stays at the five
+ * words so the bundle and the tests share one vocabulary.
+ */
+export const SUBSYSTEM_STATUS_DISPLAY = {
+  ok: { word: "Working", glyph: "✓", meaning: "Checked and behaving as expected." },
+  "setup-needed": {
+    word: "Needs setup",
+    glyph: "⊕",
+    meaning: "Not set up yet. Nothing is wrong; the next step is shown.",
+  },
+  degraded: {
+    word: "Degraded",
+    glyph: "▽",
+    meaning: "Working, but with a problem that reduces what you see.",
+  },
+  failing: {
+    word: "Failing",
+    glyph: "✕",
+    meaning: "Not working. The reason and the fix are shown.",
+  },
+  unknown: {
+    word: "Unknown",
+    glyph: "?",
+    meaning: "Couldn't be checked, or no evidence yet. Never assumed working.",
+  },
+} as const satisfies Record<
+  SubsystemStatus,
+  { readonly word: string; readonly glyph: string; readonly meaning: string }
+>;
+
+/**
+ * The static scope tag for Gmail, Google Calendar and GitHub (OD-2, D-48). It is
+ * not a {@link SubsystemStatus}: those rows have no check time, no freshness and
+ * no action, and are excluded from the summary and from the bundle.
+ */
+export const NOT_IN_VERSION_GLYPH = "∅";
 
 // ---------------------------------------------------------------------------
 // Summary
