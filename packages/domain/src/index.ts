@@ -14,6 +14,8 @@ export * from "./codex-api.js";
 export * from "./codex-integration.js";
 export * from "./codex-sessions.js";
 export * from "./codex-usage.js";
+export * from "./diagnostic-bundle.js";
+export * from "./diagnostic-corpus.js";
 export * from "./diagnostics.js";
 export * from "./display-path.js";
 export * from "./events.js";

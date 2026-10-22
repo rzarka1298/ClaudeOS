@@ -35,11 +35,11 @@ function gate(source: string, script?: string) {
   return repo.run(SCRIPT);
 }
 
-/** The real script with the whole rule 17 block cut out, up to the closing count lines. */
+/** The real script with the whole rule 17 block cut out, up to the rule 18 block (plan 08-08 added it after rule 17). */
 function scriptWithoutRule17(): string {
   const script = readFileSync(join(REPO_ROOT, SCRIPT), "utf8");
   const start = script.indexOf("# --- Rule 17:");
-  const end = script.indexOf("FILE_COUNT=$(", start);
+  const end = script.indexOf("# --- Rule 18:", start);
   expect(start, "rule 17 block start").toBeGreaterThan(-1);
   expect(end, "rule 17 block end").toBeGreaterThan(start);
   return script.slice(0, start) + script.slice(end);
@@ -71,7 +71,7 @@ describe("07-02 truth 3 (backstop): each planted name is caught by rule 17 and b
     const result = gate("export const ok = 1;\n", without);
     expect(result.status).toBe(0);
     // Built from parts: the wiring audit pins the rule count in one test file only.
-    expect(result.out).toContain(["checked", "16", "rules"].join(" "));
+    expect(result.out).toContain(["checked", "17", "rules"].join(" "));
   });
 
   for (const [name, source] of EVERY_NAME) {
@@ -200,7 +200,7 @@ describe("07-02 truth 7: ADR-0014 records the three layers and their fire-provin
   });
 
   it("lists every name the script's rule 17 pattern contains, and quotes its description", () => {
-    const block = script.slice(script.indexOf("# --- Rule 17:"), script.indexOf("FILE_COUNT=$("));
+    const block = script.slice(script.indexOf("# --- Rule 17:"), script.indexOf("# --- Rule 18:"));
     for (const name of [
       "node:",
       "child_process",

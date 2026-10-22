@@ -28,6 +28,7 @@ import { CLIENT_RESPONSE_CAP_BYTES } from "./approval-wiring/types.js";
 import { mintToken } from "./auth/token.js";
 import { claudeRouteTable } from "./claude/routes.js";
 import { CODEX_SNAPSHOT_BUDGET_BYTES, codexRouteTable, codexSnapshotFor } from "./codex/routes.js";
+import { diagnosticsRoutes } from "./diagnostics/routes.js";
 import { createEventStreamHandler } from "./events/event-stream-route.js";
 import { logger } from "./logging.js";
 import type { PathNotAllowedError } from "./path-allowlist.js";
@@ -358,6 +359,8 @@ const routeTable: Record<string, Record<string, Handler>> = {
   ...codexRouteTable,
   // Phase 7 (append-only, D-23): the research routes, spread after the Codex routes.
   ...researchRoutes,
+  // Phase 8 (append-only, D-02): the diagnostics health route, spread after the research routes.
+  ...diagnosticsRoutes,
 };
 
 /**

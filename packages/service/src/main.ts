@@ -10,6 +10,7 @@ import {
   listLauncherConfigs,
   listProjects,
   openStore,
+  readSchemaVersion,
 } from "@ccc/operational-store";
 import { createProposeForceTerminate } from "./approval-wiring/proposer.js";
 import { createProcessNamer, createRunInspector } from "./approval-wiring/run-inspector.js";
@@ -24,6 +25,7 @@ import {
   createCodexDetection,
 } from "./codex/detection.js";
 import { type CodexServices, startCodexServices } from "./codex/services.js";
+import { createDiagnosticsServices } from "./diagnostics/services.js";
 import { createEventBus } from "./events/event-bus.js";
 // The composition root is the ONLY importer of the executors folder (APPR-01,
 // T-06-02): effect code is reachable only through the engine's definitions.
@@ -60,6 +62,9 @@ import { createShutdown } from "./shutdown.js";
 import { claimSocketPath, logSocketClaimRefusal, startSocketServer } from "./socket-server.js";
 import { createTaskServices } from "./tasks/task-service.js";
 import { registerPersistedVaultRoot } from "./vault-root.js";
+
+/** The service version both the Phase 1 health route and the diagnostics route answer. */
+const SERVICE_VERSION = "0.1.0";
 
 /**
  * Composition root: resolves the runtime directory and socket/db paths,
@@ -114,7 +119,7 @@ async function main(): Promise<void> {
   // reading package.json at runtime (a JSON import under NodeNext module
   // resolution is an unnecessary wrinkle for Phase 1); a later phase can
   // thread the real build-time version through if it becomes load-bearing.
-  store.writeServiceMeta("service_version", "0.1.0");
+  store.writeServiceMeta("service_version", SERVICE_VERSION);
 
   // Restart recovery, then the spool drain, both before the socket begins
   // accepting connections: a Run's pre-recovery state and a spool record
@@ -427,6 +432,22 @@ async function main(): Promise<void> {
   // flight to stale and an instance that lost the bind must never do that to a live run.
   const researchSlot = createResearchRouteSlot();
 
+  // Phase 8 (plan 08-07, D-02, D-04): the diagnostics health services, built from narrow ports.
+  // The vault port reads the persisted root; the hooks, collectors, scheduler and launchers ports
+  // are wired by plan 08-12, so those rows read `subsystem-not-wired` until then.
+  const diagnostics = createDiagnosticsServices({
+    vault: { readRoot: readVaultRoot },
+    serviceFacts: {
+      version: SERVICE_VERSION,
+      startedAt,
+      storeSchemaVersion: () => readSchemaVersion(store.db),
+      homeDir,
+      runtimeDir,
+      socketPath,
+    },
+    now: () => new Date(),
+  });
+
   const requestListener = createRequestListener({
     store,
     getSecret: () => installSecret,
@@ -450,6 +471,7 @@ async function main(): Promise<void> {
       });
     },
     research: researchSlot.services,
+    diagnostics,
     tasks: {
       create: (request) => taskHost.create(request),
       list: (request) => taskHost.list(request),

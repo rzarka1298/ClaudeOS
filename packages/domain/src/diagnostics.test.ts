@@ -619,6 +619,17 @@ describe("Task 2 Test 6 (no free text)", () => {
     (c.keychain as Record<string, unknown>).researchKey = "sk-ant-secret";
     expect(DiagnosticsHealthResponseSchema.safeParse(c).success).toBe(false);
   });
+
+  it("admits a null store schema version (08-07: an empty table is unknown, never zero) and nothing but an integer or null", () => {
+    const ok = freshInstall();
+    (ok.service as Record<string, unknown>).storeSchemaVersion = null;
+    expect(DiagnosticsHealthResponseSchema.safeParse(ok).success).toBe(true);
+    for (const bad of [-1, 1.5, "12", undefined]) {
+      const r = freshInstall();
+      (r.service as Record<string, unknown>).storeSchemaVersion = bad;
+      expect(DiagnosticsHealthResponseSchema.safeParse(r).success, String(bad)).toBe(false);
+    }
+  });
 });
 
 describe("Task 2 Test 6b (vault fingerprint, D-36)", () => {

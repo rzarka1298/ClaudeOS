@@ -27,21 +27,21 @@ describe("test-fixtures dependency links stay inside the lockfile (05.1-04)", ()
 describe("backstop rule inventory (05.1-05)", () => {
   const script = readFileSync(join(REPO_ROOT, "scripts/check-boundaries.sh"), "utf8");
 
-  it("lists rules 1 to 17 contiguously in the header", () => {
+  it("lists rules 1 to 18 contiguously in the header", () => {
     const header = script.split("\n").filter((l) => l.startsWith("#"));
     const numbers = header.flatMap((l) => {
       const m = /^#\s{1,3}(\d+)\. /.exec(l);
       return m?.[1] ? [Number(m[1])] : [];
     });
-    expect(numbers).toEqual(Array.from({ length: 17 }, (_, i) => i + 1));
+    expect(numbers).toEqual(Array.from({ length: 18 }, (_, i) => i + 1));
   });
 
-  it("pins the rule count of seventeen in exactly one test file", () => {
+  it("pins the rule count of eighteen in exactly one test file", () => {
     const dir = join(REPO_ROOT, "packages/test-fixtures/src");
     const hits = readdirSync(dir)
       .filter((f) => f.endsWith(".test.ts") && !f.includes("phase051-wiring"))
       .filter((f) => /checked \d+ rules/.test(readFileSync(join(dir, f), "utf8")));
     expect(hits).toEqual(["check-boundaries-rules.test.ts"]);
-    expect(readFileSync(join(dir, hits[0] ?? ""), "utf8")).toContain("checked 17 rules");
+    expect(readFileSync(join(dir, hits[0] ?? ""), "utf8")).toContain("checked 18 rules");
   });
 });

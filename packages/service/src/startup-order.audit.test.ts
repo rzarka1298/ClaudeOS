@@ -37,6 +37,8 @@ describe("main.ts startup order (D-22)", () => {
     // Plan 07-14: the listener holds a late-bound research slot; the research services are built
     // only after the socket is bound (an instance that lost the bind must never sweep a live run).
     "createResearchRouteSlot()",
+    // Plan 08-07: the diagnostics services are built from narrow ports before the listener.
+    "createDiagnosticsServices({",
     "createRequestListener({",
     "await startSocketServer({",
     "createResearchServices({",

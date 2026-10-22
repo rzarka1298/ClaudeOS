@@ -5,6 +5,7 @@ import type { ApprovalServices } from "./approval-wiring/types.js";
 import { requireToken } from "./auth/require-token.js";
 import type { ClaudeRouteDeps } from "./claude/routes.js";
 import type { CodexRouteDeps } from "./codex/routes.js";
+import type { DiagnosticsServices } from "./diagnostics/services.js";
 import type { EventBus } from "./events/event-bus.js";
 import type { LaunchService } from "./projects/launch-service.js";
 import type { LauncherServices } from "./projects/launcher-routes.js";
@@ -63,6 +64,11 @@ export interface RouteContext {
    * the optional `codex` member.
    */
   readonly codex?: CodexRouteDeps | undefined;
+  /**
+   * The diagnostics health services (Phase 8, D-02), appended after the Codex members. Absent:
+   * the health route answers the closed 503 `service-disconnected` body.
+   */
+  readonly diagnostics?: DiagnosticsServices | undefined;
   /**
    * Called after a vault setup has succeeded and the root is persisted (also on an idempotent
    * repeat). The task index is built from the vault root, which a fresh install does not have at
