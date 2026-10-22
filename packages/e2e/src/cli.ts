@@ -16,6 +16,7 @@ import { buildHash } from "./build-hash.js";
 import { realCacheFiles, verifyObsidianCache } from "./cache-verify.js";
 import {
   LOOK_USAGE,
+  parseAuditArgs,
   parseLintArgs,
   parseLookArgs,
   parsePreflightArgs,
@@ -62,6 +63,7 @@ import {
 } from "./screenshots.js";
 import { SPIKE_DECISIONS } from "./spike-decisions.js";
 import { extractSpecTitles } from "./tag-lint.js";
+import { runAuditCommand } from "./uat-audit.js";
 import { generateUatVault } from "./uat-vault.js";
 import { isolatePluginData } from "./vault-plugin-data.js";
 import { parseVersions } from "./versions.js";
@@ -113,6 +115,7 @@ export const USAGE = [
   "  report     write the run's final auto-results into a UAT script",
   "  ratify     ratify a finished run (the orchestrator, with the owner's statement)",
   "  lint-tags  check the tags of a UAT script against the specs",
+  "  audit      check that every milestone-1 phase has a recorded live-UAT result",
 ].join("\n");
 
 function readText(path: string): string | null {
@@ -446,6 +449,29 @@ const lintTagsHandler: CommandHandler = async (argv, deps) => {
   return result.exitCode;
 };
 
+const auditHandler: CommandHandler = async (argv, deps) => {
+  const args = parseAuditArgs(argv);
+  const io = ioFor(deps);
+  return runAuditCommand(
+    args,
+    {
+      readText: io.readText,
+      writeText: io.writeText,
+      listFiles: io.listFiles,
+      exists: (path) => existsSync(path),
+      now: io.now,
+      gitHead: async () => {
+        try {
+          return (await io.readGitFacts(undefined)).head;
+        } catch {
+          return "unknown";
+        }
+      },
+    },
+    deps.write,
+  );
+};
+
 export const COMMANDS: Readonly<Record<string, CommandHandler>> = {
   run: runCommand,
   preflight: preflightCommand,
@@ -453,6 +479,7 @@ export const COMMANDS: Readonly<Record<string, CommandHandler>> = {
   report: reportCommand,
   ratify: ratifyCommand,
   "lint-tags": lintTagsHandler,
+  audit: auditHandler,
 };
 
 export async function main(argv: readonly string[], deps: CliDeps = {}): Promise<number> {

@@ -13,7 +13,8 @@
     "uat:preflight": "node dist/cli.js preflight",
     "uat:look": "node dist/cli.js look",
     "uat:report": "node dist/cli.js report",
-    "uat:lint": "node dist/cli.js lint-tags"
+    "uat:lint": "node dist/cli.js lint-tags",
+    "uat:audit": "node dist/cli.js audit"
   },
   "dependencies": {
     "@ccc/domain": "workspace:*",

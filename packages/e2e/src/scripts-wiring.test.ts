@@ -14,7 +14,15 @@ const root = readJson<Manifest>("../../../package.json");
 const scripts = pkg.scripts ?? {};
 const rootScripts = root.scripts ?? {};
 
-const UAT_FAMILY = ["uat", "uat:smoke", "uat:preflight", "uat:look", "uat:report", "uat:lint"];
+const UAT_FAMILY = [
+  "uat",
+  "uat:smoke",
+  "uat:preflight",
+  "uat:look",
+  "uat:report",
+  "uat:lint",
+  "uat:audit",
+];
 
 describe("e2e scripts stay outside CI (D-03)", () => {
   it("declares the uat family plus build, typecheck, test and lint", () => {

@@ -19,9 +19,9 @@ const OUTCOME: RunOutcome = {
 };
 
 describe("cli command table (Test 9)", () => {
-  it("holds run, preflight, look, report, ratify and lint-tags", () => {
+  it("holds run, preflight, look, report, ratify, lint-tags and audit", () => {
     expect(Object.keys(COMMANDS).sort()).toEqual(
-      ["lint-tags", "look", "preflight", "ratify", "report", "run"].sort(),
+      ["audit", "lint-tags", "look", "preflight", "ratify", "report", "run"].sort(),
     );
   });
 

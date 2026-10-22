@@ -276,3 +276,44 @@ export function parseLintArgs(argv: readonly string[]): LintArgs {
   });
   return { script: requireText(values, "script"), specsDir: requireText(values, "specs-dir") };
 }
+
+export interface AuditArgs {
+  phasesDir: string | undefined;
+  out: string | undefined;
+  strict: boolean;
+  only: string[] | undefined;
+}
+
+const PHASE_ID_FORM = /^\d{2}(?:\.\d)?$/;
+
+/**
+ * `audit [--phases-dir <dir>] [--out <file>] [--strict] [--only <ids>]` (plan 08-06). `--only` is a
+ * test-only filter: a comma list of phase ids such as `02,05.1,07`. Nothing is echoed back.
+ */
+export function parseAuditArgs(argv: readonly string[]): AuditArgs {
+  const values = parseStrict(argv, {
+    "phases-dir": { type: "string" },
+    out: { type: "string" },
+    strict: { type: "boolean" },
+    only: { type: "string" },
+  });
+  for (const flag of ["phases-dir", "out", "only"]) {
+    if (flag in values && optionalText(values, flag) === undefined) {
+      throw new UsageError(`--${flag} needs a value.`);
+    }
+  }
+  const onlyText = optionalText(values, "only");
+  let only: string[] | undefined;
+  if (onlyText !== undefined) {
+    only = onlyText.split(",");
+    if (only.some((id) => !PHASE_ID_FORM.test(id))) {
+      throw new UsageError("--only must be a comma list of phase numbers such as 02,05.1,07.");
+    }
+  }
+  return {
+    phasesDir: optionalText(values, "phases-dir"),
+    out: optionalText(values, "out"),
+    strict: values.strict === true,
+    only,
+  };
+}
