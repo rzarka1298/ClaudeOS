@@ -191,10 +191,10 @@ export function SettingsDestination({
   // identical to the one on the line would be silent. It is cleared first and set again after a
   // beat: the gap has to cross a task (and a frame), because two DOM changes made in one task
   // reach assistive technology as no change at all.
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timerRef = useRef<number | null>(null);
   const cancelPending = useCallback((): void => {
     epochRef.current += 1;
-    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = null;
   }, []);
   useEffect(() => cancelPending, [cancelPending]);
@@ -206,7 +206,7 @@ export function SettingsDestination({
         const epoch = epochRef.current;
         shownRef.current = "";
         setStatus("");
-        timerRef.current = setTimeout(() => {
+        timerRef.current = window.setTimeout(() => {
           if (epochRef.current !== epoch) return;
           timerRef.current = null;
           shownRef.current = message;

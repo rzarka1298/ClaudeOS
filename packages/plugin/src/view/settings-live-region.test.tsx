@@ -151,7 +151,7 @@ describe("M1: exactly one live region in the Settings destination", () => {
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
     fireEvent.input(screen.getByLabelText("Folder path"), {
-      target: { value: "/Users/example/code/demo" },
+      target: { value: "/Users/USERNAME/code/demo" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
     await settle();
@@ -169,7 +169,7 @@ describe("M1: register, scan and launcher outcomes are announced once", () => {
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
     fireEvent.input(screen.getByLabelText("Folder path"), {
-      target: { value: "/Users/example/code/demo" },
+      target: { value: "/Users/USERNAME/code/demo" },
     });
     const watch = watchStatus();
     fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
@@ -190,7 +190,7 @@ describe("M1: register, scan and launcher outcomes are announced once", () => {
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Type a path instead for a scan folder" }));
     fireEvent.input(screen.getByLabelText("Folder path"), {
-      target: { value: "/Users/example/code" },
+      target: { value: "/Users/USERNAME/code" },
     });
     const watch = watchStatus();
     fireEvent.click(screen.getByRole("button", { name: "Add scan folder" }));
@@ -285,7 +285,7 @@ describe("m1: the status line clears on a section change and a repeat is announc
     fireEvent.click(toggle);
     await settle();
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
     });
     watch.stop();
     // The same words again: the line went empty first, so a screen reader hears them anew.

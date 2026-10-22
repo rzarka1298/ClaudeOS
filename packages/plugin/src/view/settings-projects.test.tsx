@@ -157,13 +157,13 @@ describe("Task 2: Projects in Settings, with the register flow, scan folders and
 
     fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
     fireEvent.input(screen.getByLabelText("Folder path"), {
-      target: { value: "/Users/example/code/demo" },
+      target: { value: "/Users/USERNAME/code/demo" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
     await settle();
 
     expect(register).toHaveBeenCalledTimes(1);
-    expect(register).toHaveBeenCalledWith("/Users/example/code/demo");
+    expect(register).toHaveBeenCalledWith("/Users/USERNAME/code/demo");
     // FIX2B M1: the flow's own words reach the one status line; there is no second message.
     expect(statusLine()).toBe("Registered demo.");
 
@@ -225,7 +225,7 @@ describe("Task 2: Projects in Settings, with the register flow, scan folders and
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
     fireEvent.input(screen.getByLabelText("Folder path"), {
-      target: { value: "/Users/example/code/demo" },
+      target: { value: "/Users/USERNAME/code/demo" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Register folder" }));
     await settle();
@@ -299,7 +299,7 @@ describe("Task 2: Projects in Settings, with the register flow, scan folders and
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Type a path instead" }));
     fireEvent.input(screen.getByLabelText("Folder path"), {
-      target: { value: "/Users/example/code/demo" },
+      target: { value: "/Users/USERNAME/code/demo" },
     });
     view.rerender(
       <SettingsDestination

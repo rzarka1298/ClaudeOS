@@ -578,7 +578,7 @@ export class Plugin extends StubPlugin {
         getName: () => "Test vault",
         getFileByPath: () => null,
         getFolderByPath: () => null,
-        configDir: ".obsidian",
+        configDir: "test-config",
         adapter: {
           stat: () => Promise.resolve(null),
           read: () => Promise.reject(new Error("no such file")),

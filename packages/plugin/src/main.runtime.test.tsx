@@ -79,7 +79,7 @@ describe("main.ts onload builds ONE SettingsHost (plan 08-11, D-15; FIX2B m8)", 
     const factory = plugin.registrations.views.get(VIEW_TYPE);
     expect(factory).toBeDefined();
     const leaf = stubLeaf();
-    const view = (factory as (leaf: never) => unknown)(leaf as unknown as WorkspaceLeaf & never);
+    const view = (factory as (leaf: WorkspaceLeaf) => unknown)(leaf as unknown as WorkspaceLeaf);
     expect(view).toBeInstanceOf(CommandCenterView);
     requestDestination("settings");
     await act(async () => {
@@ -177,7 +177,7 @@ describe("what reaches data.json (plan 08-11, T-08-28; FIX2B m8)", () => {
     const host = plugin.settingsHost;
     if (host === undefined) throw new Error("no host");
 
-    (host.settings as unknown as Record<string, unknown>).homeDir = "/Users/example";
+    (host.settings as unknown as Record<string, unknown>).homeDir = "/Users/USERNAME";
     await expect(host.saveSettings()).rejects.toThrow();
     expect(plugin.saved).toHaveLength(0);
   });
