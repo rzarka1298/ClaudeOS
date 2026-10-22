@@ -96,19 +96,20 @@ describe("parseRunArgs (Test 1)", () => {
 });
 
 describe("parseAuditArgs (plan 08-06)", () => {
-  it("defaults to no folder, no output, not strict and no filter", () => {
+  it("defaults to no folder, no output and not strict", () => {
     expect(parseAuditArgs([])).toEqual({
       phasesDir: undefined,
       out: undefined,
       strict: false,
-      only: undefined,
     });
   });
 
-  it("reads --phases-dir, --out, --strict and a comma list for --only", () => {
-    expect(
-      parseAuditArgs(["--phases-dir", "/a", "--out", "/b.md", "--strict", "--only", "02,05.1,07"]),
-    ).toEqual({ phasesDir: "/a", out: "/b.md", strict: true, only: ["02", "05.1", "07"] });
+  it("reads --phases-dir, --out and --strict", () => {
+    expect(parseAuditArgs(["--phases-dir", "/a", "--out", "/b.md", "--strict"])).toEqual({
+      phasesDir: "/a",
+      out: "/b.md",
+      strict: true,
+    });
   });
 
   it("refuses unknown flags, positionals, empty values and a malformed --only without echoing values", () => {
@@ -122,10 +123,11 @@ describe("parseAuditArgs (plan 08-06)", () => {
     };
     expect(refuse(["--nope"])).toContain("--nope");
     expect(refuse(["stray"])).toContain("positional");
+    // --only is not a production flag (FIX1B B-M1): any spelling is an unknown option.
     expect(refuse(["--only", "02,;rm"])).toContain("--only");
     expect(refuse(["--only", "02,;rm"])).not.toContain("rm");
+    expect(refuse(["--only=02"])).toContain("--only");
     expect(refuse(["--only", ""])).toContain("--only");
-    expect(refuse(["--only", "2"])).toContain("--only");
     expect(refuse(["--phases-dir", ""])).toContain("--phases-dir");
   });
 });

@@ -1,7 +1,11 @@
+import { statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { canonicalPath, isSameOrInside } from "./canonical-path.js";
 import { type AuditArgs, UsageError } from "./cli-args.js";
 import { REPO_ROOT } from "./repo-paths.js";
-import { AUTO_RESULT_PATTERN, parseUatScript } from "./uat-tags.js";
+import { specMapForPhase } from "./spec-map.js";
+import { AUTO_RESULT_PATTERN, parseUatScript, type TagFinding } from "./uat-tags.js";
 
 /**
  * The SLICE-02 audit (plan 08-06, D-24, D-25, D-29): one command that reads every milestone-1
@@ -147,11 +151,24 @@ export interface AuditInput {
   readonly phasesDir: string;
   readonly readText: (path: string) => string | null;
   readonly listDir: (dir: string) => string[];
-  /** A test-only filter of phase ids. */
+  /** A test-only filter of phase ids. The command line has no such flag (FIX1B B-M1). */
   readonly only?: readonly string[] | undefined;
+  /**
+   * The item count each phase's script must have. Defaults to the spec map's count for phases 06,
+   * 07 and 08 (FIX1B B-M2 b); tests with miniature fixtures override it.
+   */
+  readonly expectedItems?: Readonly<Record<string, number>> | undefined;
+}
+
+/** Test-only seams of {@link runAuditCommand}; the production parser reaches none of them. */
+export interface AuditTestHooks {
+  readonly only?: readonly string[] | undefined;
+  readonly expectedItems?: Readonly<Record<string, number>> | undefined;
 }
 
 const OD7 = "OD-7";
+/** The record this module writes; it is never listed as an unregistered UAT file. */
+const RECORD_NAME = "08-UAT-AUDIT.md";
 
 function emptyOutput(): AdapterOutput {
   return {
@@ -184,9 +201,16 @@ interface AdapterContext {
   readonly texts: readonly string[];
   /** Run ids whose automated results the owner (or the standing authorization) ratified. */
   readonly ratifiedRuns: ReadonlySet<string>;
+  /** The item count the phase's script must have, or null when nothing pins it. */
+  readonly expectedItems: number | null;
 }
 
 // --- adapter: standard `### N.` script ------------------------------------------------------
+
+/** A finding as a record line: the stable code and the item number, never script content. */
+function findingLine(found: TagFinding): string {
+  return found.item === null ? found.code : `${found.code} (item ${found.item})`;
+}
 
 function scriptAdapter(context: AdapterContext): AdapterOutput {
   const out = emptyOutput();
@@ -196,22 +220,60 @@ function scriptAdapter(context: AdapterContext): AdapterOutput {
     out.defects.push("the script holds no numbered items");
     return out;
   }
+  // Any parse finding (a repeated item, a repeated tag, a malformed auto-result) makes the
+  // affected item unreadable; a finding about the script as a whole makes the script unreadable.
+  const flagged = new Set<number>();
+  for (const found of parsed.findings) {
+    out.defects.push(`the script has a parse finding: ${findingLine(found)}`);
+    if (found.item === null) out.unrecognised += 1;
+    else flagged.add(found.item);
+  }
   for (const item of parsed.items) {
-    let state = classifyResult(item.resultValue);
-    if (state === "pending" && item.autoResult !== null) {
-      // An automated result stands in for the owner's line only once its run is ratified.
-      const match = AUTO_RESULT_PATTERN.exec(item.autoResult);
-      if (match !== null && match[1] === "pass" && context.ratifiedRuns.has(match[2] as string)) {
-        state = "ok";
+    let state: ResultState;
+    if (item.resultLines !== 1) {
+      state = "unrecognised";
+      out.defects.push(`item ${item.number} has ${item.resultLines} result line(s), not one`);
+    } else if (flagged.has(item.number)) {
+      state = "unrecognised";
+    } else {
+      state = classifyResult(item.resultValue);
+      const match = item.autoResult === null ? null : AUTO_RESULT_PATTERN.exec(item.autoResult);
+      if (state === "pending" && match !== null) {
+        // An automated result stands in for the owner's line only once its run is ratified.
+        if (match[1] === "pass" && context.ratifiedRuns.has(match[2] as string)) state = "ok";
       }
+      // An explicit automated failure is an issue even while the owner has not walked the item;
+      // only the owner's own passing result supersedes it.
+      if (match !== null && match[1] === "fail" && state !== "ok") state = "issue";
     }
     count(out, state);
   }
-  const declaredComplete = (parsed.frontMatter.status ?? "").trim() === "complete";
+  const total = parsed.summary.total;
+  if (total === undefined || !/^\d+$/.test(total)) {
+    out.unrecognised += 1;
+    out.defects.push("the Summary has no readable total");
+  } else if (Number(total) !== parsed.items.length) {
+    out.unrecognised += 1;
+    out.defects.push(
+      `the script has ${parsed.items.length} item(s) but the Summary total says ${total}`,
+    );
+  }
+  if (context.expectedItems !== null && context.expectedItems !== parsed.items.length) {
+    out.unrecognised += 1;
+    out.defects.push(
+      `the script has ${parsed.items.length} item(s) but the spec map has ${context.expectedItems}`,
+    );
+  }
+  const status = (parsed.frontMatter.status ?? "").trim();
+  const declaredComplete = status === "complete";
   if (declaredComplete && out.pending > 0) {
     out.defects.push("the front matter says complete but items are still pending");
   } else if (!declaredComplete && out.pending === 0 && out.issues === 0) {
     out.defects.push("every item is recorded but the front matter does not say complete");
+  } else if (status === "testing" && out.pending > 0 && context.phase !== "08") {
+    // Phase 8's own script is the audit's subject; every other phase still saying testing is a
+    // defect in that phase's file (research B 4.2).
+    out.defects.push("the front matter still says status: testing; the live walk has not happened");
   }
   return out;
 }
@@ -277,6 +339,18 @@ function resultsBlockAdapter(context: AdapterContext): AdapterOutput {
 
 // --- adapter: Phase 05.1 headings plus a results log ----------------------------------------
 
+/** What one complete `U<n> <verb> ...` log line says. */
+type LogVerdict = "ok" | "issue" | "not applicable" | "not run" | "partial" | "unrecognised";
+
+function logVerdictOf(rest: string): LogVerdict {
+  if (/^(?:pass|passed)\b/i.test(rest)) return "ok";
+  if (/^(?:fail|failed|blocked|issue)\b/i.test(rest)) return "issue";
+  if (/^not applicable\b/i.test(rest)) return "not applicable";
+  if (/^not run\b/i.test(rest)) return "not run";
+  if (/^partial\b/i.test(rest)) return "partial";
+  return "unrecognised";
+}
+
 function uatLogAdapter(context: AdapterContext): AdapterOutput {
   const out = emptyOutput();
   const script = context.texts[0] ?? "";
@@ -287,20 +361,36 @@ function uatLogAdapter(context: AdapterContext): AdapterOutput {
     out.defects.push("no U-numbered items found");
     return out;
   }
-  // `U10 part 1 pass` is not a full line: only `U<n> <state>` counts, and the last one wins.
+  // `U10 part 1 pass` is not a complete result; every other `U<n> <words>` line is one, and the
+  // latest wins whatever it says (so a later failure or an unknown verb supersedes an earlier pass).
   const latest = new Map<string, string>();
   for (const line of log.split(/\r?\n/)) {
-    const match = /^U(\d+)\s+(pass|not applicable|not run|partial)\b/i.exec(line);
-    if (match !== null) latest.set(match[1] as string, (match[2] as string).toLowerCase());
+    const match = /^U(\d+)\s+(\S.*)/.exec(line);
+    if (match === null) continue;
+    const rest = (match[2] as string).trim();
+    if (/^part\s+\d+\b/i.test(rest)) continue;
+    latest.set(match[1] as string, rest);
+  }
+  for (const id of latest.keys()) {
+    if (!items.includes(id))
+      out.defects.push(`the log has a result for U${id}, which the script lacks`);
   }
   for (const id of items) {
-    const state = latest.get(id);
-    if (state === undefined) count(out, "pending");
-    else if (state === "pass" || state === "not applicable") count(out, "ok");
-    else {
+    const rest = latest.get(id);
+    if (rest === undefined) {
+      count(out, "pending");
+      continue;
+    }
+    const verdict = logVerdictOf(rest);
+    if (verdict === "ok") count(out, "ok");
+    else if (verdict === "issue") count(out, "issue");
+    else if (verdict === "unrecognised") {
+      count(out, "unrecognised");
+      out.defects.push(`U${id} has a result line whose verb is not recognised`);
+    } else {
       recordException(
         out,
-        exceptionOf(context.phase, `${context.phase}-u${id}`, `U${id} recorded as ${state}`),
+        exceptionOf(context.phase, `${context.phase}-u${id}`, `U${id} recorded as ${verdict}`),
       );
     }
   }
@@ -348,13 +438,32 @@ function verificationAdapter(context: AdapterContext): AdapterOutput {
 
 // --- adapter: Phase 05.2 ratified run --------------------------------------------------------
 
+const RATIFIED_MARKER =
+  /\b(?:was|were|been|is|are|got)\s+ratified\b|\bratified\s*:|\bratified by\b/i;
+const NOT_A_RATIFICATION = /\bnot\b|\bun-?ratified\b|\bwhether\b|\bdecide\b|\bunless\b|\bif\b|\?/i;
+
+/**
+ * Run ids the record states were ratified: a sentence that names `run <8 hex>` and carries a
+ * ratified marker (`was ratified`, `ratified by`, `ratified:`) and is not a question, a negation
+ * or a pending decision. A bare mention of a run id proves nothing.
+ */
+export function ratifiedRunsIn(text: string): string[] {
+  const found: string[] = [];
+  for (const sentence of text.split(/(?<=[.!?])\s+|\n+/)) {
+    if (!RATIFIED_MARKER.test(sentence) || NOT_A_RATIFICATION.test(sentence)) continue;
+    for (const match of sentence.matchAll(/\brun\s+\**([0-9a-f]{8})\b/gi)) {
+      found.push((match[1] as string).toLowerCase());
+    }
+  }
+  return found;
+}
+
 function ratifiedRunAdapter(context: AdapterContext): AdapterOutput {
   const out = emptyOutput();
   const text = context.texts[0] ?? "";
   out.total = 1;
   const passed = (parseUatScript(text).frontMatter.status ?? "").trim() === "passed";
-  const run = /\brun ([0-9a-f]{8})\b/i.exec(text);
-  if (!passed || run === null) {
+  if (!passed || ratifiedRunsIn(text).length === 0) {
     out.pending = 1;
     out.defects.push("the verification record is not passed or names no ratified run");
     return out;
@@ -449,6 +558,17 @@ function statusOf(out: AdapterOutput): PhaseStatus {
   return out.exceptions.length > 0 ? "recorded-with-exceptions" : "recorded";
 }
 
+/** The item count a phase's script must have: an explicit override, else the spec map's. */
+function expectedItemsOf(
+  phase: string,
+  overrides: Readonly<Record<string, number>> | undefined,
+): number | null {
+  const override = overrides?.[phase];
+  if (override !== undefined) return override;
+  if (overrides !== undefined) return null;
+  return specMapForPhase(phase)?.itemPlan.length ?? null;
+}
+
 /** Reads every registered phase and classifies it. Pure apart from the injected reads. */
 export function auditPhases(input: AuditInput): AuditResult {
   const listing = input.listDir(input.phasesDir);
@@ -483,7 +603,12 @@ export function auditPhases(input: AuditInput): AuditResult {
         if (text === null) return missingOutput();
         texts.push(text);
       }
-      return adapters[entry.kind]({ phase: evidence.phase, texts, ratifiedRuns });
+      return adapters[entry.kind]({
+        phase: evidence.phase,
+        texts,
+        ratifiedRuns,
+        expectedItems: expectedItemsOf(evidence.phase, input.expectedItems),
+      });
     });
     const out = combine(outputs);
     rows.push({
@@ -501,7 +626,12 @@ export function auditPhases(input: AuditInput): AuditResult {
   if (input.only === undefined) {
     for (const folderName of listing) {
       for (const file of input.listDir(join(input.phasesDir, folderName))) {
-        if (/UAT/.test(file) && file.endsWith(".md") && !registered.has(`${folderName}/${file}`)) {
+        if (
+          /UAT/.test(file) &&
+          file.endsWith(".md") &&
+          file !== RECORD_NAME &&
+          !registered.has(`${folderName}/${file}`)
+        ) {
           unregistered.push(`${folderName}/${file}`);
         }
       }
@@ -520,8 +650,17 @@ export function auditPhases(input: AuditInput): AuditResult {
 /** Acceptance markers by exception id, as parsed from the existing record. */
 export type Acceptances = Readonly<Record<string, string>>;
 
+const ACCEPTANCE = /^(?:accepted )?(\d{4})-(\d{2})-(\d{2})$/;
+
+/** True only for exactly `YYYY-MM-DD` or `accepted YYYY-MM-DD`, and only for a real calendar day. */
 function isAccepted(value: string | undefined): boolean {
-  return value !== undefined && /^\d{4}-\d{2}-\d{2}/.test(value.trim());
+  const match = value === undefined ? null : ACCEPTANCE.exec(value.trim());
+  if (match === null) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
 }
 
 /**
@@ -546,8 +685,12 @@ export function problemsOf(
   }
   if (options.strict) {
     for (const exception of result.exceptions) {
-      if (!isAccepted(options.accepted[exception.id])) {
+      const value = options.accepted[exception.id]?.trim();
+      if (value === undefined || value === "" || /^pending\b/i.test(value)) {
         problems.push(`${exception.phase}: exception ${exception.id} not accepted`);
+      } else if (!isAccepted(value)) {
+        // Anything that is not exactly a date is an unreadable acceptance, never a quiet pass.
+        problems.push(`${exception.phase}: exception ${exception.id} acceptance unreadable`);
       }
     }
   }
@@ -570,8 +713,12 @@ const STATEMENT_DEFAULT = [
 
 export interface PreservedBlocks {
   readonly accepted: Record<string, string>;
-  readonly amendments: string | null;
-  readonly statement: string | null;
+  /**
+   * Everything from the first owner heading (`## Amendments`, else `## Milestone statement`) to
+   * the end of the file, verbatim. Nested headings (an amendment per item, a signature) are the
+   * owner's and survive regeneration whatever they are called (FIX1B B-M4).
+   */
+  readonly ownerRegion: string | null;
 }
 
 /** The block that starts at `## <heading>` and runs to the next `## ` heading or the end. */
@@ -586,9 +733,16 @@ function blockOf(text: string, heading: string): string | null {
 
 /** What an existing record holds that regeneration must keep byte for byte. */
 export function parsePreservedBlocks(existing: string | null): PreservedBlocks {
-  if (existing === null) return { accepted: {}, amendments: null, statement: null };
+  if (existing === null) return { accepted: {}, ownerRegion: null };
+  const starts = [/^## Amendments\s*$/m, /^## Milestone statement\s*$/m]
+    .map((heading) => existing.search(heading))
+    .filter((index) => index !== -1);
+  const regionStart = starts.length === 0 ? -1 : Math.min(...starts);
+  // Only the generated part is read for acceptances: a table pasted into the owner's region is
+  // the owner's prose, not a record the checker may take a date from.
+  const generated = regionStart === -1 ? existing : existing.slice(0, regionStart);
   const accepted: Record<string, string> = {};
-  const exceptions = blockOf(existing, "Exceptions") ?? "";
+  const exceptions = blockOf(generated, "Exceptions") ?? "";
   for (const line of exceptions.split("\n")) {
     if (!line.startsWith("|")) continue;
     const cells = line
@@ -601,8 +755,7 @@ export function parsePreservedBlocks(existing: string | null): PreservedBlocks {
   }
   return {
     accepted,
-    amendments: blockOf(existing, "Amendments"),
-    statement: blockOf(existing, "Milestone statement"),
+    ownerRegion: regionStart === -1 ? null : existing.slice(regionStart),
   };
 }
 
@@ -681,13 +834,10 @@ export function renderAudit(result: AuditResult, context: RenderContext): string
     for (const name of result.unregistered) lines.push(`- unregistered UAT file: ${name}`);
     lines.push("");
   }
-  lines.push(
-    (context.preserved.amendments ?? AMENDMENTS_DEFAULT).trimEnd(),
-    "",
-    (context.preserved.statement ?? STATEMENT_DEFAULT).trimEnd(),
-    "",
-  );
-  return lines.join("\n");
+  const region = context.preserved.ownerRegion ?? `${AMENDMENTS_DEFAULT}\n${STATEMENT_DEFAULT}`;
+  // `lines` ends with a blank entry, so the join ends with one newline; one more leaves the blank
+  // line before the owner's region, which is appended exactly as it was read.
+  return `${lines.join("\n")}\n${region}`;
 }
 
 // --- the command ----------------------------------------------------------------------------
@@ -699,19 +849,75 @@ export interface AuditCommandIo {
   readonly exists: (path: string) => boolean;
   readonly now: () => Date;
   readonly gitHead: () => Promise<string>;
+  /** The path with every existing component resolved (`realpath.native`); defaults to the real one. */
+  readonly canonical?: (path: string) => string;
+  /** `<device>:<inode>` of an existing file, or null; defaults to the real `stat`. */
+  readonly identity?: (path: string) => string | null;
+  /** The OS temp folder; defaults to `os.tmpdir()`. */
+  readonly tmpRoot?: () => string;
 }
 
 const PHASES_SEGMENTS = [".planning", "phases"] as const;
-const RECORD_NAME = "08-UAT-AUDIT.md";
+
+const realIdentity = (path: string): string | null => {
+  try {
+    const info = statSync(path);
+    return `${info.dev}:${info.ino}`;
+  } catch {
+    return null;
+  }
+};
+
+export const MSG_OUT_EVIDENCE = "--out must not be one of the evidence files.";
+export const MSG_OUT_LOCATION = "--out must be inside the Phase 8 folder or the temp folder.";
+
+/**
+ * Why an `--out` path is refused, or null. The check ignores any phase filter: it covers EVERY
+ * registered evidence file the folder holds, compares canonical (`realpath.native`) paths and
+ * inode identities, so case variants, symbolic links and hard links all land on the same file;
+ * and it only lets the record go to the Phase 8 folder or the OS temp folder (FIX1B B-M1).
+ */
+export function outRefusal(
+  out: string,
+  phasesDir: string,
+  io: Pick<AuditCommandIo, "listFiles" | "canonical" | "identity" | "tmpRoot">,
+): string | null {
+  const canonical = io.canonical ?? ((path: string): string => canonicalPath(path));
+  const identity = io.identity ?? realIdentity;
+  const target = canonical(resolve(out));
+  const targetId = identity(target);
+  const listing = io.listFiles(phasesDir);
+  for (const evidence of PHASE_EVIDENCE) {
+    const folderName = phaseFolder(listing, evidence.phase);
+    if (folderName === null) continue;
+    for (const entry of evidence.entries) {
+      for (const file of entry.files) {
+        const path = join(phasesDir, folderName, file);
+        const evidenceId = identity(path);
+        if (canonical(path) === target) return MSG_OUT_EVIDENCE;
+        if (targetId !== null && evidenceId !== null && targetId === evidenceId) {
+          return MSG_OUT_EVIDENCE;
+        }
+      }
+    }
+  }
+  const phase08 = phaseFolder(listing, "08");
+  const allowed = [(io.tmpRoot ?? tmpdir)()];
+  if (phase08 !== null) allowed.push(join(phasesDir, phase08));
+  return allowed.some((root) => isSameOrInside(canonical(resolve(root)), target))
+    ? null
+    : MSG_OUT_LOCATION;
+}
 
 /** Runs the audit and writes the record. Exit codes: 0 fine, 1 a phase is not recorded, 2 usage. */
 export async function runAuditCommand(
   args: AuditArgs,
   io: AuditCommandIo,
   write: (line: string) => void,
+  hooks: AuditTestHooks = {},
 ): Promise<number> {
   const knownPhases = PHASE_EVIDENCE.map((entry) => entry.phase);
-  if (args.only?.some((phase) => !knownPhases.includes(phase))) {
+  if (hooks.only?.some((phase) => !knownPhases.includes(phase))) {
     throw new UsageError("--only names a phase the audit does not know.");
   }
   const phasesDir = args.phasesDir ?? join(REPO_ROOT, ...PHASES_SEGMENTS);
@@ -728,7 +934,8 @@ export async function runAuditCommand(
     phasesDir,
     readText: io.readText,
     listDir: io.listFiles,
-    only: args.only,
+    only: hooks.only,
+    expectedItems: hooks.expectedItems,
   });
 
   let outPath = args.out;
@@ -737,14 +944,8 @@ export async function runAuditCommand(
     if (phase08 === null) throw new UsageError("--out is required when no Phase 8 folder exists.");
     outPath = join(phasesDir, phase08, RECORD_NAME);
   }
-  const target = resolve(outPath);
-  for (const row of result.rows) {
-    for (const file of row.files) {
-      if (resolve(phasesDir, file) === target) {
-        throw new UsageError("--out must not be one of the evidence files.");
-      }
-    }
-  }
+  const refusal = outRefusal(outPath, phasesDir, io);
+  if (refusal !== null) throw new UsageError(refusal);
 
   const preserved = parsePreservedBlocks(io.readText(outPath));
   const text = renderAudit(result, {
