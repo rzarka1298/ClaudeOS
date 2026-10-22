@@ -74,6 +74,15 @@
 #      supplies globalThis, eval, Function, Reflect and a computed dynamic
 #      import, so this literal scan is the layer that catches those
 #      (ADR-0014, RSRCH-07, D-02); test files and comment lines are exempt
+#  18. no non-test file under packages/service/src/diagnostics/ names a network
+#      module or primitive -- a quoted http, https, http2, net, tls, dgram or dns
+#      module specifier (with or without the node: prefix), undici or node-fetch,
+#      the bare word fetch, XMLHttpRequest, WebSocket or EventSource -- or names
+#      child_process or imports execa. The health probes are read-only and
+#      offline: a probe reaches a process only through a port the composition
+#      root hands it, and that port is the fixed-argv, no-shell command runner
+#      that lives outside the folder (plan 08-08, D-05, T-08-22); test files and
+#      comment lines are exempt
 #  Rules 11 to 14 scan non-test source files only and skip comment lines;
 #  every allow-list below is an anchored `^...` path match, never a substring.
 #
@@ -525,6 +534,34 @@ check_rule \
   "a file under packages/service/src/untrusted/ names an I/O primitive (a node: specifier, child_process, fetch(, require(, a dynamic import(, process, globalThis, eval, Function, Reflect, XMLHttpRequest, WebSocket, EventSource, a .constructor, .caller or .callee access, a reflection or legacy accessor name or a V8 Error static; the summariser folder must hold no way to act, ADR-0014, RSRCH-07)" \
   "$UNTRUSTED_IO_PATTERN" \
   $UNTRUSTED_FILES
+
+# --- Rule 18: no non-test file under packages/service/src/diagnostics/ names a
+# network module or primitive, or reaches a process directly (plan 08-08, D-05,
+# T-08-22). The health probes are read-only and offline (DIAG-02): nothing in the
+# folder may open a socket or spawn a child itself. A process-backed probe port
+# (the bounded bundle lookup, the Keychain presence check) is built outside the
+# folder, from the fixed-argv, no-shell command runner, and handed in. It scans
+# NON_TEST_FILES (every module extension) anchored to the folder with a trailing
+# slash, so the look-alike `diagnostics-extra/` is not in scope. Alternatives, all
+# written without a backslash:
+#   - a quoted module specifier whose whole text is http, https, http2, net, tls,
+#     dgram or dns (with or without node:, and a /promises tail), undici or
+#     node-fetch: a quote character on both sides, so an identifier such as
+#     netWorth or a path segment is not a hit;
+#   - the bare word fetch with an identifier boundary on both sides (a call, a
+#     global read or `const send = fetch`; refetch and prefetch are not hits),
+#     and the names XMLHttpRequest, WebSocket and EventSource, boundary on both
+#     sides;
+#   - the name child_process anywhere, and a quoted execa (or execa/... subpath)
+#     specifier.
+# Comment lines are skipped by grep_noncomment. ---
+DIAGNOSTICS_FILES=$(printf '%s\n' "$NON_TEST_FILES" | grep '^packages/service/src/diagnostics/' || true)
+DIAGNOSTICS_NET_SPAWN_PATTERN="(^|[^A-Za-z0-9_])fetch([^A-Za-z0-9_]|$)|[\"'\`](node:)?(https?|http2|net|tls|dgram|dns|undici|node-fetch)(/promises)?[\"'\`]|(^|[^A-Za-z0-9_])(XMLHttpRequest|WebSocket|EventSource)([^A-Za-z0-9_]|$)|child_process|[\"'\`]execa(/[^\"'\`]*)?[\"'\`]"
+# shellcheck disable=SC2086
+check_rule \
+  "a diagnostics probe file under packages/service/src/diagnostics/ names a network module or primitive (an http, https, http2, net, tls, dgram or dns module, undici, node-fetch, fetch, XMLHttpRequest, WebSocket or EventSource) or reaches a process directly (child_process, execa); the health probes are read-only and offline, plan 08-08, D-05" \
+  "$DIAGNOSTICS_NET_SPAWN_PATTERN" \
+  $DIAGNOSTICS_FILES
 
 FILE_COUNT=$(printf '%s\n' "$SRC_FILES" | grep -c . || true)
 echo "scripts/check-boundaries.sh: checked ${RULES} rules."

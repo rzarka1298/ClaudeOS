@@ -1,4 +1,3 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DIAGNOSTICS_HEALTH_PATH,
   type DiagnosticsErrorBody,
@@ -26,7 +25,7 @@ function errorBody(code: DiagnosticsErrorCode): DiagnosticsErrorBody {
 }
 
 /** Logs an unexpected failure by route and error class only, then answers the closed `internal` code. */
-function sendInternalError(res: ServerResponse, err: unknown): void {
+function sendInternalError(res: Parameters<Handler>[1], err: unknown): void {
   logger.error(
     {
       route: DIAGNOSTICS_HEALTH_PATH,
@@ -53,7 +52,7 @@ export function triggerOf(rawUrl: string | undefined): HealthTrigger {
 }
 
 /** `GET /api/v1/diagnostics/health?trigger=gesture|reconnect`: the read-only health of the five service-side subsystems. */
-const getHandler: Handler = withAuth((req: IncomingMessage, res, ctx) => {
+const getHandler: Handler = withAuth((req, res, ctx) => {
   const run = async (): Promise<void> => {
     // A GET carries no body; drain whatever a caller sent so the answer is a response, not a reset.
     req.resume();
