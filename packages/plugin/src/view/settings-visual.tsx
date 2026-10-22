@@ -31,7 +31,9 @@ export interface VisualSettingsProps {
 export function VisualSettings({ host, notify }: VisualSettingsProps): VNode {
   return (
     <>
-      <h3 tabIndex={-1}>Visual</h3>
+      <h3 tabIndex={-1} className="ccc-settings-section-title">
+        Visual
+      </h3>
       <p>{VISUAL_SECTION_DESCRIPTION}</p>
       <SettingRow
         name={REDUCED_MOTION_NAME}

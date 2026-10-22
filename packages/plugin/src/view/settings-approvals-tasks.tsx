@@ -81,7 +81,9 @@ export function ApprovalsTasksSettings({
 
   return (
     <>
-      <h3 tabIndex={-1}>Approvals and tasks</h3>
+      <h3 tabIndex={-1} className="ccc-settings-section-title">
+        Approvals and tasks
+      </h3>
       <p>{APPROVALS_TASKS_DESCRIPTION}</p>
       <SettingRow
         name={NOTIFY_APPROVALS_NAME}

@@ -209,7 +209,7 @@ export function LaunchersSettings({
   return (
     <section className="ccc-settings-section ccc-projects-section">
       <div className="ccc-card-header">
-        <h3 ref={headingRef} tabIndex={-1}>
+        <h3 ref={headingRef} tabIndex={-1} className="ccc-settings-section-title">
           Launchers
         </h3>
       </div>

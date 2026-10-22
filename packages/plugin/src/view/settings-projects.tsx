@@ -66,7 +66,9 @@ export function ProjectsSettings({
 
   return (
     <section className="ccc-settings-section ccc-projects-section">
-      <h3 tabIndex={-1}>Projects</h3>
+      <h3 tabIndex={-1} className="ccc-settings-section-title">
+        Projects
+      </h3>
       <p>{PROJECTS_SECTION_DESCRIPTION}</p>
       {away && (
         <>
