@@ -79,6 +79,31 @@ export function rollupStatus(statuses: readonly SubsystemStatus[]): SubsystemSta
   return worst;
 }
 
+/**
+ * The status of a row made of parts when some parts are **passive** (D-34a,
+ * resolving D-34 against D-06). A passive part is one that cannot be "not set
+ * up": it reads `ok` simply because nothing is wrong (collectors' `telemetry`
+ * and `spool`). A passive `ok` does not count as a working part when deciding
+ * between `ok` and `setup-needed`, so a row whose non-passive parts are all
+ * `setup-needed` reads `setup-needed` (a fresh install). A passive part that is
+ * `degraded`, `failing` or `unknown` still raises the row, and a row that is
+ * entirely passive-`ok` reads `ok`. With no passive ids this is
+ * {@link rollupStatus}, so one ready launcher still keeps the launchers row `ok`.
+ */
+export function rollupPartStatuses(
+  parts: readonly { readonly partId: string; readonly status: SubsystemStatus }[],
+  passivePartIds: readonly string[],
+): SubsystemStatus {
+  const status = rollupStatus(parts.map((part) => part.status));
+  // Only a mix of `ok` and `setup-needed` (or all `ok`) can still be reclassified.
+  if (status !== "ok") return status;
+  const active = parts.filter((part) => !passivePartIds.includes(part.partId));
+  if (active.length > 0 && active.every((part) => part.status === "setup-needed")) {
+    return "setup-needed";
+  }
+  return "ok";
+}
+
 // ---------------------------------------------------------------------------
 // Reason codes (closed, one status each)
 
@@ -205,6 +230,12 @@ export const COLLECTORS_PART_IDS = [
   "codex-doctor",
 ] as const;
 export type CollectorsPartId = (typeof COLLECTORS_PART_IDS)[number];
+
+/** Parts that cannot be "not set up" and so never lift a setup-needed collectors row (D-34a). */
+export const COLLECTORS_PASSIVE_PART_IDS = [
+  "telemetry",
+  "spool",
+] as const satisfies readonly CollectorsPartId[];
 
 const TELEMETRY_REASONS = [
   "telemetry-ok",
@@ -480,14 +511,18 @@ export type HealthFacts = z.infer<typeof HealthFactsSchema>;
 // ---------------------------------------------------------------------------
 // Rows and parts
 
-interface PartLike {
+interface StatusAndReason {
   readonly status: SubsystemStatus;
   readonly reasonCode: string;
 }
 
+interface PartLike extends StatusAndReason {
+  readonly partId: string;
+}
+
 function statusMatchesReason(
   table: Readonly<Record<string, SubsystemStatus>>,
-): (value: PartLike) => boolean {
+): (value: StatusAndReason) => boolean {
   return (value) => table[value.reasonCode] === value.status;
 }
 
@@ -512,19 +547,22 @@ function partSchema<Id extends string, R extends readonly [string, ...string[]]>
 }
 
 /**
- * A row made of parts: the status is the roll-up of its parts and the reason is
+ * A row made of parts: the status is the roll-up of its parts (passive parts
+ * excepted from the ok-versus-setup-needed decision, D-34a) and the reason is
  * the deciding part's. A row with no parts (a probe that timed out, or a
  * tracer) carries any of the row's reasons and its own status.
  */
-function rowWithPartsRefinement(row: {
-  status: SubsystemStatus;
-  reasonCode: string;
-  parts?: readonly PartLike[] | undefined;
-}): boolean {
-  const parts = row.parts;
-  if (parts === undefined) return true;
-  if (row.status !== rollupStatus(parts.map((part) => part.status))) return false;
-  return parts.some((part) => part.status === row.status && part.reasonCode === row.reasonCode);
+function rowWithPartsRefinement(passivePartIds: readonly string[]) {
+  return (row: {
+    status: SubsystemStatus;
+    reasonCode: string;
+    parts?: readonly PartLike[] | undefined;
+  }): boolean => {
+    const parts = row.parts;
+    if (parts === undefined) return true;
+    if (row.status !== rollupPartStatuses(parts, passivePartIds)) return false;
+    return parts.some((part) => part.status === row.status && part.reasonCode === row.reasonCode);
+  };
 }
 
 function serviceSideRow<Id extends string, R extends readonly [string, ...string[]]>(
@@ -552,7 +590,13 @@ function serviceSideRowWithParts<
   Id extends string,
   R extends readonly [string, ...string[]],
   P extends z.ZodType<readonly PartLike[]>,
->(id: Id, reasons: R, table: Readonly<Record<string, SubsystemStatus>>, parts: P) {
+>(
+  id: Id,
+  reasons: R,
+  table: Readonly<Record<string, SubsystemStatus>>,
+  parts: P,
+  passivePartIds: readonly string[] = [],
+) {
   return z
     .strictObject({
       id: z.literal(id),
@@ -568,7 +612,7 @@ function serviceSideRowWithParts<
       message: "status must equal the status of the reason code",
       path: ["status"],
     })
-    .refine(rowWithPartsRefinement, {
+    .refine(rowWithPartsRefinement(passivePartIds), {
       message: "status must equal the roll-up of the parts and the reason must be a part's",
       path: ["parts"],
     });
@@ -596,6 +640,7 @@ export const CollectorsRowSchema = serviceSideRowWithParts(
   COLLECTORS_REASONS,
   COLLECTORS_REASON_STATUS,
   CollectorsPartsSchema,
+  COLLECTORS_PASSIVE_PART_IDS,
 );
 
 const schedulerPart = <Id extends SchedulerPartId>(id: Id) =>

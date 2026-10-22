@@ -3,6 +3,7 @@ import { HEALTH_PATH } from "./auth.js";
 import {
   COLLECTORS_PART_IDS,
   COLLECTORS_PART_REASONS,
+  COLLECTORS_PASSIVE_PART_IDS,
   COLLECTORS_REASON_STATUS,
   COLLECTORS_REASONS,
   DIAGNOSTICS_ERROR_CODES,
@@ -16,6 +17,7 @@ import {
   LAUNCHERS_REASON_STATUS,
   LAUNCHERS_REASONS,
   NOT_IN_VERSION_GLYPH,
+  rollupPartStatuses,
   rollupStatus,
   SCHEDULER_PART_IDS,
   SCHEDULER_REASON_STATUS,
@@ -48,6 +50,28 @@ function row(id: string, reasonCode: string, extra: Record<string, unknown> = {}
   };
 }
 
+/**
+ * The fresh-install collectors parts, exactly as 08-08 Task 1 Test 1 builds them: the passive
+ * telemetry and spool parts read ok, everything else is not set up (D-34a).
+ */
+function freshCollectorsParts() {
+  const part = (partId: string, reasonCode: string, status: "ok" | "setup-needed") => ({
+    partId,
+    status,
+    reasonCode,
+  });
+  return [
+    part("telemetry", "telemetry-ok", "ok"),
+    part("status-line", "statusline-not-installed", "setup-needed"),
+    part("transcript-analysis", "analysis-off", "setup-needed"),
+    part("spool", "spool-clean", "ok"),
+    part("codex-install", "codex-not-installed", "setup-needed"),
+    part("codex-hooks", "codex-hooks-not-installed", "setup-needed"),
+    part("codex-bridge", "codex-bridge-not-installed", "setup-needed"),
+    part("codex-doctor", "codex-doctor-not-run", "setup-needed"),
+  ];
+}
+
 /** The fresh-install response: five service-side rows, all setup-needed (D-34). */
 function freshInstall() {
   return {
@@ -56,7 +80,7 @@ function freshInstall() {
     rows: [
       row("vault", "vault-not-set-up"),
       row("hooks", "hooks-not-installed"),
-      row("collectors", "analysis-off"),
+      row("collectors", "statusline-not-installed", { parts: freshCollectorsParts() }),
       row("scheduler", "never-run"),
       row("launchers", "launcher-not-set-up"),
     ],
@@ -649,5 +673,128 @@ describe("Task 2: the closed error body", () => {
     expect(
       DiagnosticsErrorBodySchema.safeParse({ error: "internal", message: "/Users/you" }).success,
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-34a: passive parts do not lift a setup-needed row (D-34 vs D-06)
+
+describe("D-34a (passive parts)", () => {
+  const PASSIVE = ["telemetry", "spool"];
+
+  it("the passive collectors parts are exactly telemetry and spool", () => {
+    expect([...COLLECTORS_PASSIVE_PART_IDS]).toEqual(PASSIVE);
+  });
+
+  it("a row whose non-passive parts are all setup-needed reads setup-needed despite passive ok parts", () => {
+    const parts = freshCollectorsParts();
+    expect(rollupPartStatuses(parts, PASSIVE)).toBe("setup-needed");
+  });
+
+  it("the fresh-install collectors row of 08-08 Task 1 Test 1 is accepted as setup-needed", () => {
+    const response = collectorsResponse({
+      parts: freshCollectorsParts(),
+      status: "setup-needed",
+      reasonCode: "statusline-not-installed",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+    // The whole fresh-install response, with the real parts, parses and summarises as five setup states.
+    const fresh = freshInstall();
+    expect(DiagnosticsHealthResponseSchema.safeParse(fresh).success).toBe(true);
+    expect(summariseRows(fresh.rows).setupNeeded).toBe(5);
+    // The old ok roll-up is now refused for those parts.
+    const asOk = collectorsResponse({
+      parts: freshCollectorsParts(),
+      status: "ok",
+      reasonCode: "telemetry-ok",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(asOk).success).toBe(false);
+  });
+
+  it("an active ok part still lifts the row: one working Codex part makes it ok", () => {
+    const parts = freshCollectorsParts().map((p) =>
+      p.partId === "codex-install"
+        ? { ...p, status: "ok" as const, reasonCode: "codex-installed" }
+        : p,
+    );
+    expect(rollupPartStatuses(parts, PASSIVE)).toBe("ok");
+    const response = collectorsResponse({ parts, status: "ok", reasonCode: "codex-installed" });
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+  });
+
+  it("a row that is entirely passive-ok reads ok", () => {
+    expect(
+      rollupPartStatuses(
+        [
+          { partId: "telemetry", status: "ok" },
+          { partId: "spool", status: "ok" },
+        ],
+        PASSIVE,
+      ),
+    ).toBe("ok");
+  });
+
+  it("a passive part that is degraded, failing or unknown still raises the row", () => {
+    const withPassive = (partId: string, status: SubsystemStatus) =>
+      freshCollectorsParts().map((p) => (p.partId === partId ? { ...p, status } : p));
+    expect(rollupPartStatuses(withPassive("spool", "degraded"), PASSIVE)).toBe("degraded");
+    expect(rollupPartStatuses(withPassive("telemetry", "failing"), PASSIVE)).toBe("failing");
+    expect(rollupPartStatuses(withPassive("telemetry", "unknown"), PASSIVE)).toBe("unknown");
+
+    const degraded = collectorsResponse({
+      parts: freshCollectorsParts().map((p) =>
+        p.partId === "spool"
+          ? { ...p, status: "degraded", reasonCode: "spool-dropped-records" }
+          : p,
+      ),
+      status: "degraded",
+      reasonCode: "spool-dropped-records",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(degraded).success).toBe(true);
+  });
+
+  it("no parts at all is unknown, and a launchers mix of ok and setup-needed is still ok", () => {
+    expect(rollupPartStatuses([], PASSIVE)).toBe("unknown");
+    expect(
+      rollupPartStatuses(
+        [
+          { partId: "antigravity", status: "ok" },
+          { partId: "claude-code", status: "setup-needed" },
+          { partId: "claude-desktop", status: "setup-needed" },
+          { partId: "codex", status: "setup-needed" },
+        ],
+        [],
+      ),
+    ).toBe("ok");
+
+    const part = (partId: string, reasonCode: string, status: SubsystemStatus) => ({
+      partId,
+      status,
+      reasonCode,
+    });
+    const parts = [
+      part("antigravity", "launcher-ready", "ok"),
+      part("claude-code", "launcher-not-set-up", "setup-needed"),
+      part("claude-desktop", "launcher-not-set-up", "setup-needed"),
+      part("codex", "launcher-not-set-up", "setup-needed"),
+    ];
+    const response = freshInstall();
+    response.rows[4] = row("launchers", "launcher-ready", { parts, status: "ok" }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+    response.rows[4] = row("launchers", "launcher-not-set-up", { parts }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(false);
+  });
+
+  it("scheduler has no passive parts: ok with a setup-needed part stays ok", () => {
+    expect(
+      rollupPartStatuses(
+        [
+          { partId: "last-run", status: "setup-needed" },
+          { partId: "research-key", status: "setup-needed" },
+          { partId: "sources", status: "ok" },
+        ],
+        [],
+      ),
+    ).toBe("ok");
   });
 });
