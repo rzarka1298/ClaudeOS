@@ -23,6 +23,7 @@ import {
   rollupPartStatuses,
   rollupStatus,
   SCHEDULER_PART_IDS,
+  SCHEDULER_PASSIVE_PART_IDS,
   SCHEDULER_REASON_STATUS,
   SCHEDULER_REASONS,
   SERVICE_REASON_STATUS,
@@ -76,7 +77,7 @@ function freshCollectorsParts() {
   ];
 }
 
-/** Three scheduler parts at a fresh install: never run, no key, default sources (D-06: sources ok lifts the row). */
+/** Three scheduler parts at a fresh install: never run, no key, default sources (passive, D-34a). */
 function freshSchedulerParts() {
   return [
     { partId: "last-run", status: "setup-needed", reasonCode: "never-run" },
@@ -97,8 +98,8 @@ function freshLauncherParts() {
 /**
  * The fresh-install response (D-34) with real parts on every row that has parts
  * (FIX1A M3: a parts-less row can only say the probe did not finish). Vault and
- * hooks are setup-needed; collectors and launchers are setup-needed by their
- * parts; the scheduler reads ok because its default sources are configured.
+ * hooks are setup-needed; collectors, scheduler and launchers are setup-needed
+ * by their parts (passive ok parts do not lift a row, D-34a).
  */
 function freshInstall() {
   return {
@@ -108,7 +109,7 @@ function freshInstall() {
       row("vault", "vault-not-set-up"),
       row("hooks", "hooks-not-installed"),
       row("collectors", "statusline-not-installed", { parts: freshCollectorsParts() }),
-      row("scheduler", "sources-configured", { status: "ok", parts: freshSchedulerParts() }),
+      row("scheduler", "never-run", { parts: freshSchedulerParts() }),
       row("launchers", "launcher-not-set-up", { parts: freshLauncherParts() }),
     ],
     keychain: { installSecret: "present", researchKey: "absent" },
@@ -135,8 +136,8 @@ describe("Task 1 (tracer): a fresh-install health response", () => {
       failing: 0,
       degraded: 0,
       unknown: 0,
-      setupNeeded: 4,
-      ok: 2,
+      setupNeeded: 5,
+      ok: 1,
     });
   });
 
@@ -453,9 +454,9 @@ describe("Task 2 Test 3 (parts)", () => {
       { partId: "sources", status: "ok", reasonCode: "sources-configured" },
     ];
     const ok = freshInstall();
-    ok.rows[3] = row("scheduler", "never-run", { parts }) as never;
-    expect(DiagnosticsHealthResponseSchema.safeParse(ok).success).toBe(false); // roll-up is ok, row says setup-needed
     ok.rows[3] = row("scheduler", "sources-configured", { parts, status: "ok" }) as never;
+    expect(DiagnosticsHealthResponseSchema.safeParse(ok).success).toBe(false); // passive sources cannot lift the row
+    ok.rows[3] = row("scheduler", "never-run", { parts }) as never;
     expect(DiagnosticsHealthResponseSchema.safeParse(ok).success).toBe(true);
     const bad = freshInstall();
     bad.rows[3] = row("scheduler", "never-run", {
@@ -714,6 +715,28 @@ describe("D-34a (passive parts)", () => {
     expect([...COLLECTORS_PASSIVE_PART_IDS]).toEqual(PASSIVE);
   });
 
+  it("the passive scheduler part is exactly sources, so a fresh scheduler reads setup-needed", () => {
+    expect([...SCHEDULER_PASSIVE_PART_IDS]).toEqual(["sources"]);
+    const parts = [
+      { partId: "last-run", status: "setup-needed", reasonCode: "never-run" },
+      { partId: "research-key", status: "setup-needed", reasonCode: "research-key-missing" },
+      { partId: "sources", status: "ok", reasonCode: "sources-configured" },
+    ] as const;
+    expect(rollupPartStatuses(parts, SCHEDULER_PASSIVE_PART_IDS)).toBe("setup-needed");
+    const run = [
+      { ...parts[0], status: "ok", reasonCode: "last-run-succeeded" } as const,
+      parts[1],
+      parts[2],
+    ];
+    expect(rollupPartStatuses(run, SCHEDULER_PASSIVE_PART_IDS)).toBe("ok");
+    const broken = [
+      parts[0],
+      parts[1],
+      { ...parts[2], status: "degraded", reasonCode: "sources-config-unusable" } as const,
+    ];
+    expect(rollupPartStatuses(broken, SCHEDULER_PASSIVE_PART_IDS)).toBe("degraded");
+  });
+
   it("a row whose non-passive parts are all setup-needed reads setup-needed despite passive ok parts", () => {
     const parts = freshCollectorsParts();
     expect(rollupPartStatuses(parts, PASSIVE)).toBe("setup-needed");
@@ -730,7 +753,7 @@ describe("D-34a (passive parts)", () => {
     // (the scheduler's default sources are configured, so its row is ok).
     const fresh = freshInstall();
     expect(DiagnosticsHealthResponseSchema.safeParse(fresh).success).toBe(true);
-    expect(summariseRows(fresh.rows).setupNeeded).toBe(4);
+    expect(summariseRows(fresh.rows).setupNeeded).toBe(5);
     // The old ok roll-up is now refused for those parts.
     const asOk = collectorsResponse({
       parts: freshCollectorsParts(),

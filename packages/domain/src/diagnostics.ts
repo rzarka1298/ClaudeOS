@@ -358,6 +358,12 @@ export const SCHEDULER_PART_IDS = ["last-run", "research-key", "sources"] as con
 export type SchedulerPartId = (typeof SCHEDULER_PART_IDS)[number];
 
 /**
+ * Scheduler parts that never lift a setup-needed row (D-34a): default sources are
+ * configured on a fresh install, which is not "the scheduler works".
+ */
+export const SCHEDULER_PASSIVE_PART_IDS = ["sources"] as const satisfies readonly SchedulerPartId[];
+
+/**
  * One reason per `RUN_ERROR_CODES` member (D-04). The two checks below make a
  * new run error code fail the build until it has a health reason, in both
  * directions: a code without a reason, and a reason without a code.
@@ -717,6 +723,7 @@ export const SchedulerRowSchema = serviceSideRowWithParts(
   SERVICE_SIDE_REASONS.scheduler,
   SCHEDULER_REASON_STATUS,
   SchedulerPartsSchema,
+  SCHEDULER_PASSIVE_PART_IDS,
 );
 
 const launcherPart = <Id extends LauncherPartId>(id: Id) =>
