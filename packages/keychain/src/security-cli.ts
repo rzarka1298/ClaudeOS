@@ -1,6 +1,9 @@
 import { execa } from "execa";
 import type { SecretStore } from "./index.js";
 
+/** The one binary this package spawns; absolute so a hijacked PATH cannot substitute it. */
+const SECURITY_BINARY = "/usr/bin/security";
+
 /** The Keychain "service" every account this project stores is filed under. */
 export const SERVICE_NAME = "com.claude-command-center";
 
@@ -58,7 +61,7 @@ function assertSafeSecretValue(value: string, field: string): void {
  */
 export async function getSecret(account: string): Promise<string | null> {
   try {
-    const { stdout } = await execa("security", [
+    const { stdout } = await execa(SECURITY_BINARY, [
       "find-generic-password",
       "-a",
       account,
@@ -93,16 +96,14 @@ export async function setSecret(account: string, value: string): Promise<void> {
   assertSafeIdentifier(SERVICE_NAME, "service name");
   assertSafeSecretValue(value, "value");
   const command = `add-generic-password -a "${account}" -s "${SERVICE_NAME}" -w "${value}" -U\n`;
-  await execa("security", ["-i"], { input: command });
+  await execa(SECURITY_BINARY, ["-i"], { input: command });
 }
 
 /** Deletes `account`'s Keychain item. */
 export async function deleteSecret(account: string): Promise<void> {
-  await execa("security", ["delete-generic-password", "-a", account, "-s", SERVICE_NAME]);
+  await execa(SECURITY_BINARY, ["delete-generic-password", "-a", account, "-s", SERVICE_NAME]);
 }
 
-/** The one binary this package spawns for lookups; absolute so a hijacked PATH cannot substitute it. */
-const SECURITY_BINARY = "/usr/bin/security";
 /** How long a presence lookup may run before it is killed (T-08-08). */
 export const HAS_SECRET_TIMEOUT_MS = 1500;
 /** `security` exits with 44 when the item is not in the keychain (`errSecItemNotFound`). */
