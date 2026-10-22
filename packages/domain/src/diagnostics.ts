@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { API_BASE } from "./api.js";
+import { DisplayPathSchema } from "./display-path.js";
 import type { RunErrorCode } from "./research.js";
 import { FreshnessSchema } from "./usage.js";
 
@@ -476,29 +477,6 @@ export const HealthFactsSchema = z.strictObject({
 });
 export type HealthFacts = z.infer<typeof HealthFactsSchema>;
 
-function hasControlCharacter(value: string): boolean {
-  for (let i = 0; i < value.length; i += 1) {
-    const code = value.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return true;
-  }
-  return false;
-}
-
-/**
- * A `~/...` or `…/a/b` string the service builds; never an absolute path.
- * Interim shape check: plan 08-01 task 3 replaces it with `DisplayPathSchema`.
- */
-const DisplayPathStringSchema = z
-  .string()
-  .min(1)
-  .max(512)
-  .refine(
-    (value) =>
-      !hasControlCharacter(value) &&
-      (value === "~" || value.startsWith("~/") || value.startsWith("…/")),
-    { message: "must be a display path, never an absolute path" },
-  );
-
 // ---------------------------------------------------------------------------
 // Rows and parts
 
@@ -719,9 +697,9 @@ export const DiagnosticsHealthResponseSchema = z.strictObject({
     researchKey: KeychainPresenceSchema,
   }),
   paths: z.strictObject({
-    vault: DisplayPathStringSchema.nullable(),
-    runtimeDir: DisplayPathStringSchema,
-    socket: DisplayPathStringSchema,
+    vault: DisplayPathSchema.nullable(),
+    runtimeDir: DisplayPathSchema,
+    socket: DisplayPathSchema,
   }),
   vaultFingerprint: VaultFingerprintSchema,
   counts: z.strictObject({
