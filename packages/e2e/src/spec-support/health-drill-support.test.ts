@@ -305,22 +305,18 @@ describe("the owner-location check is load-bearing in the guard (test weakness)"
   // owner-location refusal can stop a drill from touching it.
   it("refuses a target in an owner folder that sits inside the run root, naming the owner category", async () => {
     const fakeHome = join(paths.root, "home");
-    mkdirSync(join(fakeHome, ".claude-command-center"), { recursive: true });
-    mkdirSync(join(fakeHome, ".claude"), { recursive: true });
-    for (const target of [
-      join(fakeHome, ".claude-command-center"),
-      join(fakeHome, ".claude"),
-      fakeHome,
-    ]) {
+    mkdirSync(realRuntimeDir(fakeHome), { recursive: true });
+    mkdirSync(realClaudeConfigDir(fakeHome), { recursive: true });
+    for (const target of [realRuntimeDir(fakeHome), realClaudeConfigDir(fakeHome), fakeHome]) {
       await expect(
         withMode(paths, target, 0o700, () => 1, { home: fakeHome, base }),
         target.slice(paths.root.length),
       ).rejects.toThrow(/owner's real folders/);
     }
-    expect(mode(join(fakeHome, ".claude"))).not.toBe(0o000);
+    expect(mode(realClaudeConfigDir(fakeHome))).not.toBe(0o000);
     // The same target is fine once it is not the owner's.
     await expect(
-      withMode(paths, join(fakeHome, ".claude"), 0o700, () => 1, {
+      withMode(paths, realClaudeConfigDir(fakeHome), 0o700, () => 1, {
         home: join(scratch, "other"),
         base,
       }),
@@ -329,11 +325,11 @@ describe("the owner-location check is load-bearing in the guard (test weakness)"
 
   it("refuses a hook installer binary in such an owner folder", () => {
     const fakeHome = join(paths.root, "home");
-    mkdirSync(join(fakeHome, ".claude", "bin"), { recursive: true });
+    mkdirSync(join(realClaudeConfigDir(fakeHome), "bin"), { recursive: true });
     expect(() =>
       hookInstallerArgv(
         paths,
-        { claudeBin: join(fakeHome, ".claude", "bin", "claude") },
+        { claudeBin: join(realClaudeConfigDir(fakeHome), "bin", "claude") },
         { home: fakeHome, base },
       ),
     ).toThrow(/owner's real folders/);
