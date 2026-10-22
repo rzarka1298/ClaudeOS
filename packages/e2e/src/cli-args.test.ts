@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type ArgsEnv, parseRunArgs, RUN_USAGE, UsageError } from "./cli-args.js";
+import { type ArgsEnv, parseAuditArgs, parseRunArgs, RUN_USAGE, UsageError } from "./cli-args.js";
 
 const REPO = "/Users/USERNAME/ClaudeOS";
 const env: ArgsEnv = { repoRoot: REPO, isDirectory: () => false };
@@ -92,5 +92,40 @@ describe("parseRunArgs (Test 1)", () => {
     expect(RUN_USAGE).toContain("--profile");
     expect(RUN_USAGE).toContain("standard");
     expect(RUN_USAGE).toContain("full");
+  });
+});
+
+describe("parseAuditArgs (plan 08-06)", () => {
+  it("defaults to no folder, no output, not strict and no filter", () => {
+    expect(parseAuditArgs([])).toEqual({
+      phasesDir: undefined,
+      out: undefined,
+      strict: false,
+      only: undefined,
+    });
+  });
+
+  it("reads --phases-dir, --out, --strict and a comma list for --only", () => {
+    expect(
+      parseAuditArgs(["--phases-dir", "/a", "--out", "/b.md", "--strict", "--only", "02,05.1,07"]),
+    ).toEqual({ phasesDir: "/a", out: "/b.md", strict: true, only: ["02", "05.1", "07"] });
+  });
+
+  it("refuses unknown flags, positionals, empty values and a malformed --only without echoing values", () => {
+    const refuse = (argv: string[]): string => {
+      try {
+        parseAuditArgs(argv);
+      } catch (error) {
+        if (error instanceof UsageError) return error.message;
+      }
+      throw new Error("expected a usage error");
+    };
+    expect(refuse(["--nope"])).toContain("--nope");
+    expect(refuse(["stray"])).toContain("positional");
+    expect(refuse(["--only", "02,;rm"])).toContain("--only");
+    expect(refuse(["--only", "02,;rm"])).not.toContain("rm");
+    expect(refuse(["--only", ""])).toContain("--only");
+    expect(refuse(["--only", "2"])).toContain("--only");
+    expect(refuse(["--phases-dir", ""])).toContain("--phases-dir");
   });
 });

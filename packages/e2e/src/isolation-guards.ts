@@ -183,15 +183,28 @@ export function buildServiceEnv(
   kind: ServiceKind,
 ): Record<string, string> {
   assertUatAccount(account);
+  const root = resolve(paths.root);
+  const realRoot = resolveReal(root);
   for (const inside of [
     paths.runtimeDir,
     paths.socketPath,
     paths.claudeConfigDir,
     paths.codexHome,
+    paths.codexCandidatesDir,
+    paths.codexBridgeHome,
   ]) {
+    // Absolute and NUL-free: the service ignores a relative or malformed Codex folder and falls
+    // back to the owner's real home, so such a value must never get as far as the environment.
+    // The lexical check refuses a sibling or the root itself; the resolved check refuses a
+    // symlink inside the run root that points out of it (D-42, T-08-10).
     if (
-      !isSameOrInside(resolve(paths.root), resolve(inside)) ||
-      resolve(inside) === resolve(paths.root)
+      typeof inside !== "string" ||
+      !isAbsolute(inside) ||
+      inside.includes("\0") ||
+      !isSameOrInside(root, resolve(inside)) ||
+      resolve(inside) === root ||
+      !isSameOrInside(realRoot, resolveReal(inside)) ||
+      resolveReal(inside) === realRoot
     ) {
       throw new IsolationError("Refusing a service location outside the run root.");
     }
@@ -202,6 +215,12 @@ export function buildServiceEnv(
     CLAUDE_CONFIG_DIR: paths.claudeConfigDir,
     CODEX_HOME: paths.codexHome,
     CCC_INSTALL_SECRET_ACCOUNT: account,
+    // A sandboxed service never probes the owner's Codex install or bridge folder (D-42,
+    // research Pitfall 4). "Disabled" wins in detection; the folders are the fallback for a
+    // drill that lifts it and the stand-in for the home folder when bridge state is derived.
+    CCC_CODEX_CANDIDATES_DISABLED: "1",
+    CCC_CODEX_CANDIDATES_DIR: paths.codexCandidatesDir,
+    CCC_CODEX_BRIDGE_HOME: paths.codexBridgeHome,
   };
   if (kind === "expiry") {
     env[TEST_OVERRIDE_ENV.enable] = "1";
@@ -221,6 +240,9 @@ const SCRUBBED_ENV_KEYS: readonly string[] = [
   "CODEX_HOME",
   "CCC_INSTALL_SECRET_ACCOUNT",
   "CCC_SPOOL_PATH",
+  "CCC_CODEX_CANDIDATES_DISABLED",
+  "CCC_CODEX_CANDIDATES_DIR",
+  "CCC_CODEX_BRIDGE_HOME",
 ];
 
 /** A copy of `env` without the overrides and isolation variables; the caller assigns it back. */

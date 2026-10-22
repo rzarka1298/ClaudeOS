@@ -28,6 +28,8 @@ describe("createRunRoot (Test 6)", () => {
         paths.runtimeDir,
         paths.claudeConfigDir,
         paths.codexHome,
+        paths.codexCandidatesDir,
+        paths.codexBridgeHome,
         paths.vaultsDir,
         paths.pluginStageDir,
         paths.tmpDir,
@@ -39,6 +41,17 @@ describe("createRunRoot (Test 6)", () => {
       }
     } finally {
       process.umask(previous);
+    }
+  });
+
+  it("creates the two Codex isolation folders under the root, mode 0700, with distinct names (Test 4)", () => {
+    const paths = createRunRoot({ base });
+    expect(paths.codexCandidatesDir).toBe(join(paths.root, "codex-candidates"));
+    expect(paths.codexBridgeHome).toBe(join(paths.root, "codex-bridge"));
+    expect(paths.codexCandidatesDir).not.toBe(paths.codexBridgeHome);
+    for (const dir of [paths.codexCandidatesDir, paths.codexBridgeHome]) {
+      expect(statSync(dir).isDirectory()).toBe(true);
+      expect(mode(dir)).toBe(0o700);
     }
   });
 

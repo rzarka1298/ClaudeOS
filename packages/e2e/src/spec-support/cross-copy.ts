@@ -13,7 +13,8 @@ export interface OwnedLiteral {
 }
 
 const APPROVALS_COPY = "packages/plugin/src/view/approvals-copy.ts";
-const SETTINGS_TAB = "packages/plugin/src/view/settings-tab.ts";
+// The settings words moved from settings-tab.ts to the Obsidian-free model in plan 08-02.
+const SETTINGS_TAB = "packages/plugin/src/view/settings-model.ts";
 const TASKS_COPY = "packages/plugin/src/view/tasks-copy.ts";
 
 /** The plugin's id, as the command-id prefix. Owner: packages/plugin/manifest.json. */

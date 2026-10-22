@@ -19,9 +19,9 @@ const OUTCOME: RunOutcome = {
 };
 
 describe("cli command table (Test 9)", () => {
-  it("holds run, preflight, look, report, ratify and lint-tags", () => {
+  it("holds run, preflight, look, report, ratify, lint-tags and audit", () => {
     expect(Object.keys(COMMANDS).sort()).toEqual(
-      ["lint-tags", "look", "preflight", "ratify", "report", "run"].sort(),
+      ["audit", "lint-tags", "look", "preflight", "ratify", "report", "run"].sort(),
     );
   });
 
@@ -211,6 +211,7 @@ function memoryIo(files: Record<string, string>, over: Partial<CliIo> = {}): Cli
     now: () => new Date("2026-10-12T08:00:00Z"),
     tmpDir: () => "/tmp",
     listFiles: () => [],
+    exists: (path) => path in files,
     buildHash: () => "0123456789ab",
     ...over,
   };

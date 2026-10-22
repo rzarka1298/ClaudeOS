@@ -25,6 +25,10 @@ export interface RunRootPaths {
   dbPath: string;
   claudeConfigDir: string;
   codexHome: string;
+  /** Where a sandboxed service looks for a `codex` executable (D-42); empty until a drill puts a fake there. */
+  codexCandidatesDir: string;
+  /** Stands in for the home folder when the sandboxed service derives the Codex bridge state (D-42). */
+  codexBridgeHome: string;
   vaultsDir: string;
   pluginStageDir: string;
   tmpDir: string;
@@ -66,6 +70,8 @@ export function pathsForRoot(root: string, runId: string): RunRootPaths {
     dbPath: join(root, "rt", "operational.db"),
     claudeConfigDir: join(root, "claude"),
     codexHome: join(root, "codex"),
+    codexCandidatesDir: join(root, "codex-candidates"),
+    codexBridgeHome: join(root, "codex-bridge"),
     vaultsDir: join(root, "vaults"),
     pluginStageDir: join(root, "plugin-stage"),
     tmpDir: join(root, "tmp"),
@@ -89,6 +95,8 @@ export function createRunRoot(options: RunRootOptions = {}): RunRootPaths {
       paths.runtimeDir,
       paths.claudeConfigDir,
       paths.codexHome,
+      paths.codexCandidatesDir,
+      paths.codexBridgeHome,
       paths.vaultsDir,
       paths.pluginStageDir,
       paths.tmpDir,

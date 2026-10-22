@@ -14,7 +14,15 @@ const root = readJson<Manifest>("../../../package.json");
 const scripts = pkg.scripts ?? {};
 const rootScripts = root.scripts ?? {};
 
-const UAT_FAMILY = ["uat", "uat:smoke", "uat:preflight", "uat:look", "uat:report", "uat:lint"];
+const UAT_FAMILY = [
+  "uat",
+  "uat:smoke",
+  "uat:preflight",
+  "uat:look",
+  "uat:report",
+  "uat:lint",
+  "uat:audit",
+];
 
 describe("e2e scripts stay outside CI (D-03)", () => {
   it("declares the uat family plus build, typecheck, test and lint", () => {
@@ -38,6 +46,16 @@ describe("e2e scripts stay outside CI (D-03)", () => {
 
   it("wires the root uat:auto as a full build then the package uat script", () => {
     expect(rootScripts["uat:auto"]).toBe("turbo run build && pnpm --filter @ccc/e2e run uat");
+  });
+
+  it("wires uat:audit in the package and at the root, and no ci:* script runs it (plan 08-06)", () => {
+    expect(scripts["uat:audit"]).toBe("node dist/cli.js audit");
+    expect(rootScripts["uat:audit"]).toBe(
+      "turbo run build --filter=@ccc/e2e && pnpm --filter @ccc/e2e run uat:audit",
+    );
+    for (const [name, command] of Object.entries(rootScripts)) {
+      if (name !== "uat:audit") expect(command, name).not.toMatch(/uat:audit/);
+    }
   });
 
   it("keeps uat and e2e out of every ci:* script and the root build, test, typecheck and lint", () => {

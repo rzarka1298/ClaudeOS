@@ -51,7 +51,8 @@ export function findDrift(
 }
 
 const COPY = "view/approvals-copy.ts";
-const SETTINGS = "view/settings-tab.ts";
+// The settings words live in the Obsidian-free model since plan 08-02 (the tab re-exports them).
+const SETTINGS = "view/settings-model.ts";
 const TASKS_COPY = "view/tasks-copy.ts";
 
 export const APPROVALS_COPY = Object.freeze({
@@ -154,7 +155,7 @@ export const APPROVALS_COPY = Object.freeze({
   reasonStale: mirror("reasonStale", COPY, "This list may be out of date. Refresh, then decide."),
   reasonExpired: mirror("reasonExpired", COPY, "This request has expired."),
 
-  // The plugin's settings tab (view/settings-tab.ts): group headings, row names, rebuild status.
+  // The plugin's settings words (view/settings-model.ts): group headings, row names, rebuild status.
   approvalsGroupHeading: mirror("approvalsGroupHeading", SETTINGS, "Approvals"),
   tasksGroupHeading: mirror("tasksGroupHeading", SETTINGS, "Tasks"),
   notifyApprovalsName: mirror("notifyApprovalsName", SETTINGS, "Approval notifications"),
