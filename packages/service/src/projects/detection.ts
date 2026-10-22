@@ -77,8 +77,68 @@ export function CLAUDE_CANDIDATE_PATHS(homeDir: string): readonly ClaudeCandidat
   ];
 }
 
+type HomeScope =
+  | { readonly kind: "home" }
+  | { readonly kind: "disabled" }
+  | { readonly kind: "dir"; readonly dir: string };
+
+/**
+ * Where the home-relative Claude candidates live (UAT sandbox override, the same
+ * shape as the Codex one in `codex/detection.ts`). A service started in a
+ * sandbox inherits the real HOME, so a sandboxed run must be able to keep
+ * detection away from it:
+ *
+ *   - `CCC_CLAUDE_CANDIDATES_DISABLED=1` (exactly "1"): no home-relative
+ *     candidate and no `~/Applications` scan.
+ *   - `CCC_CLAUDE_CANDIDATES_DIR=<absolute dir>`: the home-relative candidate
+ *     becomes `<dir>/claude` and the `~/Applications` scan becomes
+ *     `<dir>/Applications`.
+ *
+ * `disabled` wins. A `DIR` that is set but not an absolute, NUL-free path
+ * fails closed to disabled. `/Applications`, `/System/Applications`, Homebrew
+ * and `/usr/local` are system locations and never change.
+ */
+function homeScope(env: Readonly<Record<string, string | undefined>>): HomeScope {
+  if (env.CCC_CLAUDE_CANDIDATES_DISABLED === "1") return { kind: "disabled" };
+  const dir = env.CCC_CLAUDE_CANDIDATES_DIR;
+  if (dir === undefined) return { kind: "home" };
+  if (dir.startsWith("/") && !dir.includes("\0")) {
+    return { kind: "dir", dir: dir.replace(/\/+$/, "") };
+  }
+  return { kind: "disabled" };
+}
+
+/** The Claude candidate list for this environment (see {@link homeScope}). */
+export function claudeCandidatesFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  homeDir: string,
+): readonly ClaudeCandidate[] {
+  const scope = homeScope(env);
+  const system = CLAUDE_CANDIDATE_PATHS(homeDir).filter(
+    (candidate) => candidate.candidateId !== "local-bin",
+  );
+  if (scope.kind === "home") return CLAUDE_CANDIDATE_PATHS(homeDir);
+  if (scope.kind === "disabled") return system;
+  return [{ candidateId: "local-bin", path: `${scope.dir}/claude` }, ...system];
+}
+
+/** The folder standing in for `~/Applications` in the fallback scan, or `null` when there is none. */
+export function homeApplicationsFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  homeDir: string,
+): string | null {
+  const scope = homeScope(env);
+  if (scope.kind === "home") return `${homeDir}/Applications`;
+  return scope.kind === "dir" ? `${scope.dir}/Applications` : null;
+}
+
 export interface DetectorDeps {
   readonly runner: CommandRunner;
+  /**
+   * The process environment, read only for the `CCC_CLAUDE_CANDIDATES_*`
+   * sandbox override ({@link claudeCandidatesFromEnv}). Absent: the real home.
+   */
+  readonly env?: Readonly<Record<string, string | undefined>>;
   /** The resolved home directory (`resolveHomeDir`). */
   readonly homeDir: string;
   /** Lists a directory's entry names; defaults to `fs.promises.readdir`. Used by the Spotlight fallback. */
@@ -207,20 +267,30 @@ export function createDetector(deps: DetectorDeps): Detector {
   const isExecutable = deps.isExecutable ?? isExecutableFile;
   const findGit = deps.resolveGit ?? (() => resolveGit(deps.runner));
   const now = deps.now ?? (() => new Date());
-  const homeApplications = `${deps.homeDir}/Applications`;
+  const env = deps.env ?? {};
+  const claudeCandidates = claudeCandidatesFromEnv(env, deps.homeDir);
+  const homeApplications = homeApplicationsFromEnv(env, deps.homeDir);
+  /**
+   * With the sandbox override on, the REAL `~/Applications` is off limits: not
+   * scanned, and a Spotlight hit under it is neither read nor reported.
+   */
+  const blockedHomeApplications =
+    homeScope(env).kind === "home" ? null : `${deps.homeDir}/Applications`;
+  const allowedPath = (path: string): boolean =>
+    blockedHomeApplications === null || !underDir(path, blockedHomeApplications);
   /** The Spotlight fallback's folders: the system ones and the owner's own. */
   const fallbackDirs = [
     "/Applications",
     "/Applications/Utilities",
     "/System/Applications",
     "/System/Applications/Utilities",
-    homeApplications,
+    ...(homeApplications === null ? [] : [homeApplications]),
   ];
   /** The last detection's claude candidates, by id. Memory only (D-21). */
   let candidates = new Map<string, string>();
 
   const locationOf = (path: string): DetectedApp["location"] => {
-    if (underDir(path, homeApplications)) return "user-applications";
+    if (homeApplications !== null && underDir(path, homeApplications)) return "user-applications";
     if (underDir(path, "/Applications") || underDir(path, "/System/Applications")) {
       return "applications";
     }
@@ -273,7 +343,7 @@ export function createDetector(deps: DetectorDeps): Detector {
   /** Spotlight's answer for one query, or `null` when it failed. */
   const spotlight = async (query: string): Promise<string[] | null> => {
     const answer = await spotlightAnswer(`kMDItemCFBundleIdentifier == '${query}'`);
-    return answer === null ? null : answer.filter(isAppPath);
+    return answer === null ? null : answer.filter((line) => isAppPath(line) && allowedPath(line));
   };
 
   /**
@@ -365,7 +435,7 @@ export function createDetector(deps: DetectorDeps): Detector {
 
   const detectClaude = async (): Promise<DetectionResponse["claudeExecutables"]> => {
     const found = new Map<string, string>();
-    for (const candidate of CLAUDE_CANDIDATE_PATHS(deps.homeDir)) {
+    for (const candidate of claudeCandidates) {
       if (await isExecutable(candidate.path)) found.set(candidate.candidateId, candidate.path);
     }
     candidates = found;
@@ -451,8 +521,12 @@ export function createDetector(deps: DetectorDeps): Detector {
       const rest = lines.filter((line) => !isControl(line));
       if (!targetIsControl && !controlPresent) return "indeterminate";
       if (rest.length === 0) return targetIsControl ? "indeterminate" : "not-found";
-      const hits = rest.filter(isAppPath);
-      if (hits.length === 0) return "indeterminate";
+      const hits = rest.filter((line) => isAppPath(line) && allowedPath(line));
+      if (hits.length === 0) {
+        // Under the sandbox override a hit in the real ~/Applications is dropped, not read:
+        // that is an absence here, not an odd index entry.
+        return rest.some(isAppPath) ? "not-found" : "indeterminate";
+      }
 
       // At most the first PROBE_MAX_PLIST_READS hits are read, all inside one
       // shared plutil budget (so two reads still fit the 500 ms plutil cap).
@@ -475,8 +549,7 @@ export function createDetector(deps: DetectorDeps): Detector {
     candidatePath(candidateId) {
       return (
         candidates.get(candidateId) ??
-        CLAUDE_CANDIDATE_PATHS(deps.homeDir).find((known) => known.candidateId === candidateId)
-          ?.path ??
+        claudeCandidates.find((known) => known.candidateId === candidateId)?.path ??
         null
       );
     },

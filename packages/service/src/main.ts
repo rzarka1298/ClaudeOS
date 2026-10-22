@@ -285,7 +285,12 @@ async function main(): Promise<void> {
   });
   // <<< Phase 05.1 (Codex detection) end
   const launchers: LauncherServices = {
-    detector: createDetector({ runner: commandRunner, homeDir, codex: codexDetection }),
+    detector: createDetector({
+      runner: commandRunner,
+      homeDir,
+      env: process.env,
+      codex: codexDetection,
+    }),
     homeDir,
     onLaunchersChanged: () => {
       projectsCollector.onLaunchersChanged();
