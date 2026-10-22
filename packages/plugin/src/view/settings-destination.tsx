@@ -6,6 +6,8 @@ import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import { type LaunchersSession, LaunchersSettings } from "./launchers-settings.js";
+import { ApprovalsTasksSettings } from "./settings-approvals-tasks.js";
+import { StatusLine } from "./settings-controls.js";
 import type { SettingsHost } from "./settings-host.js";
 import { ProjectsSettings } from "./settings-projects.js";
 import {
@@ -15,6 +17,7 @@ import {
   settingsSectionRequested,
   takeSettingsSectionRequest,
 } from "./settings-sections.js";
+import { VisualSettings } from "./settings-visual.js";
 
 /**
  * The command center's own Settings destination (plan 08-11, D-15, 08-UI-SPEC S1, R-01, R-02).
@@ -69,6 +72,10 @@ export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionVie
       pickFolder={pickFolder}
     />
   ),
+  "approvals-tasks": ({ host, connection, notify }) => (
+    <ApprovalsTasksSettings host={host} connection={connection} notify={notify} />
+  ),
+  visual: ({ host, notify }) => <VisualSettings host={host} notify={notify} />,
   launchers: ({ connection, now, launchersActions, launchersSession }) => (
     <LaunchersSettings
       actions={launchersActions}
@@ -217,9 +224,7 @@ export function SettingsDestination({
         <p>Plugin configuration and diagnostics.</p>
         {/* The destination's one live region: present before its first message, it announces
             setting-save, copy, check, rebuild and bundle outcomes, never a section change. */}
-        <p className="ccc-settings-status" role="status">
-          {status}
-        </p>
+        <StatusLine message={status} />
       </div>
       <div className="ccc-settings-layout">
         <nav className="ccc-settings-nav" aria-label="Settings sections">

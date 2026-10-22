@@ -7,6 +7,7 @@ import { scanState } from "../projects/scan-state.js";
 import { requestDestination } from "./navigation-request.js";
 import { RegisterFlow } from "./register-flow.js";
 import { AddScanFolderFlow, ScanFolders } from "./scan-folders.js";
+import { SERVICE_AWAY_REASON } from "./settings-controls.js";
 import { useScanState } from "./use-scan-state.js";
 
 /**
@@ -27,8 +28,6 @@ export const PROJECT_REGISTERED_NOTICE = "Project registered.";
 /** The S1 note shown under a service-owned section's description while the service is away. */
 export const SERVICE_OWNED_AWAY_NOTE =
   "Projects, launchers and paths are managed by the companion service, which isn't running. They are read-only until it is back.";
-/** The visible reason a service-bound control is `aria-disabled` for. */
-export const SERVICE_AWAY_REASON = "The companion service isn't running.";
 /** The existing Projects-destination line for a list that could not be read. */
 const SCAN_LOAD_ERROR =
   "▲ Couldn't load projects. Check the service in Settings → Diagnostics, then refresh.";

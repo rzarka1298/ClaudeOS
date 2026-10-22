@@ -153,13 +153,14 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
   it("Test 3: the nav is one tab stop with a roving tabindex on the active item", () => {
     renderShell();
     const items = within(nav()).getAllByRole("button");
-    expect(items.map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1"]);
+    expect(items.map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1", "-1", "-1"]);
     expect(items.every((item) => item.tagName === "BUTTON")).toBe(true);
     expect(items.every((item) => item.getAttribute("type") === "button")).toBe(true);
   });
 
   it("Test 3: arrow keys move focus without activating, wrapping at both ends", () => {
     renderShell();
+    const order = ["Projects", "Launchers", "Approvals and tasks", "Visual"];
     navItem("Projects").focus();
     fireEvent.keyDown(navItem("Projects"), { key: "ArrowDown" });
     expect(document.activeElement).toBe(navItem("Launchers"));
@@ -168,22 +169,31 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
     expect(navItem("Launchers").getAttribute("aria-current")).toBeNull();
     expect(screen.queryByRole("heading", { level: 3, name: "Launchers" })).toBeNull();
 
-    fireEvent.keyDown(navItem("Launchers"), { key: "ArrowDown" });
+    // Down walks the whole list and wraps from the last item to the first.
+    for (const label of order.slice(2)) {
+      fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(navItem(label));
+    }
+    fireEvent.keyDown(navItem("Visual"), { key: "ArrowDown" });
     expect(document.activeElement).toBe(navItem("Projects"));
+    // Up wraps from the first item to the last.
     fireEvent.keyDown(navItem("Projects"), { key: "ArrowUp" });
-    expect(document.activeElement).toBe(navItem("Launchers"));
-    fireEvent.keyDown(navItem("Launchers"), { key: "ArrowRight" });
+    expect(document.activeElement).toBe(navItem("Visual"));
+    // Left and right do the same, for the wrapped layout.
+    fireEvent.keyDown(navItem("Visual"), { key: "ArrowRight" });
     expect(document.activeElement).toBe(navItem("Projects"));
     fireEvent.keyDown(navItem("Projects"), { key: "ArrowLeft" });
-    expect(document.activeElement).toBe(navItem("Launchers"));
+    expect(document.activeElement).toBe(navItem("Visual"));
+    // None of it activated anything.
+    expect(navItem("Projects").getAttribute("aria-current")).toBe("page");
   });
 
   it("Test 3: Home and End jump to the first and last item", () => {
     renderShell();
     navItem("Projects").focus();
     fireEvent.keyDown(navItem("Projects"), { key: "End" });
-    expect(document.activeElement).toBe(navItem("Launchers"));
-    fireEvent.keyDown(navItem("Launchers"), { key: "Home" });
+    expect(document.activeElement).toBe(navItem("Visual"));
+    fireEvent.keyDown(navItem("Visual"), { key: "Home" });
     expect(document.activeElement).toBe(navItem("Projects"));
   });
 
@@ -234,12 +244,13 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
     expect(navItem("Projects").getAttribute("aria-current")).toBe("page");
   });
 
-  it("an unregistered section is not rendered in the nav", () => {
+  it("renders exactly the registered sections in the fixed order; the others are not in the nav", () => {
     renderShell();
     const labels = within(nav())
       .getAllByRole("button")
       .map((button) => button.textContent);
-    expect(labels).toEqual(["Projects", "Launchers"]);
+    // Integrations, Paths, Security, Schedules and Diagnostics arrive with 08-13, 08-15 and 08-18.
+    expect(labels).toEqual(["Projects", "Launchers", "Approvals and tasks", "Visual"]);
   });
 
   it("the shell's navigation request for Settings after a launchers request still lands on the heading", async () => {
