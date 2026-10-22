@@ -13,7 +13,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { main } from "./cli.js";
+import { REPO_ROOT } from "./repo-paths.js";
 import { type AuditResult, auditPhases, classifyResult } from "./uat-audit.js";
+import { parseUatScript } from "./uat-tags.js";
 
 /**
  * Plan 08-06 (SLICE-02, D-24, D-25, D-29): the audit checker over synthetic fixtures. The fixtures
@@ -439,5 +441,145 @@ describe("the exception list in the record (Test 6)", () => {
     }
     expect(text).toMatch(/^exceptions: 7$/m);
     expect(text).toMatch(/^exceptions-accepted: 0$/m);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: the preserved blocks, strict mode, the public clone and the real tree.
+
+describe("regeneration keeps what the owner wrote (Test 1)", () => {
+  async function firstRecord(): Promise<{ out: string; phases: string }> {
+    const phases = phasesWith("01-alpha", "05-gamma");
+    const out = join(scratch, "AUDIT.md");
+    await audit(["--phases-dir", phases, "--out", out, "--only", "01,05"]);
+    return { out, phases };
+  }
+
+  it("writes default Amendments and Milestone statement blocks on the first run", async () => {
+    const { out } = await firstRecord();
+    const text = readFileSync(out, "utf8");
+    expect(text).toMatch(/^## Amendments$/m);
+    expect(text).toMatch(/^## Milestone statement$/m);
+    expect(text).toMatch(/OD-7, accept the exceptions above in one statement: pending/);
+  });
+
+  it("keeps the accepted: values, the Amendments block and the statement block byte for byte", async () => {
+    const { out, phases } = await firstRecord();
+    let text = readFileSync(out, "utf8");
+    text = text.replace(/^(\| 01-item-10 \|.*\| )pending \|$/m, "$12000-05-06 (synthetic owner) |");
+    text = text.replace(
+      /^## Amendments[\s\S]*?(?=^## Milestone statement)/m,
+      "## Amendments\n\n- 2000-05-05: a made-up amendment line, kept verbatim.\n\n",
+    );
+    text = text.replace(
+      /^## Milestone statement[\s\S]*$/m,
+      "## Milestone statement\n\nOwner words, kept verbatim: accepted.\n- Verdict: yes\n",
+    );
+    text = text.replace("## Phases\n", "## Phases\n\nSTALE GENERATED LINE\n");
+    writeFileSync(out, text);
+    const kept = (value: string) =>
+      [
+        value.match(/^\| 01-item-10 \|.*$/m)?.[0],
+        value.match(/^## Amendments[\s\S]*?(?=^## Milestone statement)/m)?.[0],
+        value.match(/^## Milestone statement[\s\S]*$/m)?.[0],
+      ].join("\n--\n");
+    const before = kept(text);
+
+    await audit(["--phases-dir", phases, "--out", out, "--only", "01,05"]);
+
+    const after = readFileSync(out, "utf8");
+    expect(kept(after)).toBe(before);
+    expect(after).not.toContain("STALE GENERATED LINE");
+    expect(after).toMatch(/^exceptions-accepted: 1$/m);
+    // The accepted exception no longer counts against a strict run; the pending one still does.
+    expect(after).toMatch(/^strict-clean: false$/m);
+  });
+});
+
+describe("--strict (Test 2)", () => {
+  async function recorded(phases: string, only: string, extra: string[] = []): Promise<number> {
+    return (
+      await audit([
+        "--phases-dir",
+        phases,
+        "--out",
+        join(scratch, "AUDIT.md"),
+        "--only",
+        only,
+        ...extra,
+      ])
+    ).code;
+  }
+
+  it("fails while 07 is pending or an exception is not accepted, and passes once both are settled", async () => {
+    const phases = phasesWith("01-alpha", "07-eta");
+    expect(await recorded(phases, "01,07")).toBe(0);
+    expect(await recorded(phases, "01,07", ["--strict"])).toBe(1);
+
+    // 07 walked: every result recorded. The one exception is still unaccepted.
+    const seven = join(phases, "07-eta", "07-UAT.md");
+    writeFileSync(seven, readFileSync(seven, "utf8").replace(/\[pending\]/g, "pass"));
+    expect(await recorded(phases, "01,07", ["--strict"])).toBe(1);
+    expect(readFileSync(join(scratch, "AUDIT.md"), "utf8")).toMatch(/^strict-clean: false$/m);
+
+    // The owner accepts it in the record; the next strict run is clean.
+    const out = join(scratch, "AUDIT.md");
+    writeFileSync(
+      out,
+      readFileSync(out, "utf8").replace(/^(\| 01-item-10 \|.*\| )pending \|$/m, "$12000-05-06 |"),
+    );
+    expect(await recorded(phases, "01,07", ["--strict"])).toBe(0);
+    expect(readFileSync(out, "utf8")).toMatch(/^strict-clean: true$/m);
+  });
+});
+
+describe("a public clone (Test 3)", () => {
+  it("prints one not-applicable line and exits 0 when there is no planning folder", async () => {
+    const written: string[] = [];
+    const { code, lines } = await audit([], {
+      exists: () => false,
+      writeText: (path: string) => written.push(path),
+    });
+    expect(code).toBe(0);
+    expect(lines).toEqual(["not applicable (no planning directory)"]);
+    expect(written).toEqual([]);
+  });
+});
+
+const planned = existsSync(join(REPO_ROOT, ".planning", "ROADMAP.md"));
+const real = planned ? describe : describe.skip;
+
+real("the real tree (Test 4, private checkouts only)", () => {
+  it("exits 0 with phases 01 to 06 recorded and 07 and 08 pending, and prints no item text", async () => {
+    const out = join(scratch, "REAL-AUDIT.md");
+    const { code, lines } = await audit(["--out", out]);
+    expect(code).toBe(0);
+    const text = readFileSync(out, "utf8");
+    for (const phase of ["01", "02", "03", "04", "05", "05.1", "05.2", "06"]) {
+      expect(text, phase).toMatch(
+        new RegExp(
+          `^\\| ${phase.replace(".", "\\.")} \\|.*\\| (?:recorded|recorded-with-exceptions) \\|`,
+          "m",
+        ),
+      );
+    }
+    for (const phase of ["07", "08"]) {
+      expect(text, phase).toMatch(new RegExp(`^\\| ${phase} \\|.*\\| pending-live-uat \\|`, "m"));
+    }
+    // Console output is counts and statuses only: no item title and no result text.
+    const phasesDir = join(REPO_ROOT, ".planning", "phases");
+    const folder = readdirSync(phasesDir).find((name) => name.startsWith("07-")) ?? "";
+    const titles = parseUatScript(
+      readFileSync(join(phasesDir, folder, "07-UAT.md"), "utf8"),
+    ).items.map((item) => item.title);
+    expect(titles.length).toBeGreaterThan(0);
+    const printed = lines.join("\n");
+    for (const title of titles) expect(printed).not.toContain(title);
+    expect(printed).not.toMatch(/iTerm2|UNVERIFIED|computer use/);
+    for (const line of lines) {
+      expect(line).toMatch(
+        /^(Phase \d{2}(?:\.\d)?: [a-z-]+ \(\d+\/\d+ items recorded\)|Exceptions listed: \d+\.|Record written: [A-Za-z0-9.-]+\.)$/,
+      );
+    }
   });
 });

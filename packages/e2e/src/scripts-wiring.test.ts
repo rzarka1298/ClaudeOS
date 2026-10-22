@@ -48,6 +48,16 @@ describe("e2e scripts stay outside CI (D-03)", () => {
     expect(rootScripts["uat:auto"]).toBe("turbo run build && pnpm --filter @ccc/e2e run uat");
   });
 
+  it("wires uat:audit in the package and at the root, and no ci:* script runs it (plan 08-06)", () => {
+    expect(scripts["uat:audit"]).toBe("node dist/cli.js audit");
+    expect(rootScripts["uat:audit"]).toBe(
+      "turbo run build --filter=@ccc/e2e && pnpm --filter @ccc/e2e run uat:audit",
+    );
+    for (const [name, command] of Object.entries(rootScripts)) {
+      if (name !== "uat:audit") expect(command, name).not.toMatch(/uat:audit/);
+    }
+  });
+
   it("keeps uat and e2e out of every ci:* script and the root build, test, typecheck and lint", () => {
     for (const [name, command] of Object.entries(rootScripts)) {
       if (name.startsWith("ci:") || ["build", "test", "typecheck", "lint"].includes(name)) {

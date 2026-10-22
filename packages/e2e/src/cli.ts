@@ -88,6 +88,8 @@ export interface CliIo {
   listFiles: (dir: string) => string[];
   /** The hash of the plugin build on disk now; null when it cannot be hashed. */
   buildHash: () => string | null;
+  /** True when a path exists (the audit's public-clone check). */
+  exists: (path: string) => boolean;
 }
 
 export interface CliDeps {
@@ -278,6 +280,7 @@ const REAL_IO: CliIo = {
     readGitFacts({ cwd: REPO_ROOT, ...(since === undefined ? {} : { since }) }),
   now: () => new Date(),
   tmpDir: () => tmpdir(),
+  exists: (path) => existsSync(path),
   buildHash: () => {
     try {
       return buildHash(PLUGIN_BUILD_DIR);
@@ -458,7 +461,7 @@ const auditHandler: CommandHandler = async (argv, deps) => {
       readText: io.readText,
       writeText: io.writeText,
       listFiles: io.listFiles,
-      exists: (path) => existsSync(path),
+      exists: io.exists,
       now: io.now,
       gitHead: async () => {
         try {

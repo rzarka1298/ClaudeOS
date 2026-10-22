@@ -211,6 +211,7 @@ function memoryIo(files: Record<string, string>, over: Partial<CliIo> = {}): Cli
     now: () => new Date("2026-10-12T08:00:00Z"),
     tmpDir: () => "/tmp",
     listFiles: () => [],
+    exists: (path) => path in files,
     buildHash: () => "0123456789ab",
     ...over,
   };
