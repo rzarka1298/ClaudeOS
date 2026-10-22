@@ -5,11 +5,13 @@ import type {
   ProjectId,
   SizeHint,
 } from "@ccc/domain";
+import { REPORT_STALE_AFTER_MS } from "@ccc/domain/research.js";
 import type { VNode } from "preact";
 import { useContext } from "preact/hooks";
 import { launchStatus, launchStatusKey } from "../projects/launch-status.js";
 import { UntrustedText } from "../view/approval-text.js";
 import type { DestinationId } from "../view/destinations.js";
+import { itemsText, sourcesText } from "../view/research-format.js";
 import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
@@ -506,60 +508,108 @@ export const projectShortcutsWidget: WidgetDefinition<ProjectShortcutsData> = {
 export { type ClaudeUsageData, claudeUsageWidget } from "./claude-usage.js";
 
 // ---------------------------------------------------------------------------
-// 5. Technology and market intelligence (PRD §7.1.5) — unavailable, Phase 7
+// 5. Technology and market intelligence (PRD §7.1.5) — service-fed (plan 08-17, D-19)
 // ---------------------------------------------------------------------------
 
-export interface IntelStory {
-  readonly id: string;
-  readonly headline: string;
-  readonly category: string;
-  readonly summary: string;
-  /**
-   * Counted by the research pipeline from the sources it actually collected
-   * for this story, so it is always known — a story with no sources is not
-   * emitted. Deliberately NOT a {@link MaybeCount}.
-   */
+/**
+ * The newest readable research report, as the card shows it. Built by
+ * `overview/overview-feeds.ts` from the first readable row of the report
+ * list, so this body formats no date and decides no freshness: `stale` is the
+ * shared 36-hour rule (`reportFreshness`) already applied. The counts come
+ * from the report's own header, so they are always known; a missing count is
+ * never invented as zero.
+ */
+export interface TechIntelReport {
+  /** The report's note id: the only thing `Open report` hands to the shell. */
+  readonly noteId: string;
+  /** The report's title: model- and source-derived text, rendered as text only. */
+  readonly title: string;
+  readonly generatedAt: string;
+  readonly partial: boolean;
+  /** Sources that contributed. */
   readonly sourceCount: number;
+  /** Sources the run tried. */
+  readonly sourceTotal: number;
+  readonly itemCount: number;
+  /** Sources that did not respond (zero for a complete report). */
+  readonly unavailableCount: number;
+  /** True at or past the shared stale threshold. */
+  readonly stale: boolean;
 }
 
+/**
+ * `report` is the newest readable report, or `null` when the list has none.
+ * `unreadableCount` is how many rows of the newest page could not be read, so
+ * the empty state can tell "no reports yet" from "no readable reports".
+ */
 export interface TechIntelData {
-  readonly stories: readonly IntelStory[];
-  readonly marketSummary: string | null;
+  readonly report: TechIntelReport | null;
+  readonly unreadableCount: number;
 }
 
-function TechIntelBody({ data, size, onNavigate }: WidgetBodyProps<TechIntelData>): VNode {
+/** The stale threshold in whole hours, from the one shared constant. */
+const STALE_HOURS = REPORT_STALE_AFTER_MS / 3_600_000;
+
+function sourcesAndItems(report: TechIntelReport): string {
+  const sources =
+    report.partial && report.sourceTotal !== report.sourceCount
+      ? `${report.sourceCount} of ${report.sourceTotal} sources`
+      : sourcesText(report.sourceCount);
+  return `${sources} · ${itemsText(report.itemCount)}`;
+}
+
+function TechIntelBody({ data, onNavigate }: WidgetBodyProps<TechIntelData>): VNode | null {
+  const report = data.report;
+  if (report === null) return null;
   return (
-    <>
-      <ListBody<IntelStory>
-        rows={data.stories}
-        size={size}
-        onMore={onNavigate}
-        keyOf={(story) => story.id}
-        renderPrimary={(story) => story.headline}
-        renderMeta={(story) =>
-          `${story.category} · ${count(story.sourceCount, "source", "sources")}`
-        }
-        moreDestination="research"
-      />
-      {data.marketSummary === null ? null : (
-        <p className="ccc-state-body ccc-clamp-2">{data.marketSummary}</p>
-      )}
-    </>
+    <div className="ccc-intel-latest">
+      <p className="ccc-clamp-2" title={report.title}>
+        <UntrustedText text={report.title} />
+      </p>
+      <p className="ccc-list-meta">{sourcesAndItems(report)}</p>
+      <p className="ccc-list-meta">AI-generated summary. Not verified by a person.</p>
+      {report.stale ? (
+        <>
+          <p className="ccc-state-body">
+            {`This report is more than ${STALE_HOURS} hours old. Press Run now in the research view for a fresh one.`}
+          </p>
+          <button type="button" className="ccc-list-more" onClick={() => onNavigate?.("research")}>
+            Open the research view
+          </button>
+        </>
+      ) : null}
+      <button
+        type="button"
+        className="ccc-connect-button"
+        aria-label={`Open report: ${report.title}`}
+        onClick={() => onNavigate?.("research", { noteId: report.noteId })}
+      >
+        Open report
+      </button>
+    </div>
   );
 }
 
 export const techIntelWidget: WidgetDefinition<TechIntelData> = {
   id: "tech-intel",
   title: "Technology and market intelligence",
-  description: "Top daily stories and a broad market summary. Filled in by phase 7.",
-  dataKeys: [{ key: "intel.daily", transport: "service", sourceLabel: "Research pipeline" }],
-  refresh: { kind: "manual" },
+  description: "The latest cited research report. Open it to read the findings and sources.",
+  dataKeys: [
+    { key: "research.latest-report", transport: "service", sourceLabel: "Research reports" },
+    { key: "research.sources", transport: "service", sourceLabel: "Research sources" },
+  ],
+  refresh: { kind: "interval", everyMs: 60_000 },
   minSize: "medium",
   preferredSize: "tall",
   featureFlag: "widget.tech-intel",
   quickActions: [],
   renderBody: TechIntelBody,
-  renderEmpty: () => <p className="ccc-state-body">No stories have been collected yet.</p>,
+  ownsEmptyCopy: true,
+  renderEmpty: ({ data }) => (
+    <p className="ccc-state-heading">
+      {data !== undefined && data.unreadableCount > 0 ? "No readable reports" : "No reports yet"}
+    </p>
+  ),
 };
 
 // ---------------------------------------------------------------------------

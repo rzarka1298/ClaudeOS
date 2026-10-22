@@ -277,7 +277,7 @@ const MINIMAL_DATA: Readonly<Record<WidgetId, unknown>> = {
     },
     nowMs: Date.parse("2026-09-25T11:58:00Z"),
   },
-  "tech-intel": { stories: [], marketSummary: null },
+  "tech-intel": { report: null, unreadableCount: 0 },
   "github-discoveries": { repos: [] },
   codex: {
     sessions: null,
@@ -483,19 +483,6 @@ function sessions(n: number): unknown {
   };
 }
 
-function stories(n: number): unknown {
-  return {
-    stories: Array.from({ length: n }, (_, i) => ({
-      id: `story-${i}`,
-      headline: `Headline ${i}`,
-      category: "Tools",
-      summary: "A synthetic summary.",
-      sourceCount: 2,
-    })),
-    marketSummary: null,
-  };
-}
-
 function projects(n: number): unknown {
   return {
     projects: Array.from({ length: n }, (_, i) => ({
@@ -548,7 +535,6 @@ describe("the layout decides each list body's row budget (review MAJOR 2)", () =
   function renderPlaced(entries: { widgetId: WidgetId; size: "small" | "medium" | "tall" }[]) {
     const states = cachedStates();
     states["active-sessions"] = signal(cachedReadyWith(sessions(12)));
-    states["tech-intel"] = signal(cachedReadyWith(stories(12)));
     states["project-shortcuts"] = signal(cachedReadyWith(projects(12)));
     return render(
       <Overview
@@ -575,11 +561,13 @@ describe("the layout decides each list body's row budget (review MAJOR 2)", () =
   it("caps a tall-preferring list at the medium budget when the layout places it medium", () => {
     const { container } = renderPlaced([
       { widgetId: "active-sessions", size: "medium" },
-      { widgetId: "tech-intel", size: "medium" },
+      { widgetId: "project-shortcuts", size: "medium" },
     ]);
 
+    // Plan 08-17: Technology is one report now, not a list, so the second list card is
+    // Project shortcuts (twelve rows placed medium); the rule under test is unchanged.
     expect(rowsAndMore(container, "Active Claude sessions")).toEqual([6, "+6 more"]);
-    expect(rowsAndMore(container, "Technology and market intelligence")).toEqual([6, "+6 more"]);
+    expect(rowsAndMore(container, "Project shortcuts")).toEqual([6, "+6 more"]);
   });
 
   it("grants a medium-preferring list the tall budget when the layout places it tall", () => {

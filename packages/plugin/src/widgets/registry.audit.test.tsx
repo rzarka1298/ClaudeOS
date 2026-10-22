@@ -36,10 +36,12 @@ describe("widgetStateFor is one signal per widget", () => {
   // D-17 property it must still hold — no fixture data reaches it — is
   // checked below by source scan and by its honest pre-connection state.
   // `project-shortcuts` and `quick-actions` are real too (Phase 4).
-  // Plan 08-14: `today` is service-fed too (a computed over the Overview feeds).
+  // Plan 08-14: `today` is service-fed too (a computed over the Overview feeds), and
+  // plan 08-17 does the same for `tech-intel` (the latest cited report).
   const CONSTANT_PANEL_ORDER = PRD_PANEL_ORDER.filter(
     (id) =>
       id !== "today" &&
+      id !== "tech-intel" &&
       id !== "active-sessions" &&
       id !== "project-shortcuts" &&
       id !== "quick-actions" &&
@@ -62,6 +64,10 @@ describe("widgetStateFor is one signal per widget", () => {
   // projects-state.test.ts and panels.test.tsx.
   it("project-shortcuts: loading before any snapshot has arrived", () => {
     expect(widgetStateFor("project-shortcuts").value.kind).toBe("loading");
+  });
+
+  it("tech-intel: loading before the report list has been read (plan 08-17)", () => {
+    expect(widgetStateFor("tech-intel").value.kind).toBe("loading");
   });
 
   it("active-sessions: derives from the live connection, never a fixture (D-17)", () => {

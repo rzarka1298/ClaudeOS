@@ -16,7 +16,7 @@ import type { ProjectLaunchActionId } from "../projects/launch-status.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
-import { pressRunNow } from "../research/state.js";
+import { pressRunNow, selectReport } from "../research/state.js";
 import { globalTasksContext } from "../tasks/contexts.js";
 import { nowTick } from "../widgets/clock.js";
 import type {
@@ -405,6 +405,11 @@ export function Shell({
       // selects it in the global context and its pane heading takes focus once.
       globalTasksContext.select(selection.taskId);
       taskDetailFocusRequested.value = true;
+    } else if (selection !== undefined && "noteId" in selection) {
+      // A report selection (the Overview's Technology card, D-19): the report is
+      // selected in the Phase 7 reader BEFORE the Research destination mounts, so
+      // the reader loads it and its title takes focus once it has (07 focus rule).
+      selectReport(selection.noteId);
     }
     select(id);
     tabRefs.current[id]?.focus();

@@ -447,16 +447,33 @@ function adaptCodex(data: Fields): CodexCardData {
   };
 }
 
-function adaptTechIntel(data: Fields): TechIntelData {
+/** How old the harness report is per variant: a report is a cached artifact, 36 hours is the stale line. */
+const TECH_INTEL_AGE_HOURS = { live: 3, stale: 40 } as const;
+
+/**
+ * Plan 08-17: the card shows ONE cited report, not stories. The fixture's first
+ * row supplies the (synthetic) title and its row count the item count; the age
+ * and the partial case follow the variant, so `live` is a complete cached report,
+ * `stale` a partial one past the 36-hour line, and `empty` no report at all.
+ */
+function adaptTechIntel(data: Fields, variant: FixtureStateKey): TechIntelData {
+  const first = list(data.rows)[0];
+  if (first === undefined) return { report: null, unreadableCount: 0 };
+  const stale = variant === "stale";
+  const ageHours = stale ? TECH_INTEL_AGE_HOURS.stale : TECH_INTEL_AGE_HOURS.live;
   return {
-    stories: list(data.rows).map((row) => ({
-      id: text(row.headline),
-      headline: text(row.headline),
-      category: text(row.category),
-      summary: text(row.summary),
-      sourceCount: quantity(row.sourceCount) ?? 1, // a story always has at least one source
-    })),
-    marketSummary: typeof data.marketLine === "string" ? data.marketLine : null,
+    report: {
+      noteId: "0mfk1a2b3c4d5e6f7a8b9c0d1",
+      title: text(first.headline),
+      generatedAt: new Date(NOW - ageHours * 3_600_000).toISOString(),
+      partial: stale,
+      sourceCount: stale ? 5 : 6,
+      sourceTotal: 6,
+      itemCount: list(data.rows).length,
+      unavailableCount: stale ? 1 : 0,
+      stale,
+    },
+    unreadableCount: 0,
   };
 }
 
@@ -527,6 +544,27 @@ function readyFrom(
   isEmpty: boolean,
 ): WidgetState<unknown> {
   const variant = states[key];
+  if (id === "tech-intel") {
+    // Plan 08-17: the card's provenance is the report's own (a cached artifact, never
+    // `live`), not the fixture's story-feed provenance, exactly as the live mapping does.
+    const data = adaptTechIntel(variant.data, key);
+    const report = data.report;
+    return {
+      kind: "ready",
+      data,
+      observedAt: report?.generatedAt ?? variant.observedAt,
+      freshness: report?.stale === true ? "stale" : "cached",
+      partiality:
+        report?.partial === true
+          ? {
+              partial: true,
+              missingSources: ["Research sources"],
+              summary: `${report.unavailableCount} of ${report.sourceTotal} research sources were unavailable`,
+            }
+          : { partial: false },
+      isEmpty,
+    };
+  }
   return {
     kind: "ready",
     data: ADAPTERS[id](variant.data, key),

@@ -128,16 +128,21 @@ describe("onNavigate accepts a run, a proposal or a task selection (Test 1)", ()
 });
 
 describe("the selection type (Test 2)", () => {
-  it("is the union of the three shapes and a body's onNavigate prop accepts each", () => {
+  it("is the union of the four shapes and a body's onNavigate prop accepts each", () => {
     type OnNavigate = NonNullable<WidgetBodyProps<unknown>["onNavigate"]>;
     type Accepted = NonNullable<Parameters<OnNavigate>[1]>;
     expectTypeOf<NavigationSelection>().toEqualTypeOf<
-      { readonly runId: string } | { readonly proposalId: string } | { readonly taskId: string }
+      | { readonly runId: string }
+      | { readonly proposalId: string }
+      | { readonly taskId: string }
+      | { readonly noteId: string }
     >();
     expectTypeOf<{ readonly runId: string }>().toExtend<Accepted>();
     expectTypeOf<{ readonly proposalId: string }>().toExtend<Accepted>();
     expectTypeOf<{ readonly taskId: string }>().toExtend<Accepted>();
-    // A selection naming none of the three keys is not accepted.
+    // Plan 08-17: a report's note id, for the Overview's Open report.
+    expectTypeOf<{ readonly noteId: string }>().toExtend<Accepted>();
+    // A selection naming none of the four keys is not accepted.
     expectTypeOf<{ readonly somethingElse: string }>().not.toExtend<Accepted>();
   });
 });

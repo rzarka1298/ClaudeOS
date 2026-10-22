@@ -12,16 +12,31 @@ import {
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
+import { resetOverviewFeeds } from "../overview/overview-feeds.js";
 import { configureResearch } from "../research/api.js";
 import { createResearchApi } from "../research/client-api.js";
+import { resetReaderState } from "../research/reader-state.js";
 import { createRunNowRequester } from "../research/run-now.js";
-import { resetResearchState } from "../research/state.js";
+import { resetResearchState, selectedNoteId } from "../research/state.js";
+import { fakeResearchApi, fakeResearchPorts } from "../test-support/research-api-fake.js";
+import {
+  itemsPage,
+  REPORT_NOTE_ID,
+  sourcesPage,
+  threeKindItems,
+  threeSources,
+} from "../test-support/research-report-fixtures.js";
 import {
   EMPTY_STATUS,
   id25,
+  iso,
+  listOf,
+  RESEARCH_NOW_MS,
   RESEARCH_TOPIC,
+  reportRow,
   statusOf,
 } from "../test-support/research-view-fixtures.js";
+import { nowTick } from "../widgets/clock.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import * as quickActions from "../widgets/quick-actions.js";
 import { DESTINATIONS } from "./destinations.js";
@@ -184,5 +199,59 @@ describe("Test 4 (destination): the shell renders Research from DESTINATION_VIEW
     expect(DESTINATIONS.find((entry) => entry.id === "research")?.description).toBe(
       "Cited research reports, their sources and the latest automation runs.",
     );
+  });
+});
+
+describe("08-17 Task 1 (tracer): the Overview's latest cited report opens in the reader", () => {
+  const REPORT_NOTE = REPORT_NOTE_ID;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(RESEARCH_NOW_MS);
+    nowTick.value = RESEARCH_NOW_MS;
+    resetOverviewFeeds();
+    resetReaderState();
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    resetOverviewFeeds();
+    resetReaderState();
+  });
+
+  it("Test 1: the card shows the report, Open report selects it and the Research reader loads it", async () => {
+    const row = reportRow(0, {
+      noteId: REPORT_NOTE,
+      generatedAt: iso(-180),
+      sourceCount: 5,
+      sourceTotal: 5,
+      itemCount: 12,
+    });
+    const api = fakeResearchApi({
+      list: vi.fn(() => Promise.resolve(listOf([row]))),
+      report: vi.fn((_noteId: string, page: string) =>
+        Promise.resolve(
+          page === "items" ? itemsPage(threeKindItems()) : sourcesPage(threeSources()),
+        ),
+      ) as never,
+    });
+    configureResearch({ api, ...fakeResearchPorts() });
+
+    render(<Shell />);
+    const open = await screen.findByRole("button", { name: `Open report: ${row.title}` });
+    const card = open.closest("section.ccc-card");
+    expect(card?.textContent).toContain("5 sources · 12 items");
+    expect(card?.querySelector('.ccc-badge[data-badge="cached"]')).not.toBeNull();
+
+    fireEvent.click(open);
+
+    expect(screen.getByRole("tab", { name: "Research" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    await waitFor(() => expect(api.report).toHaveBeenCalledWith(REPORT_NOTE, "items", undefined));
+    const title = await screen.findByRole("heading", { level: 3, name: /Developer tooling/ });
+    await waitFor(() => expect(document.activeElement).toBe(title));
+    expect(selectedNoteId.value).toBe(REPORT_NOTE);
   });
 });

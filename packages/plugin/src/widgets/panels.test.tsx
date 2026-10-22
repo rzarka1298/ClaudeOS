@@ -881,3 +881,120 @@ describe("Quick actions is live (S8, D-38, PR-08, PR-12, RR-18)", () => {
     expect(quickActionsWidget.dataKeys.map((key) => key.key)).toEqual(["launchers.config"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Technology and market intelligence (plan 08-17, UI-SPEC S7 and G15)
+// ---------------------------------------------------------------------------
+
+const REPORT_TITLE = "Developer tooling and open-source releases - Oct 14, 2026";
+const REPORT_NOTE = "0mfk1a2b3c4d5e6f7a8b9c0d1";
+
+function techReport(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    noteId: REPORT_NOTE,
+    title: REPORT_TITLE,
+    generatedAt: "2026-09-25T08:58:00.000Z",
+    partial: false,
+    sourceCount: 5,
+    sourceTotal: 5,
+    itemCount: 12,
+    unavailableCount: 0,
+    stale: false,
+    ...extra,
+  };
+}
+
+function techData(report: Record<string, unknown> | null, unreadableCount = 0): unknown {
+  return { report, unreadableCount };
+}
+
+/** Renders the Technology card from a state and returns the card element and the navigation spy. */
+function techCard(state: WidgetState<unknown>, connection = { kind: "live" } as const) {
+  const onNavigate = vi.fn();
+  const view = render(
+    <Overview
+      layout={{ entries: [{ widgetId: "tech-intel", size: "medium" }], skipped: [] }}
+      stateFor={() => signal(state)}
+      connection={connection}
+      now={Date.parse(OBSERVED)}
+      onNavigate={onNavigate}
+    />,
+  );
+  const card = view.container.querySelector("section.ccc-card");
+  if (!card) throw new Error("no tech-intel card");
+  return { ...view, card, onNavigate };
+}
+
+function techReady(
+  data: unknown,
+  extra: Partial<Extract<WidgetState<unknown>, { kind: "ready" }>> = {},
+): WidgetState<unknown> {
+  return {
+    kind: "ready",
+    data,
+    observedAt: "2026-09-25T08:58:00.000Z",
+    freshness: "cached",
+    partiality: { partial: false },
+    isEmpty: false,
+    ...extra,
+  };
+}
+
+describe("Technology: the latest cited report (plan 08-17 Task 1)", () => {
+  it("shows the title first, the source and item counts, the AI line and Open report", () => {
+    const { card } = techCard(techReady(techData(techReport())));
+    const latest = card.querySelector(".ccc-intel-latest");
+    expect(latest?.firstElementChild?.textContent).toBe(REPORT_TITLE);
+    expect(card.textContent).toContain("5 sources · 12 items");
+    expect(card.textContent).toContain("AI-generated summary. Not verified by a person.");
+    expect(
+      within(card as HTMLElement).getByRole("button", { name: `Open report: ${REPORT_TITLE}` })
+        .textContent,
+    ).toBe("Open report");
+  });
+
+  it("pluralises: one source, one item", () => {
+    const { card } = techCard(
+      techReady(techData(techReport({ sourceCount: 1, sourceTotal: 1, itemCount: 1 }))),
+    );
+    expect(card.textContent).toContain("1 source · 1 item");
+    expect(card.textContent).not.toMatch(/1 sources|1 items/);
+  });
+
+  it("Open report emits NavigationSelection { noteId } for the research destination", () => {
+    const { card, onNavigate } = techCard(techReady(techData(techReport())));
+    fireEvent.click(
+      within(card as HTMLElement).getByRole("button", { name: `Open report: ${REPORT_TITLE}` }),
+    );
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("research", { noteId: REPORT_NOTE });
+  });
+
+  it("a cached report says Cached in the footer and never Live", () => {
+    const { card } = techCard(techReady(techData(techReport())));
+    expect(card.getAttribute("data-presentation")).toBe("ready");
+    expect(card.querySelector('.ccc-badge[data-badge="cached"]')?.textContent).toContain("Cached");
+    expect(card.querySelector('.ccc-badge[data-badge="live"]')).toBeNull();
+    expect(card.textContent).not.toContain("Live");
+  });
+
+  it("a stale report adds the stale line and a link to the research view, badge Stale", () => {
+    const { card, onNavigate } = techCard(
+      techReady(techData(techReport({ stale: true })), { freshness: "stale" }),
+    );
+    expect(card.getAttribute("data-presentation")).toBe("stale");
+    expect(card.textContent).toContain(
+      "This report is more than 36 hours old. Press Run now in the research view for a fresh one.",
+    );
+    expect(card.querySelector('.ccc-badge[data-badge="stale"]')?.textContent).toContain("Stale");
+    expect(card.querySelector('.ccc-badge[data-badge="live"]')).toBeNull();
+    fireEvent.click(
+      within(card as HTMLElement).getByRole("button", { name: "Open the research view" }),
+    );
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("research");
+  });
+
+  it("a fresh report has no stale line", () => {
+    const { card } = techCard(techReady(techData(techReport())));
+    expect(card.textContent).not.toContain("more than 36 hours old");
+  });
+});

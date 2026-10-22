@@ -1,5 +1,5 @@
 import { type ReadonlySignal, signal } from "@preact/signals";
-import { todayState } from "../overview/overview-feeds.js";
+import { techIntelState, todayState } from "../overview/overview-feeds.js";
 import { projectShortcutsState, quickActionsState } from "../projects/projects-state.js";
 import { codexState } from "./codex-signals.js";
 import type { WidgetState } from "./contract.js";
@@ -75,12 +75,11 @@ const WIDGET_STATES: Readonly<Record<WidgetId, ReadonlySignal<WidgetState<unknow
   "active-sessions": activeSessionsState,
   "claude-usage": claudeUsageState,
   codex: codexState,
-  // `tech-intel` has no connector to click: `unavailable`, not a plausible lie
-  // that reads as "one click away" (ADR-0023 rejected alternative). Plan 08-17
-  // replaces it with a service-fed signal.
-  // Plan 04-07: a service-fed signal (D-35), replacing the constant above.
+  // Plan 04-07: a service-fed signal (D-35), replacing a constant.
   "project-shortcuts": projectShortcutsState,
-  "tech-intel": constantState("tech-intel", UNAVAILABLE_STATE),
+  // Plan 08-17: a computed over the report-list feed (`overview/overview-feeds.ts`),
+  // service-fed; freshness is `cached` or `stale`, never `live` (UI-SPEC R-14).
+  "tech-intel": techIntelState,
   "quick-actions": quickActionsState,
 };
 
