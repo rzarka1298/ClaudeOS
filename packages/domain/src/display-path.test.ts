@@ -31,9 +31,8 @@ describe("Task 3 Test 1: toDisplayPath", () => {
 
   it("does not treat a sibling that shares the home folder's prefix as inside home", () => {
     expect(toDisplayPath("/home/USERNAME2/work/app", "/home/USERNAME")).toBe("…/work/app");
-    expect(toDisplayPath("/home/USERNAME-archive", "/home/USERNAME")).toBe(
-      "…/home/USERNAME-archive",
-    );
+    // The sibling's own name contains the user segment, so it is masked (FIX1A MINOR 2).
+    expect(toDisplayPath("/home/USERNAME-archive", "/home/USERNAME")).toBe("…/home/…");
   });
 
   it("uses the outside rule when the home folder is null, empty or the root", () => {
@@ -62,6 +61,39 @@ describe("Task 3 Test 1: toDisplayPath", () => {
     expect(toDisplayPath("/Volumes/USERNAME/projects", HOME)).toBe("…/…/projects");
     expect(toDisplayPath("/srv/username", HOME)).toBe("…/srv/…");
   });
+
+  it("masks any segment that CONTAINS the user segment, case-insensitively (FIX1A MINOR 2)", () => {
+    expect(toDisplayPath("/Volumes/USERNAME-backup/Vault", HOME)).toBe("…/…/Vault");
+    expect(toDisplayPath("/Volumes/Vault/old-username", HOME)).toBe("…/Vault/…");
+    expect(toDisplayPath("/Volumes/UserName2024/MyUserNameVault", HOME)).toBe("…/…/…");
+    expect(toDisplayPath("/Volumes/Backup/notes", HOME)).toBe("…/Backup/notes");
+  });
+
+  it("normalises . and .. before deciding inside or outside (FIX1A MINOR 1)", () => {
+    expect(toDisplayPath("/Users/USERNAME/a/../b", HOME)).toBe("~/b");
+    expect(toDisplayPath("/Users/USERNAME/./a/./b", HOME)).toBe("~/a/b");
+    // Climbing out of home is an outside path, not a ~/.. one.
+    expect(toDisplayPath("/Users/USERNAME/../other/x", HOME)).toBe("…/other/x");
+    expect(toDisplayPath("/Users/USERNAME/..", HOME)).toBe("…/Users");
+    expect(toDisplayPath("/Users/USERNAME/../..", HOME)).toBeNull();
+    // Cannot climb above the root.
+    expect(toDisplayPath("/../../tmp/x", HOME)).toBe("…/tmp/x");
+    expect(toDisplayPath("/a/..", HOME)).toBeNull();
+    expect(toDisplayPath("/.", HOME)).toBeNull();
+  });
+
+  it("never emits an empty, . or .. segment", () => {
+    for (const absolute of [
+      "/Users/USERNAME/../../../etc/passwd",
+      "/Users//USERNAME///x",
+      "/./x/./y/..",
+      "/Volumes/../Volumes/../x/y",
+    ]) {
+      const text = toDisplayPath(absolute, HOME);
+      if (text === null) continue;
+      expect(DisplayPathSchema.safeParse(text).success, `${absolute} -> ${text}`).toBe(true);
+    }
+  });
 });
 
 /** A small deterministic generator, so the sweep is reproducible without a dependency. */
@@ -75,7 +107,22 @@ function lcg(seed: number): () => number {
 
 describe("Task 3 Test 2: property sweep", () => {
   const user = "USERNAME";
-  const pool = ["Obsidian", "vault", "work", "app", user, "notes", ".config", "a b", "tmp", "x"];
+  const pool = [
+    "Obsidian",
+    "vault",
+    "work",
+    "app",
+    user,
+    "notes",
+    ".config",
+    "a b",
+    "tmp",
+    "x",
+    // Segments that merely CONTAIN the user segment (FIX1A MINOR 2).
+    `${user}-backup`,
+    "old-username",
+    `Mine${user}2`,
+  ];
   const homes = ["/Users/USERNAME", "/Users/USERNAME/", "/home/USERNAME"];
 
   it("never returns an absolute path or the home path, and the user segment only after the home prefix", () => {
@@ -100,11 +147,12 @@ describe("Task 3 Test 2: property sweep", () => {
       expect(DisplayPathSchema.safeParse(text).success, `${absolute} -> ${text}`).toBe(true);
 
       const shownSegments = text.split("/");
-      if (shownSegments.some((segment) => segment.toLowerCase() === user.toLowerCase())) {
-        // Only an inside-home path may keep the user segment, and only from after the prefix.
+      if (shownSegments.some((segment) => segment.toLowerCase().includes(user.toLowerCase()))) {
+        // Only an inside-home path may keep the user segment (or a longer one holding it), and
+        // only from after the prefix.
         expect(inside, absolute).toBe(true);
         expect(
-          segments.some((s) => s === user),
+          segments.some((s) => s.toLowerCase().includes(user.toLowerCase())),
           absolute,
         ).toBe(true);
       }
@@ -133,6 +181,20 @@ describe("Task 3 Test 3: DisplayPathSchema", () => {
       "…/",
       "…/a/b/c",
       "http://example.com",
+      // Empty, . and .. segments, and a ~// prefix (FIX1A MINOR 1).
+      "~//x",
+      "~/a//b",
+      "~/a/",
+      "~/./x",
+      "~/../x",
+      "~/a/..",
+      "~/..",
+      "~/.",
+      "…/./b",
+      "…/../b",
+      "…/a/..",
+      "…/a/.",
+      "…//b",
     ];
     for (const value of bad) {
       expect(DisplayPathSchema.safeParse(value).success, JSON.stringify(value)).toBe(false);
