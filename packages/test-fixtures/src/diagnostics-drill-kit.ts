@@ -192,6 +192,38 @@ export function findLeaks(text: string, forbidden: ReadonlyMap<string, string>):
   return hits;
 }
 
+/** A home-form (`~/x`) or display-form (`…/x`) path: at the start of a string or after a non-word character. */
+const HOME_FORM_PATH = /(?:^|[^\w])[~…]\//u;
+
+/**
+ * Home-form and display-form paths in a health body, outside the one legitimate place for them:
+ * the TOP-LEVEL `paths` object (`vault`, `runtimeDir`, `socket`, which are service-built `~/…`
+ * display strings by design). Everywhere else, row reasons and facts included, such a string is a
+ * leak the absolute-path scan cannot see (FIX3A). Answers LABELS (the JSON path of the offending
+ * string), never the value. Pure: the non-vacuity tests call it on synthetic bodies.
+ */
+export function findHomeFormLeaks(body: string): string[] {
+  const hits: string[] = [];
+  const walk = (value: unknown, path: string): void => {
+    if (typeof value === "string") {
+      if (HOME_FORM_PATH.test(value)) hits.push(`a home-form path in ${path}`);
+    } else if (Array.isArray(value)) {
+      value.forEach((item, index) => walk(item, `${path}.${index}`));
+    } else if (typeof value === "object" && value !== null) {
+      for (const [key, item] of Object.entries(value)) {
+        if (path === "" && key === "paths") continue;
+        walk(item, path === "" ? key : `${path}.${key}`);
+      }
+    }
+  };
+  try {
+    walk(JSON.parse(body), "");
+  } catch {
+    hits.push("a body that is not JSON");
+  }
+  return hits;
+}
+
 /** The keys a diagnostics log line may carry (pino's own plus the closed probe fields). */
 const DIAGNOSTICS_LOG_KEYS = new Set([
   "level",
@@ -377,6 +409,7 @@ export async function withDrillService<T>(
           ...bodies.flatMap((body) =>
             findLeaks(body, forbidden).map((hit) => `a body holds ${hit}`),
           ),
+          ...bodies.flatMap((body) => findHomeFormLeaks(body)),
           ...logProblems(readLog(), forbidden),
         ],
       };

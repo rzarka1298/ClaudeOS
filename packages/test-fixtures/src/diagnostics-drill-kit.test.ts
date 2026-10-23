@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  findHomeFormLeaks,
   isKeychainPresenceSpawn,
   nonexistentResearchAccount,
   type RecordedEvent,
@@ -49,5 +50,54 @@ describe("isKeychainPresenceSpawn", () => {
     expect(
       isKeychainPresenceSpawn(spawn("/tmp/security", ["find-generic-password", "-a", "x"])),
     ).toBe(false);
+  });
+});
+
+describe("findHomeFormLeaks (FIX3A: ~/ and …/ forms in reasons and facts, paths.* exempt by key)", () => {
+  const clean = {
+    rows: [{ id: "vault", reasonCode: "vault-ready", facts: { count: 3 } }],
+    paths: { vault: "~/Notes/Vault", runtimeDir: "~/Library/x", socket: "…/svc.sock" },
+  };
+
+  it("passes a body whose only path-shaped strings are under paths", () => {
+    expect(findHomeFormLeaks(JSON.stringify(clean))).toEqual([]);
+  });
+
+  it("flags a ~/ path in a row fact or a reason, by label and never by value", () => {
+    const body = {
+      ...clean,
+      rows: [{ id: "vault", reasonCode: "x", facts: { where: "~/Secret/Place" } }],
+    };
+    const hits = findHomeFormLeaks(JSON.stringify(body));
+    expect(hits).toEqual(["a home-form path in rows.0.facts.where"]);
+    expect(hits.join(" ")).not.toContain("Secret");
+    const reason = { ...clean, rows: [{ id: "vault", reasonCode: "see ~/x" }] };
+    expect(findHomeFormLeaks(JSON.stringify(reason))).toEqual([
+      "a home-form path in rows.0.reasonCode",
+    ]);
+  });
+
+  it("flags the …/ display form outside paths, and a bare ~/ at the start or after a space", () => {
+    expect(
+      findHomeFormLeaks(JSON.stringify({ ...clean, rows: [{ facts: { a: "…/deep/name" } }] })),
+    ).toEqual(["a home-form path in rows.0.facts.a"]);
+    expect(
+      findHomeFormLeaks(JSON.stringify({ ...clean, rows: [{ facts: { a: "open ~/x now" } }] })),
+    ).toEqual(["a home-form path in rows.0.facts.a"]);
+  });
+
+  it("does not flag a tilde that is not a path or a version-like string", () => {
+    expect(
+      findHomeFormLeaks(
+        JSON.stringify({ ...clean, rows: [{ facts: { a: "1.0.0~rc", b: "a~b" } }] }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps paths exempt only at the top level, not a nested key that happens to be named paths", () => {
+    const nested = { ...clean, rows: [{ facts: { paths: { vault: "~/Hidden" } } }] };
+    expect(findHomeFormLeaks(JSON.stringify(nested))).toEqual([
+      "a home-form path in rows.0.facts.paths.vault",
+    ]);
   });
 });
