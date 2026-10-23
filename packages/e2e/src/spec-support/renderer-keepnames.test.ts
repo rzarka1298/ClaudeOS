@@ -30,6 +30,8 @@ const SUPPORT_FILES = [
   "contrast-probe.ts",
   // The Overview slice's card reader (plan 08-19).
   "overview-support.ts",
+  // The Settings > Diagnostics reader and the health drills (plan 08-20).
+  "health-support.ts",
 ];
 
 /** Where a support file's renderer functions are declared when not in the file that calls them. */
@@ -195,6 +197,7 @@ describe("inline renderer functions in the specs and support modules", () => {
       "research-lifecycle",
       "research-views",
       "overview-slice",
+      "health-drills",
       "tasks-core",
       "tasks-scale",
       "tasks-views",

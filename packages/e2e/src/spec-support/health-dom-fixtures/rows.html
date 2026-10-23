@@ -1,0 +1,167 @@
+<!-- Synthetic Settings > Diagnostics DOM of a fresh install (plan 08-20). Every name is invented. The structure mirrors what the plugin's SettingsDestination, DiagnosticsSection and HealthRow render (view/settings-destination.tsx, diagnostics-section.tsx, diagnostics-row.tsx); health-support.test.ts reads it with the renderer reader and edits copies of it for the other states. It is hand-written from the plugin source, not dumped from a rendered tree; the first live run confirms the reader against the real DOM. -->
+<section class="ccc-settings" aria-labelledby="settings-h">
+  <div class="ccc-settings-header">
+    <h2 id="settings-h" tabindex="-1">Settings</h2>
+    <p>Plugin configuration and diagnostics.</p>
+    <p class="ccc-settings-status" role="status"></p>
+  </div>
+  <div class="ccc-settings-layout">
+    <nav class="ccc-settings-nav" aria-label="Settings sections">
+      <ul>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Projects</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Launchers</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Visual</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" aria-current="page" tabindex="0">Diagnostics</button></li>
+      </ul>
+    </nav>
+    <div class="ccc-settings-content">
+      <h3 tabindex="-1" class="ccc-settings-section-title">Diagnostics</h3>
+      <p>Whether each part of the command center is working, and what to do when it isn't. Checks only read; nothing is installed, launched or sent.</p>
+      <div class="ccc-health-toolbar">
+        <button type="button" class="ccc-connect-button" data-variant="secondary" aria-label="Run checks again: re-run the read-only checks">Run checks again</button>
+        <p><span>Checked </span><time datetime="2026-10-23T10:00:00.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-toolbar">just now</time><span id="abs-toolbar" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span></p>
+      </div>
+      <div class="ccc-health">
+        <p class="ccc-health-summary"><span>Nothing is failing.</span><span> <span class="ccc-badge" data-status="ok"><span class="ccc-badge-glyph" aria-hidden="true">✓</span> <span class="ccc-badge-label">1 working</span></span></span><span> <span class="ccc-badge" data-status="setup-needed"><span class="ccc-badge-glyph" aria-hidden="true">⊕</span> <span class="ccc-badge-label">5 need setup</span></span></span></p>
+        <h4 class="ccc-settings-group-title">Subsystems</h4>
+        <ul class="ccc-health-list">
+          <li class="ccc-health-row" data-status="ok" data-subsystem="service" data-reason="service-live">
+            <div>
+              <h5 class="ccc-settings-item-title">Companion service</h5>
+              <span class="ccc-badge" data-status="ok"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">✓</span><span class="ccc-badge-label">Running</span></span>
+            </div>
+            <div>
+              <p>The companion service is running and answering.</p>
+              <p class="ccc-health-detail">Version 0.1.0 · started 5s ago</p>
+              <p class="ccc-health-meta"><span>Checked </span><time datetime="2026-10-23T10:00:00.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-service">just now</time><span id="abs-service" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span> <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">●</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span></p>
+            </div>
+          </li>
+          <li class="ccc-health-row" data-status="setup-needed" data-subsystem="vault" data-reason="vault-not-set-up">
+            <div>
+              <h5 class="ccc-settings-item-title">Vault access</h5>
+              <span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span>
+            </div>
+            <div>
+              <p>No managed vault is set up yet.</p>
+              <p class="ccc-health-meta"><span>Checked </span><time datetime="2026-10-23T10:00:00.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-vault">just now</time><span id="abs-vault" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span> <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">●</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span></p>
+            </div>
+            <div class="ccc-setup-callout">
+              <p class="ccc-state-body">Set up the managed folders in this vault.</p>
+              <div class="ccc-card-actions"><button type="button" class="ccc-connect-button" data-variant="secondary">Set up vault</button></div>
+            </div>
+          </li>
+          <li class="ccc-health-row" data-status="setup-needed" data-subsystem="hooks" data-reason="hooks-not-installed">
+            <div>
+              <h5 class="ccc-settings-item-title">Claude Code hooks</h5>
+              <span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span>
+            </div>
+            <div>
+              <p>Hooks aren't installed. Session tracking and waiting-for-approval states need them.</p>
+              <p class="ccc-health-meta"><span>Checked </span><time datetime="2026-10-23T10:00:00.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-hooks">just now</time><span id="abs-hooks" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span> <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">●</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span></p>
+            </div>
+            <div class="ccc-setup-callout">
+              <p class="ccc-state-body">From the Claude command center repository folder, run the install command.</p>
+              <code class="ccc-health-command ccc-mono">./scripts/claude-hooks/install.sh</code>
+              <div class="ccc-card-actions"><button type="button" class="ccc-connect-button" data-variant="secondary">Copy install command</button></div>
+            </div>
+          </li>
+          <li class="ccc-health-row" data-status="setup-needed" data-subsystem="collectors" data-reason="statusline-not-installed">
+            <div>
+              <h5 class="ccc-settings-item-title">Usage collectors</h5>
+              <span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span>
+            </div>
+            <div>
+              <p>The status-line wrapper isn't installed. Plan usage reads "Account capacity unavailable".</p>
+              <p class="ccc-health-detail">Reported by: Status line</p>
+              <p class="ccc-health-meta"><span>Checked </span><time datetime="2026-10-23T10:00:00.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-collectors">just now</time><span id="abs-collectors" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span> <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">●</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span></p>
+            </div>
+            <div class="ccc-setup-callout">
+              <p class="ccc-state-body">From the Claude command center repository folder, run the install command with the --with-statusline option.</p>
+              <code class="ccc-health-command ccc-mono">./scripts/claude-hooks/install.sh</code>
+              <div class="ccc-card-actions"><button type="button" class="ccc-connect-button" data-variant="secondary">Copy install command</button></div>
+            </div>
+            <div>
+              <button type="button" class="ccc-connect-button" data-variant="tertiary" aria-expanded="false" aria-controls="panel-collectors" aria-label="Show details for Usage collectors: 8 parts">Show details (8)</button>
+              <div id="panel-collectors" hidden>
+                <div>
+                  <p class="ccc-section-label ccc-section-label--muted">Claude Code</p>
+                  <ul class="ccc-health-parts">
+                    <li class="ccc-health-part" data-part="telemetry" data-status="ok" data-reason="telemetry-ok"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Usage telemetry</span><span class="ccc-badge" data-status="ok"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">✓</span><span class="ccc-badge-label">Working</span></span></div><p>Usage telemetry is arriving in the expected format.</p></li>
+                    <li class="ccc-health-part" data-part="status-line" data-status="setup-needed" data-reason="statusline-not-installed"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Status line</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>The status-line wrapper isn't installed. Plan usage reads "Account capacity unavailable".</p></li>
+                    <li class="ccc-health-part" data-part="transcript-analysis" data-status="setup-needed" data-reason="analysis-off"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Transcript analysis</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>Transcript analysis is off. Token counts and costs stay empty until you turn it on.</p><p>Turn it on in the security section.</p><div class="ccc-card-actions"><button type="button" class="ccc-connect-button" data-variant="secondary">Go to the security section</button></div></li>
+                    <li class="ccc-health-part" data-part="spool" data-status="ok" data-reason="spool-clean"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Dropped records</span><span class="ccc-badge" data-status="ok"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">✓</span><span class="ccc-badge-label">Working</span></span></div><p>No hook records have been dropped.</p></li>
+                  </ul>
+                </div>
+                <div>
+                  <p class="ccc-section-label ccc-section-label--muted">Codex</p>
+                  <ul class="ccc-health-parts">
+                    <li class="ccc-health-part" data-part="codex-install" data-status="setup-needed" data-reason="codex-not-installed"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Codex install</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>Codex isn't installed on this Mac.</p></li>
+                    <li class="ccc-health-part" data-part="codex-hooks" data-status="setup-needed" data-reason="codex-hooks-not-installed"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Codex hooks</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>Codex hooks aren't installed.</p></li>
+                    <li class="ccc-health-part" data-part="codex-bridge" data-status="setup-needed" data-reason="codex-bridge-not-installed"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Codex bridge</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>The Codex bridge isn't installed.</p></li>
+                    <li class="ccc-health-part" data-part="codex-doctor" data-status="setup-needed" data-reason="codex-doctor-not-run"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Codex doctor</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>Codex health hasn't been checked yet.</p></li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </li>
+          <li class="ccc-health-row" data-status="setup-needed" data-subsystem="scheduler" data-reason="never-run">
+            <div>
+              <h5 class="ccc-settings-item-title">Scheduler</h5>
+              <span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span>
+            </div>
+            <div>
+              <p>No research run yet. Runs start only when you press Run now.</p>
+              <p class="ccc-health-detail">Manual trigger only in this version. Nothing runs on a timer.</p>
+              <p class="ccc-health-meta"><span>Checked </span><time datetime="2026-10-23T10:00:00.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-scheduler">just now</time><span id="abs-scheduler" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span> <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">●</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span></p>
+            </div>
+            <div class="ccc-setup-callout">
+              <p class="ccc-state-body">Open the research view and press Run now.</p>
+              <div class="ccc-card-actions"><button type="button" class="ccc-connect-button" data-variant="secondary">Open the research view</button></div>
+            </div>
+            <div>
+              <button type="button" class="ccc-connect-button" data-variant="tertiary" aria-expanded="false" aria-controls="panel-scheduler" aria-label="Show details for Scheduler: 3 parts">Show details (3)</button>
+              <div id="panel-scheduler" hidden>
+                <ul class="ccc-health-parts">
+                  <li class="ccc-health-part" data-part="last-run" data-status="setup-needed" data-reason="never-run"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Last run</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>No research run yet. Runs start only when you press Run now.</p></li>
+                  <li class="ccc-health-part" data-part="research-key" data-status="ok" data-reason="research-key-present"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Research key</span><span class="ccc-badge" data-status="ok"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">✓</span><span class="ccc-badge-label">Working</span></span></div><p>A research key is in the macOS keychain.</p></li>
+                  <li class="ccc-health-part" data-part="sources" data-status="ok" data-reason="sources-configured"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Sources</span><span class="ccc-badge" data-status="ok"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">✓</span><span class="ccc-badge-label">Working</span></span></div><p>3 research sources are configured.</p></li>
+                </ul>
+              </div>
+            </div>
+          </li>
+          <li class="ccc-health-row" data-status="setup-needed" data-subsystem="launchers" data-reason="launcher-not-set-up">
+            <div>
+              <h5 class="ccc-settings-item-title">App launchers</h5>
+              <span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span>
+            </div>
+            <div>
+              <p>Not set up.</p>
+              <p class="ccc-health-meta"><span>Checked </span><time datetime="2026-10-23T10:00:00.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-launchers">just now</time><span id="abs-launchers" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span> <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">●</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span></p>
+            </div>
+            <div class="ccc-setup-callout">
+              <p class="ccc-state-body">Choose the app and test it in the launchers section.</p>
+              <div class="ccc-card-actions"><button type="button" class="ccc-connect-button" data-variant="secondary">Go to the launchers section</button></div>
+            </div>
+            <div>
+              <button type="button" class="ccc-connect-button" data-variant="tertiary" aria-expanded="false" aria-controls="panel-launchers" aria-label="Show details for App launchers: 4 parts">Show details (4)</button>
+              <div id="panel-launchers" hidden>
+                <ul class="ccc-health-parts">
+                  <li class="ccc-health-part" data-part="antigravity" data-status="setup-needed" data-reason="launcher-not-set-up"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Antigravity</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>Not set up.</p></li>
+                  <li class="ccc-health-part" data-part="claude-code" data-status="setup-needed" data-reason="launcher-not-set-up"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Claude Code</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>Not set up.</p></li>
+                  <li class="ccc-health-part" data-part="claude-desktop" data-status="setup-needed" data-reason="launcher-not-set-up"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Claude Desktop</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>Not set up.</p></li>
+                  <li class="ccc-health-part" data-part="codex" data-status="setup-needed" data-reason="launcher-not-set-up"><div class="ccc-health-part-head"><span class="ccc-health-part-name">Codex</span><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></div><p>Not set up.</p></li>
+                </ul>
+              </div>
+            </div>
+          </li>
+        </ul>
+        <h4 class="ccc-settings-group-title">Not part of this version</h4>
+        <ul class="ccc-health-list">
+          <li class="ccc-health-row" data-scope="not-in-version"><div><h5 class="ccc-settings-item-title">Gmail</h5><span class="ccc-badge" data-status="not-in-version"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">∅</span> <span class="ccc-badge-label">Not part of this version</span></span></div><div><p>Connecting accounts arrives in a later milestone. Nothing is read from this account.</p></div></li>
+          <li class="ccc-health-row" data-scope="not-in-version"><div><h5 class="ccc-settings-item-title">Google Calendar</h5><span class="ccc-badge" data-status="not-in-version"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">∅</span> <span class="ccc-badge-label">Not part of this version</span></span></div><div><p>Connecting accounts arrives in a later milestone. Nothing is read from this account.</p></div></li>
+          <li class="ccc-health-row" data-scope="not-in-version"><div><h5 class="ccc-settings-item-title">GitHub</h5><span class="ccc-badge" data-status="not-in-version"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">∅</span> <span class="ccc-badge-label">Not part of this version</span></span></div><div><p>Connecting accounts arrives in a later milestone. Nothing is read from this account.</p></div></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
