@@ -25,6 +25,12 @@ export type SaveOutcome =
    * (FIX4B m9, decision D-12a): the owner chooses a new name and nothing was written.
    */
   | { readonly kind: "exists" }
+  /**
+   * The folder's file system cannot make a hard link (exFAT, FAT, many SMB shares) or the link
+   * would cross file systems (FIX6B). There is no overwrite-capable fallback (D-12a): nothing was
+   * written and the temporary file was removed.
+   */
+  | { readonly kind: "unsupported-location" }
   | { readonly kind: "failed" };
 
 export interface BundleExportPort {

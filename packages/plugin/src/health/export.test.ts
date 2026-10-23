@@ -24,6 +24,7 @@ import {
   saveDialogWindowOf,
 } from "../test-support/electron-stub.js";
 import {
+  CONTAINMENT_TIMEOUT_MS,
   defaultBundleFileName,
   type ExportFileSystem,
   isInsideVault,
@@ -489,6 +490,94 @@ describe("FIX4B m1: the parent folder swapped between the check and the write", 
   it("an unchanged parent is saved as usual (the check does not misfire)", async () => {
     expect(await writeBundleFile(TEXT, join(outside, "b.json"), vault)).toEqual({ kind: "saved" });
     expect(files(outside)).toEqual(["b.json"]);
+  });
+});
+
+describe("FIX6B: a location that cannot hold the bundle safely, and a walk that does not return", () => {
+  function linkFailing(code: string): ExportFileSystem {
+    return fsWith({
+      link: () => Promise.reject(Object.assign(new Error("no hard links here"), { code })),
+    });
+  }
+
+  it.each(["EPERM", "ENOTSUP", "EXDEV"])(
+    "link(2) failing with %s is unsupported-location: nothing is written and the temporary file is removed",
+    async (code) => {
+      const result = await writeBundleFile(TEXT, join(outside, "b.json"), vault, linkFailing(code));
+      expect(result).toEqual({ kind: "unsupported-location" });
+      expect(files(outside)).toEqual([]);
+    },
+  );
+
+  it("never falls back to a write that could replace: the target is not created by any other route", async () => {
+    const result = await writeBundleFile(
+      TEXT,
+      join(outside, "b.json"),
+      vault,
+      linkFailing("EPERM"),
+    );
+    expect(result.kind).toBe("unsupported-location");
+    expect(files(outside)).not.toContain("b.json");
+  });
+
+  it("any other link failure is still failed, and EEXIST is still exists", async () => {
+    expect(await writeBundleFile(TEXT, join(outside, "b.json"), vault, linkFailing("EIO"))).toEqual(
+      {
+        kind: "failed",
+      },
+    );
+    expect(
+      await writeBundleFile(TEXT, join(outside, "c.json"), vault, linkFailing("EEXIST")),
+    ).toEqual({ kind: "exists" });
+    expect(files(outside)).toEqual([]);
+  });
+
+  it("an identity walk that never returns is failed within the bound, and nothing is written", async () => {
+    const hung = fsWith({ stat: () => new Promise<never>(() => {}) });
+    const started = Date.now();
+    const result = await writeBundleFile(TEXT, join(outside, "b.json"), vault, hung, {
+      containmentTimeoutMs: 30,
+    });
+    expect(result).toEqual({ kind: "failed" });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(files(outside)).toEqual([]);
+  });
+
+  it("a realpath that never returns is failed too", async () => {
+    const hung = fsWith({ realpath: () => new Promise<never>(() => {}) });
+    expect(
+      await writeBundleFile(TEXT, join(outside, "b.json"), vault, hung, {
+        containmentTimeoutMs: 30,
+      }),
+    ).toEqual({ kind: "failed" });
+    expect(files(outside)).toEqual([]);
+  });
+
+  it("the re-check of the parent after the file was created is bounded as well, and the temporary is removed", async () => {
+    let folderStats = 0;
+    const fs = fsWith({
+      stat: (path) => {
+        if (path.endsWith(".tmp")) return nodeExportFileSystem.stat(path);
+        folderStats += 1;
+        // The first walk (vault, its realpath, the parent and its ancestors) answers; later ones hang.
+        return folderStats > 40 ? new Promise<never>(() => {}) : nodeExportFileSystem.stat(path);
+      },
+      open: (path, flags, mode) => {
+        // From here on every folder stat hangs.
+        folderStats = 100;
+        return nodeExportFileSystem.open(path, flags, mode);
+      },
+    });
+    const result = await writeBundleFile(TEXT, join(outside, "b.json"), vault, fs, {
+      containmentTimeoutMs: 30,
+    });
+    expect(result).toEqual({ kind: "failed" });
+    expect(files(outside)).toEqual([]);
+  });
+
+  it("the default bound is a few seconds, not unbounded", () => {
+    expect(CONTAINMENT_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(CONTAINMENT_TIMEOUT_MS).toBeLessThanOrEqual(5000);
   });
 });
 

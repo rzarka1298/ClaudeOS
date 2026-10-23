@@ -49,6 +49,23 @@ export interface PickSavePathOptions {
 /** The longest path accepted; anything longer is not a path the owner typed in a dialog. */
 const MAX_PATH_LENGTH = 1024;
 const MODE_PRIVATE = 0o600;
+/**
+ * The longest the containment walk (realpath and the `{dev, ino}` stat of the folder and every
+ * ancestor) may take, in milliseconds (FIX6B). A stalled network share or a dead mount must not
+ * hold the Save gate forever: a walk that does not answer is `failed` and nothing is written.
+ */
+export const CONTAINMENT_TIMEOUT_MS = 3000;
+/**
+ * `link(2)` refusals that mean the folder's file system cannot make a hard link (exFAT and FAT
+ * volumes, many SMB shares) or the link would cross file systems: the location cannot hold the
+ * bundle without an overwrite-capable write, which D-12a rules out (FIX6B).
+ */
+const LINK_UNSUPPORTED_CODES: ReadonlySet<string> = new Set([
+  "EPERM",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+  "EXDEV",
+]);
 
 /** `claude-command-center-diagnostics-YYYY-MM-DD.json`, the date in UTC. */
 export function defaultBundleFileName(now: number): string {
@@ -191,6 +208,25 @@ function codeOf(error: unknown): string | undefined {
     : undefined;
 }
 
+const TIMED_OUT = Symbol("timed-out");
+
+/**
+ * `work` or `TIMED_OUT`, whichever comes first. The work keeps running after a timeout (a file
+ * system call cannot be cancelled) but nothing waits on it, and a late rejection is swallowed.
+ */
+async function within<T>(ms: number, work: Promise<T>): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clock = new Promise<typeof TIMED_OUT>((done) => {
+    timer = setTimeout(() => done(TIMED_OUT), ms);
+  });
+  work.catch(() => {});
+  try {
+    return await Promise.race([work, clock]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** True when `text` is within the bundle's size cap, measured in utf-8 bytes as the verifier does. */
 function withinSizeCap(text: string): boolean {
   return new TextEncoder().encode(text).length <= BUNDLE_MAX_BYTES;
@@ -206,27 +242,30 @@ export async function writeBundleFile(
   rawPath: string,
   vaultBasePath: string | null,
   fs: ExportFileSystem = nodeExportFileSystem,
+  limits: { readonly containmentTimeoutMs?: number } = {},
 ): Promise<SaveOutcome> {
+  const bound = limits.containmentTimeoutMs ?? CONTAINMENT_TIMEOUT_MS;
   if (!withinSizeCap(text)) return { kind: "failed" };
   if (!isAcceptablePath(rawPath)) return { kind: "invalid-path" };
   if (vaultBasePath === null || vaultBasePath === "") return { kind: "failed" };
 
   const target = resolve(rawPath);
-  let realVault: string;
-  let realParent: string;
-  let vaultIds: ReadonlySet<string>;
-  let parent: { readonly id: string; readonly inside: boolean };
-  try {
-    realVault = await fs.realpath(vaultBasePath);
-    realParent = await fs.realpath(dirname(target));
-    vaultIds = new Set([
-      identityKey(await fs.stat(vaultBasePath)),
-      identityKey(await fs.stat(realVault)),
-    ]);
-    parent = await examineFolder(fs, realParent, vaultIds);
-  } catch {
-    return { kind: "failed" };
-  }
+  const inspected = await within(
+    bound,
+    (async () => {
+      const realVault = await fs.realpath(vaultBasePath);
+      const realParent = await fs.realpath(dirname(target));
+      const vaultIds = new Set([
+        identityKey(await fs.stat(vaultBasePath)),
+        identityKey(await fs.stat(realVault)),
+      ]);
+      const parent = await examineFolder(fs, realParent, vaultIds);
+      return { realVault, realParent, vaultIds, parent };
+    })().catch(() => undefined),
+  );
+  // A walk that failed, or never answered within the bound, shows nothing: fail closed.
+  if (inspected === TIMED_OUT || inspected === undefined) return { kind: "failed" };
+  const { realVault, realParent, vaultIds, parent } = inspected;
   const landing = join(realParent, basename(target));
   const vaults = [vaultBasePath, realVault];
   if (
@@ -244,7 +283,14 @@ export async function writeBundleFile(
   /** Removes `path` only when it is still the file this write made. Never throws. */
   const removeIfMine = async (path: string): Promise<void> => {
     try {
-      if (made !== undefined && identityKey(await fs.stat(path)) === made) await fs.unlink(path);
+      // Bounded like the walk: a stalled share must not hold the Save gate through the cleanup.
+      await within(
+        bound,
+        (async () => {
+          if (made !== undefined && identityKey(await fs.stat(path)) === made)
+            await fs.unlink(path);
+        })(),
+      );
     } catch {
       // Already gone, or not ours any more: nothing more to release.
     }
@@ -252,8 +298,8 @@ export async function writeBundleFile(
   /** True when the folder the file lands in is still the one checked at the start. */
   const parentIsUnchanged = async (): Promise<boolean> => {
     try {
-      const now = await examineFolder(fs, dirname(landing), vaultIds);
-      return now.id === parent.id && !now.inside;
+      const now = await within(bound, examineFolder(fs, dirname(landing), vaultIds));
+      return now !== TIMED_OUT && now.id === parent.id && !now.inside;
     } catch {
       return false;
     }
@@ -281,7 +327,14 @@ export async function writeBundleFile(
       await fs.link(temporary, landing);
     } catch (error) {
       await removeIfMine(temporary);
-      return codeOf(error) === "EEXIST" ? { kind: "exists" } : { kind: "failed" };
+      const code = codeOf(error);
+      if (code === "EEXIST") return { kind: "exists" };
+      // No hard links here (exFAT, FAT, many SMB shares) or across file systems. There is no
+      // overwrite-capable fallback (D-12a): nothing was written, the temporary is already gone.
+      if (code !== undefined && LINK_UNSUPPORTED_CODES.has(code)) {
+        return { kind: "unsupported-location" };
+      }
+      return { kind: "failed" };
     }
     if (!(await parentIsUnchanged())) {
       await removeIfMine(landing);

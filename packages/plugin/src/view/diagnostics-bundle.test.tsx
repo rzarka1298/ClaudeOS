@@ -27,7 +27,7 @@ import {
   currentRuntimeFacts,
   type VerifyAndSerialise,
 } from "../health/bundle-input.js";
-import { saveBundle, saveDialogAvailable } from "../health/export.js";
+import { nodeExportFileSystem, saveBundle, saveDialogAvailable } from "../health/export.js";
 import { bundleExport, configureBundleExport } from "../health/export-port.js";
 import {
   clearHealth,
@@ -433,6 +433,31 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     expect(readFileSync(target, "utf8")).toBe("KEEP ME");
     expect(readdirSync(outside)).toEqual(["taken.json"]);
     expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
+  });
+
+  it("FIX6B: a location with no hard links says it cannot hold the bundle, writes nothing, and the Save gate is released", async () => {
+    configureBundleExport({
+      saveDialogAvailable,
+      save: (text, vaultBase, now) =>
+        saveBundle(text, vaultBase, now, {
+          ...nodeExportFileSystem,
+          link: () => Promise.reject(Object.assign(new Error("exFAT"), { code: "EPERM" })),
+        }),
+    });
+    choose(join(outside, "b.json"));
+    const f = vaultFixture();
+    openPreview(f);
+    await pressSave(f);
+    expect(f.notify).toHaveBeenLastCalledWith(
+      "This location can't hold the bundle safely. Choose a folder on your Mac's disk.",
+    );
+    expect(readdirSync(outside)).toEqual([]);
+    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
+    const save = screen.getByRole("button", { name: "Save bundle" });
+    await waitFor(() => expect(save.getAttribute("aria-busy")).toBeNull());
+    // The gate is free again: a second press reaches the port.
+    await pressSave(f);
+    expect(f.notify.mock.calls.length).toBe(2);
   });
 
   it("Test 3: a path inside the vault is refused with the fixed sentence and nothing is written", async () => {
