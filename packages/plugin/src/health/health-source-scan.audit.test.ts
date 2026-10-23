@@ -166,8 +166,12 @@ describe("the bundle is serialised in one place only (plan 08-16, D-12; FIX4B)",
 });
 
 describe("no health fetch runs on a timer (D-05)", () => {
-  it.each(SOURCES)("%s starts no timer, interval or clock read", (_name, source) => {
-    expect(source).not.toMatch(/\bset(?:Interval|Timeout)\s*\(/);
+  it.each(SOURCES)("%s starts no timer, interval or clock read", (name, source) => {
+    expect(source).not.toMatch(/\bsetInterval\s*\(/);
+    // FIX6B: the one exception is the export seam's containment bound, a single `setTimeout` that
+    // fails a stalled file-system walk. It drives no fetch and is cleared when the walk answers.
+    const timeouts = source.match(/\bsetTimeout\s*\(/g) ?? [];
+    expect(timeouts).toHaveLength(name === EXPORT_FILE ? 1 : 0);
     expect(source).not.toMatch(/\bregistry\.(?:interval|timer)\b/);
     expect(source).not.toMatch(/\bDate\.now\s*\(/);
     expect(source).not.toMatch(/\bnowTick\b/);

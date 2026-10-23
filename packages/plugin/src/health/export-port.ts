@@ -26,7 +26,7 @@ export type SaveOutcome =
    */
   | { readonly kind: "exists" }
   /**
-   * The folder's file system cannot make a hard link (exFAT, FAT, many SMB shares) or the link
+   * The folder's file system cannot make hard links (exFAT and FAT volumes, many SMB shares) or the new name
    * would cross file systems (FIX6B). There is no overwrite-capable fallback (D-12a): nothing was
    * written and the temporary file was removed.
    */
