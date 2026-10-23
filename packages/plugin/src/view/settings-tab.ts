@@ -61,7 +61,7 @@ export const POINTER_DESC =
  */
 export const POINTER_ACTION_LABEL = "Open settings";
 /** The old Codex Launcher row's own action label, still findable (it was an alias on that row). */
-export const OLD_LAUNCHER_ACTION_LABEL = "Open launcher settings";
+const OLD_LAUNCHER_ACTION_LABEL = "Open launcher settings";
 
 /**
  * Every setting that moved to the destination, by the name the owner knew it as, so searching
