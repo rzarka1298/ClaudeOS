@@ -151,7 +151,7 @@ describe("bundle export", function () {
   async function copied(
     block: BundleRead,
     reoffer: () => Promise<BundleRead>,
-  ): Promise<{ block: BundleRead; text: string }> {
+  ): Promise<{ block: BundleRead; text: string; attempts: number }> {
     await hb.execute(rendererInstallSpies);
     return copyBundleWithRetry({
       block,
@@ -204,6 +204,8 @@ describe("bundle export", function () {
     expect(checkSaveButton(block)).toEqual([]);
 
     const copy = await copied(block, offered);
+    // Printed so a run shows whether a press landed on a reloading page and was repeated.
+    console.log(`[FIX8 item 31] copy attempts=${copy.attempts}`);
     const text = copy.text;
     const preview = copy.block.preview?.text ?? "";
     expect(bundleTextsEqual(preview, text)).toEqual([]);

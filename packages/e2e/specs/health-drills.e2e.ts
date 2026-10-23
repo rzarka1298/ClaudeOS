@@ -284,6 +284,10 @@ describe("health drills", function () {
       maxAttempts: 3,
       reopenWait: { timeoutMs: 5_000, intervalMs: 100 },
     });
+    // Printed so a run shows how close the reopening came to the window and whether it was retried.
+    console.log(
+      `[FIX8 item 30] reopen attempts=${reopened.attempts} spans(ms from the answer)=${reopened.spansMs.join(",")}`,
+    );
     expect(reopened.problems).toEqual([]);
   });
 
