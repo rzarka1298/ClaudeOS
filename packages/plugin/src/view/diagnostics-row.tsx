@@ -8,7 +8,7 @@ import {
 } from "@ccc/domain/diagnostics.js";
 import type { VNode } from "preact";
 import { useId, useState } from "preact/hooks";
-import type { ShownRow } from "../health/state.js";
+import { type ShownRow, shownFreshness } from "../health/state.js";
 import { FRESHNESS_GLYPH } from "../widgets/footer.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 import {
@@ -370,13 +370,19 @@ export function HealthRow({
   pending,
 }: HealthRowProps): VNode {
   const name = ROW_NAMES[row.id];
-  if (pending && row.id !== "service") {
+  if (pending) {
+    // Names at once; chip, reason and meta are static skeletons (no spinner, no pulse). The list
+    // carries `aria-busy` and one hidden "Loading diagnostics", so this adds nothing to read out.
     return (
       <li className="ccc-health-row" data-subsystem={row.id}>
         <div>
           <h5 className="ccc-settings-item-title">{name}</h5>
+          <div className="ccc-skeleton-line" aria-hidden="true" />
         </div>
-        <div />
+        <div>
+          <div className="ccc-skeleton-line" aria-hidden="true" />
+          <div className="ccc-skeleton-line" aria-hidden="true" />
+        </div>
       </li>
     );
   }
@@ -403,7 +409,7 @@ export function HealthRow({
       <div>
         <p>{reason}</p>
         {detail !== null && <p className="ccc-health-detail">{detail}</p>}
-        <RowMeta checkedAt={row.checkedAt} freshness={row.freshness} now={now} />
+        <RowMeta checkedAt={row.checkedAt} freshness={shownFreshness(row, now)} now={now} />
       </div>
       {(nextStep !== null || action !== undefined) && (
         <div className="ccc-setup-callout">

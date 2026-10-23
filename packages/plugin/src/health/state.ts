@@ -135,6 +135,30 @@ export function clearedRows(): ClearedRow[] {
   }));
 }
 
+/**
+ * The freshness a row shows now (UI-SPEC "Freshness on a health row"). The service says `live`,
+ * `cached` or `unavailable`; the plugin derives `stale` when the row's `checkedAt` is older than
+ * {@link HEALTH_STALE_AFTER_MS}, flipped by the one shared clock tick the caller passes in as
+ * `now` (never a per-row timer, never a fetch). A row that was never checked, or whose probe gave
+ * no answer (`unavailable`), is not made stale: there is no answer to age.
+ */
+export function shownFreshness(
+  row: { readonly checkedAt: string | null; readonly freshness: Freshness },
+  now: number,
+): Freshness {
+  if (row.checkedAt === null || row.freshness === "unavailable") return row.freshness;
+  const age = now - Date.parse(row.checkedAt);
+  return age > HEALTH_STALE_AFTER_MS ? "stale" : row.freshness;
+}
+
+/** True when any of the rows shows as stale at `now` (the stale line appears under the toolbar). */
+export function anyStale(
+  rows: readonly { readonly checkedAt: string | null; readonly freshness: Freshness }[],
+  now: number,
+): boolean {
+  return rows.some((row) => shownFreshness(row, now) === "stale");
+}
+
 /** The vault row exactly as the service sent it. */
 export type VaultServiceRow = DiagnosticsHealthResponse["rows"][0];
 
@@ -184,7 +208,7 @@ export function rowsFor(
 /** The first 16 lowercase hex characters of SHA-256 over `text`, with WebCrypto. */
 async function digest16(text: string): Promise<string> {
   const bytes = new TextEncoder().encode(text);
-  const hash = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  const hash = await window.crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 16);

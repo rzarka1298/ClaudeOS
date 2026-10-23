@@ -261,7 +261,7 @@ export async function fingerprintFor(
   salt = "0123456789abcdef0123456789abcdef",
 ): Promise<{ salt: string; digest: string }> {
   const bytes = new TextEncoder().encode(`${salt}:${basePath}`);
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  const digest = await window.crypto.subtle.digest("SHA-256", bytes);
   const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
     "",
   );

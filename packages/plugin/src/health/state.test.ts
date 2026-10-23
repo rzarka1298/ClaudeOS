@@ -2,15 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
 import {
   allOkHealth,
+  collectorsParts,
   fingerprintFor,
   healthResponse as fixtureResponse,
+  partsRow,
+  plainRow,
 } from "../test-support/health-fixtures.js";
 import { configureHealth, HealthApiError } from "./api.js";
 import {
+  anyStale,
   applyVaultOverlay,
   clearedRows,
   clearHealth,
   computeVaultCheck,
+  HEALTH_STALE_AFTER_MS,
   healthPhase,
   healthResponse,
   healthVaultCheck,
@@ -20,6 +25,7 @@ import {
   resetHealthState,
   rowsFor,
   serviceRowFor,
+  shownFreshness,
   watchConnection,
 } from "./state.js";
 
@@ -353,5 +359,71 @@ describe("the vault overlay (Task 2, Test 5; D-36)", () => {
     await refreshHealth("gesture", { vaultBasePath: `${BASE}-other` });
     clearHealth();
     expect(healthVaultCheck.value).toBe("unavailable");
+  });
+});
+
+describe("staleness (Task 3; D-05, UI-SPEC R-F5)", () => {
+  const CHECKED = "2026-10-22T09:00:00.000Z";
+  const at = Date.parse(CHECKED);
+
+  it("is five minutes, a plugin constant", () => {
+    expect(HEALTH_STALE_AFTER_MS).toBe(5 * 60 * 1000);
+  });
+
+  it("keeps the freshness the service gave until a row is older than five minutes", () => {
+    const row = { checkedAt: CHECKED, freshness: "live" } as const;
+    expect(shownFreshness(row, at + 30_000)).toBe("live");
+    expect(shownFreshness(row, at + HEALTH_STALE_AFTER_MS)).toBe("live");
+    expect(shownFreshness(row, at + HEALTH_STALE_AFTER_MS + 1)).toBe("stale");
+    expect(shownFreshness({ checkedAt: CHECKED, freshness: "cached" }, at + 6 * 60_000)).toBe(
+      "stale",
+    );
+  });
+
+  it("never makes an unavailable or never-checked row stale", () => {
+    expect(shownFreshness({ checkedAt: CHECKED, freshness: "unavailable" }, at + 60 * 60_000)).toBe(
+      "unavailable",
+    );
+    expect(shownFreshness({ checkedAt: null, freshness: "unavailable" }, at + 60 * 60_000)).toBe(
+      "unavailable",
+    );
+    expect(shownFreshness({ checkedAt: "not a time", freshness: "live" }, at)).toBe("live");
+  });
+
+  it("anyStale is true when one shown row is stale", () => {
+    const fresh = { checkedAt: CHECKED, freshness: "live" } as const;
+    const never = { checkedAt: null, freshness: "unavailable" } as const;
+    expect(anyStale([fresh, never], at + 1000)).toBe(false);
+    expect(anyStale([fresh, never], at + 6 * 60_000)).toBe(true);
+    expect(anyStale([never], at + 6 * 60_000)).toBe(false);
+  });
+});
+
+describe("timed-out checks (Task 3; UI-SPEC G10 partial)", () => {
+  it("counts rows whose probe timed out, once each, whether the row or one of its parts did", async () => {
+    const response = fixtureResponse({
+      vault: plainRow("vault", "probe-timeout", { freshness: "unavailable" }),
+      hooks: plainRow("hooks", "probe-timeout", { freshness: "unavailable" }),
+      collectors: partsRow(
+        "collectors",
+        collectorsParts({
+          telemetry: ["probe-timeout"],
+          spool: ["probe-timeout"],
+        }),
+      ),
+    });
+    configureHealth({ api: { get: () => Promise.resolve(response) } });
+    expect(await refreshHealth("gesture", { vaultBasePath: null })).toEqual({
+      kind: "ok",
+      timedOut: 3,
+    });
+  });
+
+  it("is zero when nothing timed out", async () => {
+    configureHealth({ api: { get: () => Promise.resolve(fixtureResponse()) } });
+    expect(await refreshHealth("gesture", { vaultBasePath: null })).toEqual({
+      kind: "ok",
+      timedOut: 0,
+    });
   });
 });

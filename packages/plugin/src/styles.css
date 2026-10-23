@@ -4115,6 +4115,66 @@ fieldset.ccc-template-rows > legend {
   }
 }
 
+/* Plan 08-13: the text roles inside a health row, which 08-10 left to inherit. The toolbar keeps
+ * the button and its time on one wrapping line; the detail and meta lines are Label, muted; a
+ * part's head sets its name beside its chip; a failed request is a quiet panel whose only danger
+ * cue is the triangle (the sentence is ink). */
+.ccc-command-center .ccc-health-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-sm) var(--ccc-space-md);
+}
+
+.ccc-command-center .ccc-health-toolbar p {
+  margin: 0;
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+  overflow-wrap: break-word;
+}
+
+.ccc-command-center .ccc-health-detail,
+.ccc-command-center .ccc-health-meta,
+.ccc-command-center .ccc-health-stale {
+  color: var(--ccc-ink-muted);
+  font-size: var(--ccc-text-label);
+}
+
+.ccc-command-center .ccc-health-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-xs) var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-health-part-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ccc-space-sm);
+}
+
+.ccc-command-center .ccc-health-part-name {
+  font-weight: var(--ccc-weight-strong);
+}
+
+.ccc-command-center .ccc-health-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  padding: var(--ccc-space-md);
+  border: var(--ccc-border-hairline) solid var(--ccc-border);
+  border-radius: var(--ccc-radius-md);
+  background-color: var(--ccc-surface-glass);
+  color: var(--ccc-ink);
+}
+
+.ccc-command-center .ccc-health-error p {
+  margin: 0;
+  max-width: 68ch;
+  overflow-wrap: break-word;
+}
+
 /* ---- S4 the diagnostic bundle ------------------------------------------ */
 
 .ccc-command-center .ccc-bundle {

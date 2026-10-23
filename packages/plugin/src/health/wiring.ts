@@ -10,9 +10,9 @@ import { onHealthLive, resetHealthState, watchConnection } from "./state.js";
 
 /**
  * Connects the Diagnostics code to Obsidian and the service (plan 08-13; D-02, D-05; the
- * `research/wiring.ts` precedent). `main.ts` passes the one function it owns,
- * `getDiagnosticsHealth(client, trigger)` from `@ccc/service-api-client`; this module never
- * imports the client package, and nothing under `health/` makes a network call itself.
+ * `research/wiring.ts` precedent). `main.ts` passes the one function it owns, the diagnostics
+ * client call (its trigger argument is the caller's); this module never imports the client
+ * package, and nothing under `health/` makes a network call itself.
  *
  * - The API holder is configured with that function behind the closed-code adapter: whatever the
  *   client throws, only a code from the closed vocabulary comes out, never a message.

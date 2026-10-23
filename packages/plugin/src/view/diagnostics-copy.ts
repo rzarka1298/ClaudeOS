@@ -564,3 +564,30 @@ export const SETUP_ACTION_COPY = {
   /** When the clipboard refuses: the command is on the row, so the owner can copy it by hand. */
   copyFailed: "Couldn't copy the command. It's shown on this row; copy it from there.",
 } as const;
+
+// ---------------------------------------------------------------------------
+// Toolbar, states and outcomes (UI-SPEC S3 "Toolbar and summary", "Diagnostics states", G10, R-F2, R-F5)
+
+export const DESCRIPTION =
+  "Whether each part of the command center is working, and what to do when it isn't. Checks only read; nothing is installed, launched or sent.";
+export const RUN_CHECKS_LABEL = "Run checks again";
+/** The accessible name begins with the visible label (label in name). */
+export const RUN_CHECKS_NAME = "Run checks again: re-run the read-only checks";
+export const CHECKING_LINE = "Checking…";
+export const LOADING_TEXT = "Loading diagnostics";
+export const STALE_LINE = "These checks are more than 5 minutes old. Press Run checks again.";
+export const ERROR_HEADING = "Couldn't run the checks.";
+export const ERROR_FOLLOW_UP =
+  "The companion service didn't respond. Check that it is running, then press Run checks again.";
+
+/** The status line after a finished check: plain, or naming the checks that timed out (G10 partial). */
+export function checkedLine(timedOut: number): string {
+  if (timedOut <= 0) return "Checked just now.";
+  const number = new Intl.NumberFormat("en").format(timedOut);
+  const phrase = pluralOf(
+    timedOut,
+    "check timed out and is shown as unknown",
+    "checks timed out and are shown as unknown",
+  );
+  return `Checked just now. ${number} ${phrase}.`;
+}

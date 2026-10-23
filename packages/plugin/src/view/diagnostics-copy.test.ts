@@ -106,7 +106,7 @@ describe("REASON_COPY (Test 1: exhaustive)", () => {
 
 describe("reason sentences interpolate typed values only", () => {
   const sentence = (code: AnyReason, facts?: typeof FULL_FACTS | Record<string, unknown>) =>
-    reasonText(code, { facts: facts as never, now: NOW }).reason;
+    reasonText(code, { facts, now: NOW }).reason;
 
   it("names the silence threshold as a duration", () => {
     expect(sentence("events-silent", { silenceThresholdMs: 600_000 })).toBe(

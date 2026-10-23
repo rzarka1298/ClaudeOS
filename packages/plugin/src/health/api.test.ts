@@ -40,8 +40,8 @@ describe("the health API holder", () => {
     await healthApi().get("reconnect");
     await healthApi().get("Gesture" as never);
     await healthApi().get(undefined as never);
-    await healthApi().get("gesture ".trim() as "gesture");
-    expect(get.mock.calls.map((call) => call[0] as string)).toEqual([
+    await healthApi().get("gesture");
+    expect(get.mock.calls.map((call) => call[0])).toEqual([
       "reconnect",
       "reconnect",
       "reconnect",

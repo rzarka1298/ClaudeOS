@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ConnectionState, connectionState } from "../connection-state.js";
@@ -83,7 +86,7 @@ async function settle(): Promise<void> {
   await act(async () => {
     for (let i = 0; i < 6; i++) await Promise.resolve();
     // A vault digest is real WebCrypto: it settles on a later turn than a microtask.
-    await new Promise((resolve) => setTimeout(resolve, 15));
+    await new Promise((resolve) => window.setTimeout(resolve, 15));
   });
 }
 
@@ -648,5 +651,425 @@ describe("Task 2, Test 6: Not part of this version", () => {
     expect(
       document.querySelector(".ccc-health-summary")?.textContent?.replace(/\s+/g, " ").trim(),
     ).toBe("1 subsystem needs attention. ✕ 1 failing ? 5 unknown");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: loading, error, stale, timeout and disconnected states; keyboard and focus
+
+function deferredResponse() {
+  let resolve!: (value: ReturnType<typeof fixtureResponse>) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<ReturnType<typeof fixtureResponse>>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function runButton(): HTMLButtonElement {
+  return screen.getByRole<HTMLButtonElement>("button", { name: /^Run checks again/ });
+}
+
+describe("Task 3, Test 1: loading", () => {
+  it("renders the six names at once, with skeletons for chips, reasons and meta, under aria-busy with hidden text", async () => {
+    configure(() => new Promise(() => {}));
+    renderSection();
+    await settle();
+
+    const health = document.querySelector(".ccc-health");
+    expect(health?.getAttribute("aria-busy")).toBe("true");
+    expect(health?.querySelector(".ccc-visually-hidden")?.textContent).toBe("Loading diagnostics");
+    expect(rows().map((row) => row.querySelector("h5")?.textContent)).toEqual(ROW_NAMES);
+    for (const row of rows()) {
+      expect(row.querySelectorAll(".ccc-skeleton-line").length).toBeGreaterThanOrEqual(3);
+      expect(row.querySelector(".ccc-badge")).toBeNull();
+      expect(row.getAttribute("data-status")).toBeNull();
+      expect(row.querySelector("time")).toBeNull();
+    }
+    // Nothing is claimed while the answer is on its way.
+    expect(document.body.textContent).not.toContain("Needs setup");
+    expect(document.body.textContent).not.toContain("Nothing is failing.");
+    expect(document.body.textContent).not.toContain("Can't be checked");
+  });
+
+  it("drops aria-busy and the skeletons when the answer arrives", async () => {
+    const pending = deferredResponse();
+    configure(() => pending.promise);
+    renderSection();
+    await settle();
+    expect(document.querySelector(".ccc-health")?.getAttribute("aria-busy")).toBe("true");
+    pending.resolve(fixtureResponse());
+    await settle();
+    expect(document.querySelector(".ccc-health")?.getAttribute("aria-busy")).toBeNull();
+    expect(document.querySelector(".ccc-skeleton-line")).toBeNull();
+    expect(document.body.textContent).not.toContain("Loading diagnostics");
+  });
+});
+
+describe("Task 3, Test 2: Run checks again", () => {
+  it("is busy and aria-disabled before the answer, says Checking…, ignores a second press and keeps focus", async () => {
+    const first = deferredResponse();
+    const second = deferredResponse();
+    const answers = [first, second];
+    const get = configure(() => (answers.shift() as typeof first).promise);
+    const { notify } = renderSection();
+    first.resolve(fixtureResponse());
+    await settle();
+    expect(get).toHaveBeenCalledTimes(1);
+
+    const button = runButton();
+    expect(button.getAttribute("aria-busy")).toBeNull();
+    expect(button.getAttribute("aria-disabled")).toBeNull();
+    button.focus();
+    fireEvent.click(button);
+    // Everything below is observable before the fetch has answered.
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.hasAttribute("disabled")).toBe(false);
+    expect(notify).toHaveBeenLastCalledWith("Checking…");
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenLastCalledWith("gesture");
+
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(document.activeElement).toBe(button);
+
+    second.resolve(fixtureResponse());
+    await settle();
+    expect(notify).toHaveBeenLastCalledWith("Checked just now.");
+    expect(button.getAttribute("aria-busy")).toBeNull();
+    expect(button.getAttribute("aria-disabled")).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("ends with the timeout sentence, pluralised, when probes timed out, and counts them as unknown", async () => {
+    const timedOut = fixtureResponse({
+      vault: plainRow("vault", "probe-timeout", { freshness: "unavailable" }),
+      hooks: plainRow("hooks", "probe-timeout", { freshness: "unavailable" }),
+    });
+    const get = configure();
+    const { notify } = renderSection();
+    await settle();
+    get.mockImplementation(() => Promise.resolve(timedOut));
+    fireEvent.click(runButton());
+    await settle();
+    expect(notify).toHaveBeenLastCalledWith(
+      "Checked just now. 2 checks timed out and are shown as unknown.",
+    );
+    expect(chipOf(rowNamed("Vault access"))).toContain("Unknown");
+    expect(
+      within(rowNamed("Vault access")).getByText(
+        "This check took too long, so its result is unknown.",
+      ),
+    ).toBeTruthy();
+    expect(rowNamed("Vault access").textContent).toContain("Unavailable");
+    expect(
+      document.querySelector(".ccc-health-summary")?.textContent?.replace(/\s+/g, " ").trim(),
+    ).toBe("Nothing is failing. 2 couldn't be checked. ? 2 unknown ✓ 1 working ⊕ 3 need setup");
+  });
+
+  it("reads the single-timeout sentence in the singular", async () => {
+    const one = fixtureResponse({
+      hooks: plainRow("hooks", "probe-timeout", { freshness: "unavailable" }),
+    });
+    const get = configure();
+    const { notify } = renderSection();
+    await settle();
+    get.mockImplementation(() => Promise.resolve(one));
+    fireEvent.click(runButton());
+    await settle();
+    expect(notify).toHaveBeenLastCalledWith(
+      "Checked just now. 1 check timed out and is shown as unknown.",
+    );
+  });
+
+  it("is aria-disabled with a visible reason it is described by while the service is away, and does nothing", async () => {
+    const get = configure();
+    renderSection({ connection: { kind: "disconnected", reason: "x" } });
+    await settle();
+    const button = runButton();
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.hasAttribute("disabled")).toBe(false);
+    const reasonId = button.getAttribute("aria-describedby");
+    expect(reasonId).not.toBeNull();
+    expect(document.getElementById(reasonId as string)?.textContent).toBe(
+      "The companion service isn't running.",
+    );
+    fireEvent.click(button);
+    await settle();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("has an accessible name that begins with its visible label", async () => {
+    configure();
+    renderSection();
+    await settle();
+    expect(runButton().getAttribute("aria-label")).toBe(
+      "Run checks again: re-run the read-only checks",
+    );
+    expect(runButton().textContent).toBe("Run checks again");
+  });
+});
+
+describe("Task 3, Test 3: a failed fetch", () => {
+  it("shows the error and its follow-up sentence, clears the rows, and keeps no last-good value", async () => {
+    const get = configure();
+    const { notify } = renderSection();
+    await settle();
+    expect(chipOf(rowNamed("Vault access"))).toContain("Needs setup");
+
+    get.mockImplementation(() =>
+      Promise.reject(Object.assign(new Error("/Users/x/y"), { code: "timeout" })),
+    );
+    fireEvent.click(runButton());
+    await settle();
+
+    expect(screen.getByText("Couldn't run the checks.")).toBeTruthy();
+    expect(document.querySelector(".ccc-health-error")?.textContent).toContain("▲");
+    expect(
+      screen.getByText(
+        "The companion service didn't respond. Check that it is running, then press Run checks again.",
+      ),
+    ).toBeTruthy();
+    expect(notify).toHaveBeenLastCalledWith("Couldn't run the checks.");
+    for (const name of ROW_NAMES.slice(1)) {
+      expect(chipOf(rowNamed(name))).toContain("Unknown");
+    }
+    expect(document.body.textContent).not.toContain("Needs setup");
+    expect(document.body.textContent).not.toContain("/Users");
+  });
+
+  it("shows the error on a failed open, and no error while the answer is good", async () => {
+    configure(() => Promise.reject(new Error("boom")));
+    renderSection();
+    await settle();
+    expect(document.querySelector(".ccc-health-error")).not.toBeNull();
+    expect(document.querySelector(".ccc-health")?.getAttribute("aria-busy")).toBeNull();
+  });
+});
+
+describe("Task 3, Test 4: disconnection", () => {
+  it("clears every service row to unknown with no last-good value when live becomes disconnected", async () => {
+    configure(() =>
+      Promise.resolve(allOkHealth({ hooks: plainRow("hooks", "hook-runtime-missing") })),
+    );
+    const view = renderSection({ host: hostWithVaultPath(null) });
+    await settle();
+    expect(chipOf(rowNamed("Claude Code hooks"))).toContain("Failing");
+
+    view.rerenderWith({ kind: "disconnected", reason: PATHY });
+    await settle();
+    expect(chipOf(rowNamed("Companion service"))).toContain("Failing");
+    for (const name of ROW_NAMES.slice(1)) {
+      expect(chipOf(rowNamed(name))).toContain("Unknown");
+      expect(
+        within(rowNamed(name)).getByText(
+          "Can't be checked while the companion service isn't running.",
+        ),
+      ).toBeTruthy();
+      expect(rowNamed(name).textContent).not.toContain("Checked ");
+      expect(rowNamed(name).textContent).toContain("Not checked");
+      expect(rowNamed(name).textContent).toContain("Unavailable");
+      expect(rowNamed(name).querySelector("button")).toBeNull();
+    }
+    expect(document.body.textContent).not.toContain("The program the hooks run with");
+    expect(document.body.textContent).not.toContain("secretperson");
+  });
+
+  it("moves focus to the Diagnostics heading when the focused control disappears with its row", async () => {
+    configure();
+    const view = renderSection({ host: hostWith({ runVaultSetup: () => new Promise(() => {}) }) });
+    await settle();
+    const setup = within(rowNamed("Vault access")).getByRole("button", { name: "Set up vault" });
+    setup.focus();
+    expect(document.activeElement).toBe(setup);
+
+    view.rerenderWith({ kind: "disconnected", reason: "gone" });
+    await settle();
+    expect(setup.isConnected).toBe(false);
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 3, name: "Diagnostics" }),
+    );
+  });
+
+  it("leaves focus alone when it was not inside a cleared row", async () => {
+    configure();
+    const view = renderSection();
+    await settle();
+    const button = runButton();
+    button.focus();
+    view.rerenderWith({ kind: "disconnected", reason: "gone" });
+    await settle();
+    expect(document.activeElement).toBe(button);
+  });
+});
+
+describe("Task 3, Test 5: stale", () => {
+  const SIX_MINUTES = 6 * 60 * 1000;
+
+  it("shows the Stale badge on every row and the stale line once checks are older than five minutes, with no fetch from the clock", async () => {
+    const get = configure();
+    const view = renderSection();
+    await settle();
+    expect(screen.queryByText(/more than 5 minutes old/)).toBeNull();
+    for (const row of rows()) expect(row.textContent).toContain("Live");
+
+    view.rerenderWith({ kind: "live" }, HEALTH_NOW + SIX_MINUTES);
+    await settle();
+    expect(
+      screen.getByText("These checks are more than 5 minutes old. Press Run checks again."),
+    ).toBeTruthy();
+    for (const row of rows()) {
+      expect(row.querySelector(".ccc-badge[data-badge='stale']")?.textContent).toContain("Stale");
+      expect(row.querySelector(".ccc-badge[data-badge='live']")).toBeNull();
+    }
+    // Many ticks later, still exactly the one fetch made when the section opened.
+    view.rerenderWith({ kind: "live" }, HEALTH_NOW + 3 * SIX_MINUTES);
+    view.rerenderWith({ kind: "live" }, HEALTH_NOW + 9 * SIX_MINUTES);
+    await settle();
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mark a cleared row stale: nothing was checked", async () => {
+    configure();
+    renderSection({
+      connection: { kind: "disconnected", reason: "x" },
+      now: HEALTH_NOW + SIX_MINUTES,
+    });
+    await settle();
+    expect(screen.queryByText(/more than 5 minutes old/)).toBeNull();
+    expect(document.querySelector(".ccc-badge[data-badge='stale']")).toBeNull();
+  });
+});
+
+describe("Task 3, Test 6: headings, focus and keyboard", () => {
+  it("is h2 Settings, h3 Diagnostics, h4 Subsystems and Not part of this version, h5 row names", async () => {
+    configure();
+    requestSettingsSection("diagnostics");
+    render(<Shell initialDestination="settings" />);
+    await settle();
+    const outline = [
+      ...document.querySelectorAll<HTMLElement>(
+        ".ccc-settings h2, .ccc-settings h3, .ccc-settings h4, .ccc-settings h5",
+      ),
+    ].map((heading) => `${heading.tagName.toLowerCase()} ${heading.textContent}`);
+    expect(outline).toEqual([
+      "h2 Settings",
+      "h3 Diagnostics",
+      "h4 Subsystems",
+      ...ROW_NAMES.map((name) => `h5 ${name}`),
+      "h4 Not part of this version",
+      "h5 Gmail",
+      "h5 Google Calendar",
+      "h5 GitHub",
+    ]);
+    const h3 = screen.getByRole("heading", { level: 3, name: "Diagnostics" });
+    expect(h3.className).toContain("ccc-settings-section-title");
+    expect(h3.getAttribute("tabindex")).toBe("-1");
+    expect(screen.getByRole("heading", { level: 4, name: "Subsystems" }).className).toContain(
+      "ccc-settings-group-title",
+    );
+    for (const heading of document.querySelectorAll("h5")) {
+      expect(heading.className).toContain("ccc-settings-item-title");
+    }
+  });
+
+  it("has exactly one live region in the whole destination and none of its own in the section", async () => {
+    configure();
+    requestSettingsSection("diagnostics");
+    render(<Shell initialDestination="settings" />);
+    await settle();
+    expect(
+      document.querySelectorAll(
+        '.ccc-settings [role="status"], .ccc-settings [aria-live]:not([aria-live="off"]), .ccc-settings [role="alert"]',
+      ),
+    ).toHaveLength(1);
+    expect(
+      document.querySelectorAll(
+        ".ccc-settings-content [role='status'], .ccc-settings-content [aria-live]",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("tab order follows the keyboard contract: the toolbar button, then each row's action and details toggle; never native disabled, never a positive tabindex", async () => {
+    configure();
+    renderSection();
+    await settle();
+    const stops = [
+      ...document.querySelectorAll<HTMLElement>(
+        "button, a[href], input, select, textarea, [tabindex]",
+      ),
+    ]
+      .filter((element) => element.closest("[hidden]") === null)
+      .filter((element) => element.getAttribute("tabindex") !== "-1");
+    expect(stops.every((stop) => !stop.hasAttribute("disabled"))).toBe(true);
+    expect(stops.every((stop) => Number(stop.getAttribute("tabindex") ?? "0") <= 0)).toBe(true);
+    const names = stops.map((stop) =>
+      (stop.getAttribute("aria-label") ?? stop.textContent ?? "").trim(),
+    );
+    expect(names).toEqual([
+      "Run checks again: re-run the read-only checks",
+      // Vault access
+      "Set up vault",
+      // Claude Code hooks
+      "Copy install command",
+      // Usage collectors: the deciding part's action, then the toggle
+      "Copy install command",
+      "Show details for Usage collectors: 8 parts",
+      // Scheduler
+      "Open the research view",
+      "Show details for Scheduler: 3 parts",
+      // App launchers
+      "Go to the launchers section",
+      "Show details for App launchers: 4 parts",
+    ]);
+    // Every one of them takes the shared button class, and with it the 2px focus ring rule.
+    for (const stop of stops) expect(stop.className).toContain("ccc-connect-button");
+  });
+
+  it("opening the details adds each part's own action to the tab order, after the toggle", async () => {
+    configure();
+    renderSection();
+    await settle();
+    const row = rowNamed("Usage collectors");
+    fireEvent.click(within(row).getByRole("button", { name: /^Show details/ }));
+    const names = [...row.querySelectorAll<HTMLElement>("button")]
+      .filter((element) => element.closest("[hidden]") === null)
+      .map((button) => (button.getAttribute("aria-label") ?? button.textContent ?? "").trim());
+    expect(names).toEqual([
+      "Copy install command",
+      "Hide details for Usage collectors: 8 parts",
+      "Go to the security section",
+      "Copy install command",
+      "Copy install command",
+      "Go to the integrations section",
+    ]);
+  });
+
+  it("never uses a native disabled attribute anywhere in the section", async () => {
+    configure(() => Promise.reject(new Error("x")));
+    renderSection();
+    await settle();
+    expect(document.querySelector("[disabled]")).toBeNull();
+  });
+});
+
+describe("Task 3: the stylesheet carries every class the section emits", () => {
+  const STYLESHEET = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "styles.css"),
+    "utf8",
+  );
+
+  it.each([
+    ".ccc-health-toolbar",
+    ".ccc-health-detail",
+    ".ccc-health-meta",
+    ".ccc-health-error",
+    ".ccc-health-part-head",
+    ".ccc-health-part-name",
+  ])("has a rule for %s", (selector) => {
+    expect(STYLESHEET).toContain(`.ccc-command-center ${selector}`);
   });
 });

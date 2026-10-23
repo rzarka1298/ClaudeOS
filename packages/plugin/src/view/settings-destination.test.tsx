@@ -153,7 +153,13 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
   it("Test 3: the nav is one tab stop with a roving tabindex on the active item", () => {
     renderShell();
     const items = within(nav()).getAllByRole("button");
-    expect(items.map((item) => item.getAttribute("tabindex"))).toEqual(["0", "-1", "-1", "-1", "-1"]);
+    expect(items.map((item) => item.getAttribute("tabindex"))).toEqual([
+      "0",
+      "-1",
+      "-1",
+      "-1",
+      "-1",
+    ]);
     expect(items.every((item) => item.tagName === "BUTTON")).toBe(true);
     expect(items.every((item) => item.getAttribute("type") === "button")).toBe(true);
   });
@@ -250,7 +256,13 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
       .getAllByRole("button")
       .map((button) => button.textContent);
     // Integrations, Paths, Security and Schedules arrive with 08-15 and 08-18.
-    expect(labels).toEqual(["Projects", "Launchers", "Approvals and tasks", "Visual", "Diagnostics"]);
+    expect(labels).toEqual([
+      "Projects",
+      "Launchers",
+      "Approvals and tasks",
+      "Visual",
+      "Diagnostics",
+    ]);
   });
 
   it("the shell's navigation request for Settings after a launchers request still lands on the heading", async () => {
