@@ -66,12 +66,12 @@ import {
 } from "../src/spec-support/synthetic-session.js";
 import {
   asTasksBrowser,
-  readGlobalTaskNotes,
+  readTaskNotes,
   recordResults,
   rendererClick,
   runSetUpManagedVault,
   WAIT,
-  writeGlobalTaskNote,
+  writeTaskNote,
 } from "../src/spec-support/tasks-support.js";
 
 const tb = asTasksBrowser(browser);
@@ -250,8 +250,8 @@ describe("overview slice", () => {
       zone,
       nowIso: new Date().toISOString(),
       dueToday: (inZone) => tasks.dueToday({ zone: inZone }),
-      readNotes: () => readGlobalTaskNotes(vaultPath(), env.context.runRoot),
-      writeNote: (name, text) => writeGlobalTaskNote(vaultPath(), env.context.runRoot, name, text),
+      readNotes: () => readTaskNotes(vaultPath(), env.context.runRoot),
+      writeNote: (path, text) => writeTaskNote(vaultPath(), env.context.runRoot, path, text),
     });
     await reopenOverview(ob);
     const cards = await waitForVerdict(ob, checkNextOpen, "Today to show the next open task");

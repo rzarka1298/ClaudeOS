@@ -140,6 +140,38 @@ export function readGlobalTaskNotes(vaultPath: string, runRoot: string): NoteFil
   }));
 }
 
+/** One scope's task folder: `global/tasks` or `workspaces/<25-character id>/tasks`. */
+const TASK_NOTE_PATH = /^(global|workspaces\/[0-9a-z]{25})\/tasks\/([^/\\]+\.md)$/;
+
+/**
+ * Reads every task note of every scope (global and each workspace) from the sandbox vault. The
+ * service lists tasks of all scopes, so a spec that finds a note by its id must look in all of
+ * them. Index files are skipped, and only `.md` files directly in a scope's task folder are read.
+ */
+export function readTaskNotes(vaultPath: string, runRoot: string): NoteFile[] {
+  assertVaultInsideRunRoot(vaultPath, runRoot);
+  let workspaces: string[] = [];
+  try {
+    workspaces = readdirSync(join(vaultPath, "workspaces"));
+  } catch {
+    workspaces = [];
+  }
+  const folders = ["global/tasks", ...workspaces.map((id) => `workspaces/${id}/tasks`)];
+  const notes: NoteFile[] = [];
+  for (const folder of folders) {
+    // A folder that is not a scope's task folder (a stray directory under workspaces) is skipped.
+    if (!TASK_NOTE_PATH.test(`${folder}/x.md`)) continue;
+    for (const name of taskNoteNames(join(vaultPath, ...folder.split("/")))) {
+      notes.push({
+        path: `${folder}/${name}`,
+        name,
+        text: readFileSync(join(vaultPath, ...folder.split("/"), name), "utf8"),
+      });
+    }
+  }
+  return notes;
+}
+
 /** The notes whose file name starts with the slug of `title`. */
 export function notesForTitle(files: readonly NoteFile[], title: string): NoteFile[] {
   const prefix = `${taskSlug(title)}-`;
@@ -1042,6 +1074,25 @@ export function writeGlobalTaskNote(
   assertVaultInsideRunRoot(vaultPath, runRoot);
   assertNoteName(name);
   writeFileSync(join(vaultPath, TASK_FOLDERS_GLOBAL, name), text);
+}
+
+/**
+ * Overwrites one task note of the sandbox vault, named by its vault-relative path in any scope.
+ * Refuses everything that is not exactly one `.md` file directly in a scope's task folder.
+ */
+export function writeTaskNote(
+  vaultPath: string,
+  runRoot: string,
+  notePath: string,
+  text: string,
+): void {
+  assertVaultInsideRunRoot(vaultPath, runRoot);
+  const match = TASK_NOTE_PATH.exec(notePath);
+  const name = match?.[2];
+  if (name === undefined || name.startsWith(".") || name === "index.md") {
+    throw new Error("Refusing a path that is not one plain task note of a scope.");
+  }
+  writeFileSync(join(vaultPath, ...notePath.split("/")), text);
 }
 
 /** The note whose frontmatter id is `id`. */

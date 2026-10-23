@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
@@ -20,6 +23,7 @@ import {
   parseShowingTotal,
   readDecisionOutcome,
   readerSelectors,
+  readTaskNotes,
   redateDueLine,
   rendererClick,
   rendererInspectDue,
@@ -30,6 +34,7 @@ import {
   shiftLocalDate,
   TASK_PAGE_LIMIT,
   untrustedRenderVerdict,
+  writeTaskNote,
 } from "./tasks-support.js";
 
 const ID = "abcdefghij0123456789klmno";
@@ -730,5 +735,57 @@ describe("panel independence (Task 3 Test 5)", () => {
     expect(
       emptyProjectVerdict({ panelRowIds: [], globalRowIds: ["a"], emptyHeading: null }),
     ).toMatchObject({ ok: false });
+  });
+});
+
+describe("task notes of every scope in the sandbox vault (item 3)", () => {
+  const WORKSPACE = "abcdefghij0123456789klmno";
+
+  function sandbox(): { runRoot: string; vault: string } {
+    const runRoot = realpathSync(mkdtempSync(join(tmpdir(), "ccc-tasknotes-")));
+    const vault = join(runRoot, "vault");
+    for (const folder of ["global/tasks", `workspaces/${WORKSPACE}/tasks`]) {
+      mkdirSync(join(vault, folder), { recursive: true });
+    }
+    writeFileSync(join(vault, "global/tasks/one.md"), "g");
+    writeFileSync(join(vault, "global/tasks/index.md"), "generated");
+    writeFileSync(join(vault, `workspaces/${WORKSPACE}/tasks/two.md`), "w");
+    return { runRoot, vault };
+  }
+
+  it("reads the global and the workspace task notes, never an index", () => {
+    const { runRoot, vault } = sandbox();
+    const read = readTaskNotes(vault, runRoot);
+    expect(read.map((file) => file.path).sort()).toEqual([
+      "global/tasks/one.md",
+      `workspaces/${WORKSPACE}/tasks/two.md`,
+    ]);
+    expect(read.find((file) => file.name === "two.md")?.text).toBe("w");
+  });
+
+  it("writes one task note by its vault-relative path, in any scope", () => {
+    const { runRoot, vault } = sandbox();
+    writeTaskNote(vault, runRoot, `workspaces/${WORKSPACE}/tasks/two.md`, "done");
+    expect(readFileSync(join(vault, `workspaces/${WORKSPACE}/tasks/two.md`), "utf8")).toBe("done");
+  });
+
+  it("refuses a path that is not exactly one task note of a scope", () => {
+    const { runRoot, vault } = sandbox();
+    for (const bad of [
+      "global/tasks/../../escape.md",
+      "global/tasks/index.md",
+      "global/notes/one.md",
+      "workspaces/short/tasks/two.md",
+      `workspaces/${WORKSPACE}/tasks/sub/two.md`,
+      "/global/tasks/one.md",
+      "global/tasks/one.txt",
+    ]) {
+      expect(() => writeTaskNote(vault, runRoot, bad, "x"), bad).toThrow(/task note/);
+    }
+  });
+
+  it("refuses a vault outside the run root", () => {
+    const { vault } = sandbox();
+    expect(() => readTaskNotes(vault, "/tmp/elsewhere-run-root")).toThrow(/run root/);
   });
 });

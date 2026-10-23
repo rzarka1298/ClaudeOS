@@ -1022,8 +1022,9 @@ describe("completing the tasks due today and overdue (item 3)", () => {
             name,
             text,
           })),
-        writeNote: (name: string, text: string) => {
-          writes.push(name);
+        writeNote: (path: string, text: string) => {
+          const name = path.slice(path.lastIndexOf("/") + 1);
+          writes.push(path);
           notes.set(name, text);
           open.delete(name.replace(/\.md$/, ""));
         },
@@ -1036,7 +1037,12 @@ describe("completing the tasks due today and overdue (item 3)", () => {
     const { deps, writes } = world(["a1", "b2", "c3"]);
     const total = await completeDueAndOverdue(deps);
     expect(total).toBe(3);
-    expect(writes.sort()).toEqual(["a1.md", "b2.md", "c3.md"]);
+    // The service lists tasks of every scope, so a write names the note's vault-relative path.
+    expect(writes.sort()).toEqual([
+      "global/tasks/a1.md",
+      "global/tasks/b2.md",
+      "global/tasks/c3.md",
+    ]);
   });
 
   it("returns zero when nothing is due", async () => {
