@@ -111,13 +111,23 @@ const CODEX_CELLS: readonly string[] = [
   ...PAIR_CASES.flatMap((id) => CODEX_PANES.map((pane) => `codex — launch-pair-${id} — ${pane}`)),
 ];
 
-/** The 121 cells the merged tree already had, and the Codex spec's final count (UI-SPEC "Visual regression"). */
-const MERGED_TREE_CELLS = 121;
+/**
+ * The cells the merged tree has outside the Codex, Research, Settings and contrast specs: 9 widgets x 8
+ * presentations + 5 motion + 4 Agent runs + 21 approvals + 19 tasks = 121, less the two permission-required
+ * cells Phase 8 made unreachable (`today-permission-required` in 08-21, `tech-intel-permission-required` in
+ * FIX5B), and the Codex spec's final count (UI-SPEC "Visual regression").
+ */
+const MERGED_TREE_CELLS = 119;
 const CODEX_SPEC_CELLS = 47;
 /** The Research spec's cells (plan 07-16): one baseline each, in its own spec file. */
 const RESEARCH_SPEC_CELLS = 17;
-/** The contrast guard's tests (`contrast.spec.ts`): 9 pages under a light and a dark host, no image. */
-const CONTRAST_GUARD_TESTS = 18;
+/**
+ * The contrast guard's tests (`contrast.spec.ts`): 9 Phase 7 pages and 21 Phase 8 pages (08-21) under a light
+ * and a dark host, plus 2 blank-page non-vacuity tests; no image.
+ */
+const CONTRAST_GUARD_TESTS = 62;
+/** The Settings spec's pixel cells (plan 08-21): the nine sections, narrow layouts, Diagnostics, bundle and Overview states. */
+const SETTINGS_SPEC_CELLS = 32;
 
 /** The titles `playwright test --list` prints for one spec file. */
 function titlesOf(listing: string, specFile: string): string[] {
@@ -128,11 +138,13 @@ function titlesOf(listing: string, specFile: string): string[] {
 }
 
 describe("visual matrix (audit)", () => {
-  it("lists the merged-tree 121 cells (9 widgets x 8 presentations + 5 motion + 4 Agent runs + 21 approvals + 19 tasks) plus the Codex spec's own", () => {
+  it("lists the merged-tree 119 cells (121 less the two unreachable permission-required cells) plus the Codex, Research, Settings and contrast specs", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
     expect(out).toContain(
-      `Total: ${MERGED_TREE_CELLS + CODEX_SPEC_CELLS + RESEARCH_SPEC_CELLS + CONTRAST_GUARD_TESTS} tests in 7 files`,
+      `Total: ${MERGED_TREE_CELLS + CODEX_SPEC_CELLS + RESEARCH_SPEC_CELLS + SETTINGS_SPEC_CELLS + CONTRAST_GUARD_TESTS} tests in 8 files`,
     );
+    expect(titlesOf(out, "settings.spec.ts")).toHaveLength(SETTINGS_SPEC_CELLS);
+    expect(titlesOf(out, "contrast.spec.ts")).toHaveLength(CONTRAST_GUARD_TESTS);
     expect(titlesOf(out, "research.spec.ts")).toHaveLength(RESEARCH_SPEC_CELLS);
     expect(CODEX_CELLS).toHaveLength(CODEX_SPEC_CELLS);
     expect(titlesOf(out, "codex.spec.ts").sort()).toEqual([...CODEX_CELLS].sort());
