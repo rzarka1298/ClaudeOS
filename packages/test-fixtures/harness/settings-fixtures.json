@@ -1,0 +1,333 @@
+{
+  "_comment": "Synthetic data for the Settings cells (plan 08-21). Every name, path, version and time is invented; paths use the placeholder user segment. The health answers are built by the plugin's own test-support builders and parsed by the strict domain schema in src/phase8-fixtures.test.ts.",
+  "now": "2026-10-22T09:00:30.000Z",
+  "display": {
+    "homeDir": "/Users/username",
+    "socketPath": "/Users/username/ExampleService/svc.sock",
+    "vaultBasePath": "/Users/username/ExampleVault",
+    "vaultName": "ExampleVault",
+    "userName": "exampleuser",
+    "pluginVersion": "0.1.0",
+    "obsidianVersion": "1.13.1"
+  },
+  "claude": {
+    "hooks": "installed",
+    "hookRuntimeMissing": false,
+    "disableAllHooks": false,
+    "lastEventAt": "2026-10-22T08:59:10.000Z",
+    "telemetry": {
+      "kind": "ok"
+    },
+    "detectedClaudeVersion": "2.1.250",
+    "statusLine": "installed",
+    "statusLineReported": true,
+    "transcriptAnalysis": {
+      "enabled": true
+    },
+    "spoolDropCount": 0,
+    "unknownEventCount": 0,
+    "cleanupPeriodDays": 30
+  },
+  "codex": {
+    "hooks": {
+      "state": "installed",
+      "lastEventAt": "2026-10-22T08:58:00.000Z",
+      "installedSince": "2026-10-20T09:00:00.000Z"
+    },
+    "bridge": {
+      "state": "installed",
+      "lastWindowAt": "2026-10-22T08:59:00.000Z"
+    },
+    "codex": {
+      "installed": true,
+      "version": "0.159.2"
+    },
+    "doctor": null
+  },
+  "research": {
+    "lastSuccess": {
+      "runId": "2f06800000c4b000615f20381",
+      "endedAt": "2026-10-22T06:00:00.000Z",
+      "outcome": "success",
+      "sourceCount": 3,
+      "sourceTotal": 3,
+      "reportNoteId": "2931ac00348e6c004d8c2c004"
+    },
+    "lastFailure": null,
+    "inFlight": null,
+    "latestUnknown": null,
+    "configuredSources": [
+      {
+        "label": "Example tools changelog",
+        "host": "changelog.example.invalid"
+      },
+      {
+        "label": "Sample runtime releases",
+        "host": "releases.sample.invalid"
+      },
+      {
+        "label": "Demo language blog",
+        "host": "blog.demo.invalid"
+      }
+    ],
+    "topicLabel": "Developer tooling and open-source releases"
+  },
+  "detection": {
+    "detectedAt": "2026-10-22T09:00:00.000Z",
+    "apps": {
+      "antigravity": [
+        {
+          "bundleId": "com.example.antigravity",
+          "name": "Antigravity",
+          "location": "applications"
+        }
+      ],
+      "claude-desktop": [
+        {
+          "bundleId": "com.example.claude-desktop",
+          "name": "Claude",
+          "location": "applications"
+        }
+      ],
+      "iterm2": [],
+      "ghostty": [
+        {
+          "bundleId": "com.example.ghostty",
+          "name": "Ghostty",
+          "location": "applications"
+        }
+      ],
+      "wezterm": [],
+      "terminal": [
+        {
+          "bundleId": "com.apple.Terminal",
+          "name": "Terminal",
+          "location": "applications"
+        }
+      ]
+    },
+    "claudeExecutables": [
+      {
+        "candidateId": "candidate-1",
+        "displayPath": "~/.local/bin/claude"
+      }
+    ],
+    "terminalPresets": [
+      {
+        "id": "ghostty",
+        "label": "Ghostty",
+        "argv": [
+          "/usr/bin/open",
+          "-na",
+          "Ghostty",
+          "--args",
+          "-e",
+          "{script}"
+        ],
+        "verified": false
+      },
+      {
+        "id": "blank",
+        "label": "Blank template",
+        "argv": [
+          "",
+          "{script}"
+        ],
+        "verified": false
+      }
+    ],
+    "git": "available"
+  },
+  "configs": {
+    "antigravity": null,
+    "claude-code": null,
+    "claude-desktop": null
+  },
+  "scan": {
+    "scanRoots": [
+      {
+        "scanRootId": "abcdefghi0123456789abcdef",
+        "displayPath": "~/ExampleProjects",
+        "depth": 1,
+        "addedAt": "2026-10-20T09:00:00Z",
+        "lastScannedAt": "2026-10-22T08:30:00Z",
+        "scanStatus": "complete",
+        "suggestionCount": 2,
+        "scanGeneration": "gen1"
+      }
+    ],
+    "suggestions": [
+      {
+        "suggestionId": "sug1",
+        "scanRootId": "abcdefghi0123456789abcdef",
+        "folderName": "sample-app",
+        "displayPath": "~/ExampleProjects/sample-app"
+      },
+      {
+        "suggestionId": "sug2",
+        "scanRootId": "abcdefghi0123456789abcdef",
+        "folderName": "demo-library",
+        "displayPath": "~/ExampleProjects/demo-library"
+      }
+    ],
+    "partial": false
+  },
+  "health": {
+    "generatedAt": "2026-10-22T09:00:00.000Z",
+    "service": {
+      "version": "0.1.0",
+      "startedAt": "2026-10-22T06:00:00.000Z",
+      "storeSchemaVersion": 12
+    },
+    "rows": [
+      {
+        "id": "vault",
+        "status": "ok",
+        "reasonCode": "vault-ready",
+        "checkedAt": "2026-10-22T09:00:00.000Z",
+        "freshness": "live"
+      },
+      {
+        "id": "hooks",
+        "status": "ok",
+        "reasonCode": "hooks-receiving",
+        "checkedAt": "2026-10-22T09:00:00.000Z",
+        "freshness": "live"
+      },
+      {
+        "id": "collectors",
+        "status": "ok",
+        "reasonCode": "statusline-reporting",
+        "checkedAt": "2026-10-22T09:00:00.000Z",
+        "freshness": "live",
+        "parts": [
+          {
+            "partId": "telemetry",
+            "status": "ok",
+            "reasonCode": "telemetry-ok"
+          },
+          {
+            "partId": "status-line",
+            "status": "ok",
+            "reasonCode": "statusline-reporting"
+          },
+          {
+            "partId": "transcript-analysis",
+            "status": "ok",
+            "reasonCode": "analysis-on"
+          },
+          {
+            "partId": "spool",
+            "status": "ok",
+            "reasonCode": "spool-clean"
+          },
+          {
+            "partId": "codex-install",
+            "status": "ok",
+            "reasonCode": "codex-installed"
+          },
+          {
+            "partId": "codex-hooks",
+            "status": "ok",
+            "reasonCode": "codex-hooks-receiving"
+          },
+          {
+            "partId": "codex-bridge",
+            "status": "ok",
+            "reasonCode": "codex-bridge-ready"
+          },
+          {
+            "partId": "codex-doctor",
+            "status": "ok",
+            "reasonCode": "codex-doctor-ok"
+          }
+        ]
+      },
+      {
+        "id": "scheduler",
+        "status": "ok",
+        "reasonCode": "last-run-succeeded",
+        "checkedAt": "2026-10-22T09:00:00.000Z",
+        "freshness": "live",
+        "parts": [
+          {
+            "partId": "last-run",
+            "status": "ok",
+            "reasonCode": "last-run-succeeded",
+            "facts": {
+              "lastSuccessAt": "2026-10-22T08:00:00.000Z"
+            }
+          },
+          {
+            "partId": "research-key",
+            "status": "setup-needed",
+            "reasonCode": "research-key-missing",
+            "setupAction": {
+              "kind": "copy-command",
+              "command": "research-key-setup"
+            }
+          },
+          {
+            "partId": "sources",
+            "status": "ok",
+            "reasonCode": "sources-configured",
+            "facts": {
+              "sourceCount": 5
+            }
+          }
+        ],
+        "facts": {
+          "lastSuccessAt": "2026-10-22T08:00:00.000Z"
+        }
+      },
+      {
+        "id": "launchers",
+        "status": "ok",
+        "reasonCode": "launcher-ready",
+        "checkedAt": "2026-10-22T09:00:00.000Z",
+        "freshness": "live",
+        "parts": [
+          {
+            "partId": "antigravity",
+            "status": "ok",
+            "reasonCode": "launcher-ready"
+          },
+          {
+            "partId": "claude-code",
+            "status": "ok",
+            "reasonCode": "launcher-ready"
+          },
+          {
+            "partId": "claude-desktop",
+            "status": "ok",
+            "reasonCode": "launcher-ready"
+          },
+          {
+            "partId": "codex",
+            "status": "ok",
+            "reasonCode": "launcher-ready"
+          }
+        ]
+      }
+    ],
+    "keychain": {
+      "installSecret": "present",
+      "researchKey": "absent"
+    },
+    "paths": {
+      "vault": "~/ExampleVault",
+      "runtimeDir": "~/ExampleService",
+      "socket": "~/ExampleService/svc.sock"
+    },
+    "vaultFingerprint": {
+      "salt": "0123456789abcdef0123456789abcdef",
+      "digest": "2b1e56ad70088d47"
+    },
+    "counts": {
+      "projects": null,
+      "scanFolders": null,
+      "openTasks": null,
+      "reports": null
+    }
+  }
+}

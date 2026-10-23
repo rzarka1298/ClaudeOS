@@ -98,6 +98,12 @@ const PAGES: readonly PageSpec[] = [
     params: { view: "projects", case: "project-tasks", width: "full" },
     mustSample: [],
   },
+  // Phase 8 (plan 08-21, D-31, D-32): the real Settings destination, one section per page.
+  {
+    name: "settings security",
+    params: { view: "settings", case: "settings-security", width: "full", nav: "1" },
+    mustSample: ["Transcript analysis", "Always allow", "Present"],
+  },
 ];
 
 /** One thing the page drew, as the browser computed it. */
@@ -405,7 +411,20 @@ for (const host of HOSTS) {
     }, async ({ page }) => {
       test.setTimeout(90_000);
       await page.goto(harnessUrl({ ...spec.params, host }));
-      await page.locator("html[data-harness-ready=true]").waitFor({ state: "attached" });
+      // A harness error (a typo in a case or a view) fails at once, with its text, instead of a timeout.
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              () =>
+                document.querySelector(".ccc-harness-error")?.textContent ??
+                (document.documentElement.getAttribute("data-harness-ready") === "true"
+                  ? "ready"
+                  : "waiting"),
+            ),
+          { timeout: 30_000 },
+        )
+        .toBe("ready");
       await expect(page.locator(".ccc-command-center")).toHaveCount(1);
 
       const found = await harvest(page);

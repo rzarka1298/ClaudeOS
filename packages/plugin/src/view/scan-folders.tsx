@@ -6,7 +6,7 @@ import {
   type ScanStateResponse,
   SUGGESTIONS_PAGE_SIZE,
   type SuggestionView,
-} from "@ccc/domain";
+} from "@ccc/domain/browser";
 import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";

@@ -6,7 +6,7 @@ import {
   type TerminalChoice,
   type TerminalPresetId,
   terminalMayPromptForAutomation,
-} from "@ccc/domain";
+} from "@ccc/domain/browser";
 import type { VNode } from "preact";
 import { useId, useRef } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";

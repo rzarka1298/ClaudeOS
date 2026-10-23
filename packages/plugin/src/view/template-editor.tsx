@@ -2,7 +2,7 @@ import {
   MAX_TEMPLATE_ARGUMENTS,
   type RefusedTemplate,
   type TemplateRefusalReason,
-} from "@ccc/domain";
+} from "@ccc/domain/browser";
 import type { VNode } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { FieldError, type RowError } from "./launcher-panel-kit.js";
