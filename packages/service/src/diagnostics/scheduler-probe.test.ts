@@ -1,5 +1,6 @@
 import { execFile as execFileDouble } from "node:child_process";
 import {
+  HEALTH_STALE_AFTER_MS,
   type HealthTrigger,
   type ResearchStatusResponse,
   RUN_ERROR_CODES,
@@ -371,6 +372,52 @@ describe("Test 2b: the presence check keeps its gesture result in memory (Amendm
     });
     await check("gesture", controller.signal);
     expect(await check("reconnect", SIGNAL)).toBe("not-checked");
+  });
+
+  it("FIX6A M1: a remembered answer older than the staleness window reads not-checked, never a fresh-looking one", async () => {
+    let clock = 1_000;
+    const hasResearchKey = vi.fn(() => Promise.resolve("present" as const));
+    const check = createKeyPresenceCheck({ hasResearchKey, clock: () => clock });
+    expect(await check("gesture", SIGNAL)).toBe("present");
+    clock += 4 * 60 * 60 * 1000;
+    expect(await check("reconnect", SIGNAL)).toBe("not-checked");
+    const outcome = await probeScheduler(
+      { status: () => status(), keyPresence: check, overrideTransportActive: false },
+      SIGNAL,
+      "reconnect",
+    );
+    expect(part(outcome, "research-key")).toMatchObject({
+      status: "unknown",
+      reasonCode: "research-key-not-checked",
+    });
+    expect(hasResearchKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("FIX6A M1: a reconnect inside the window reuses the answer and still never spawns; the window is the shared constant", async () => {
+    let clock = 5_000;
+    const hasResearchKey = vi.fn(() => Promise.resolve("absent" as const));
+    const check = createKeyPresenceCheck({ hasResearchKey, clock: () => clock });
+    await check("gesture", SIGNAL);
+    clock += HEALTH_STALE_AFTER_MS - 1;
+    expect(await check("reconnect", SIGNAL)).toBe("absent");
+    clock += 1;
+    expect(await check("reconnect", SIGNAL)).toBe("absent");
+    clock += 1;
+    expect(await check("reconnect", SIGNAL)).toBe("not-checked");
+    expect(hasResearchKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("FIX6A M1: a new gesture renews the remembered answer's age", async () => {
+    let clock = 0;
+    const check = createKeyPresenceCheck({
+      hasResearchKey: () => Promise.resolve("present"),
+      clock: () => clock,
+    });
+    await check("gesture", SIGNAL);
+    clock += HEALTH_STALE_AFTER_MS - 10;
+    await check("gesture", SIGNAL);
+    clock += HEALTH_STALE_AFTER_MS - 10;
+    expect(await check("reconnect", SIGNAL)).toBe("present");
   });
 
   it("hands the probe's own signal to the process-backed check", async () => {
