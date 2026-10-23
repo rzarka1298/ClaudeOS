@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vite
 import { registerApprovalProtocol } from "./approvals/protocol.js";
 import { wireApprovals } from "./approvals/wiring.js";
 import { connectionState } from "./connection-state.js";
+import { healthApi, healthConfigured } from "./health/api.js";
+import { wireHealth } from "./health/wiring.js";
 import { type CommandLike, createHostRegistry, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference, type MediaQueryListLike } from "./motion.js";
 import { registerSetUpLaunchersCommand, SET_UP_LAUNCHERS_COMMAND_ID } from "./projects/commands.js";
@@ -175,6 +177,9 @@ function loadCycle(
     openFile: () => false,
     copyText: () => Promise.resolve(),
   });
+  // The REAL health wiring (plan 08-13): the API holder and the connection watcher, released
+  // through the registry's cleanup.
+  wireHealth(registry, { getHealth: () => Promise.reject(new Error("not called")) });
   // The REAL plugin-level switcher (wave-7 finding 2): its launch timers and
   // any open modal are released through the seam.
   createPluginSwitcher({
@@ -296,6 +301,22 @@ describe("plugin lifecycle: twenty load/unload cycles", () => {
     expect(researchEventHandlerInstalled()).toBe(false);
     expect(researchConfigured()).toBe(false);
     await expect(researchApi().status()).rejects.toMatchObject({ code: "service-disconnected" });
+  });
+
+  it("the health wiring: twenty loads leave one configuration, an unload leaves none (plan 08-13)", async () => {
+    let current: HostRegistry | undefined;
+    for (let i = 0; i < 20; i++) {
+      current?.disposeAll();
+      expect(healthConfigured()).toBe(false);
+      current = loadCycle(host, domTarget, () => {});
+      expect(healthConfigured()).toBe(true);
+    }
+    current?.disposeAll();
+    expect(current?.liveCount()).toBe(0);
+    expect(healthConfigured()).toBe(false);
+    await expect(healthApi().get("reconnect")).rejects.toMatchObject({
+      code: "service-disconnected",
+    });
   });
 
   it("after twenty loads without a following unload, firing one workspace event invokes its handler exactly once", () => {

@@ -86,8 +86,13 @@ describe("FIX2B M3: section headings are explicit, embedded Phase 4 headings are
       expect(title?.classList.contains("ccc-settings-section-title")).toBe(true);
 
       const selectors = phase8Selectors();
+      // A section's own sub-headings carry the frame's explicit classes (`h4.ccc-settings-group-title`,
+      // `h5.ccc-settings-item-title`) and are meant to match them; an embedded Phase 4 heading never does.
       const embedded = [...(content?.querySelectorAll("h3, h4, h5") ?? [])].filter(
-        (heading) => heading !== title,
+        (heading) =>
+          heading !== title &&
+          !heading.classList.contains("ccc-settings-group-title") &&
+          !heading.classList.contains("ccc-settings-item-title"),
       );
       for (const heading of embedded) {
         for (const selector of selectors) {

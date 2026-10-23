@@ -5,6 +5,7 @@ import type { ConnectionState } from "../connection-state.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
+import { DiagnosticsSection } from "./diagnostics-section.js";
 import { type LaunchersSession, LaunchersSettings } from "./launchers-settings.js";
 import { ApprovalsTasksSettings } from "./settings-approvals-tasks.js";
 import { StatusLine } from "./settings-controls.js";
@@ -76,6 +77,9 @@ export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionVie
     <ApprovalsTasksSettings host={host} connection={connection} notify={notify} />
   ),
   visual: ({ host, notify }) => <VisualSettings host={host} notify={notify} />,
+  diagnostics: ({ host, connection, now, notify }) => (
+    <DiagnosticsSection host={host} connection={connection} now={now} notify={notify} />
+  ),
   launchers: ({ connection, now, notify, launchersActions, launchersSession }) => (
     <LaunchersSettings
       actions={launchersActions}

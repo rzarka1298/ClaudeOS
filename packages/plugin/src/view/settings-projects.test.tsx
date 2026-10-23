@@ -196,7 +196,10 @@ describe("Task 2: Projects in Settings, with the register flow, scan folders and
         "▲ Couldn't load projects. Check that the service is running, then try again.",
       ),
     ).toBeTruthy();
-    expect(document.body.textContent).not.toContain("Diagnostics");
+    // (The nav now carries a Diagnostics item, so the check is on the section's own content.)
+    expect(document.querySelector(".ccc-settings-content")?.textContent).not.toContain(
+      "Diagnostics",
+    );
     expect(
       screen.getByRole("button", { name: "Register a project" }).getAttribute("aria-disabled"),
     ).toBeNull();
