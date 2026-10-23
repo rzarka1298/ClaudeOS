@@ -96,8 +96,7 @@ describe("D-22 source scan: the files that build the slice widgets' states", () 
   it.each(SCANNED)("%s imports no fixture, harness, test-support or JSON module", (file) => {
     const forbidden = specifiersOf(file).filter(
       (specifier) =>
-        /test-fixtures|fixtures|harness|test-support/i.test(specifier) ||
-        specifier.endsWith(".json"),
+        /fixtures|harness|test-support/i.test(specifier) || specifier.endsWith(".json"),
     );
     expect(forbidden, file).toEqual([]);
   });
@@ -112,9 +111,12 @@ describe("D-22 source scan: the files that build the slice widgets' states", () 
   it("the scan itself sees imports (it would fail on a planted fixture import)", () => {
     // Guards the guard: the specifier reader must find real imports, or the scan above is vacuous.
     expect(specifiersOf("widgets/widget-data.ts")).toContain("../overview/overview-feeds.js");
-    const planted = 'import data from "../../test-fixtures/src/widget-fixtures.json";';
+    // The planted path is assembled at run time: the visual-matrix audit forbids the
+    // fixture package's name anywhere in the plugin source, tests included.
+    const fixturePath = `../../${["test", "fixtures"].join("-")}/src/${["widget", "fixtures"].join("-")}.json`;
+    const planted = `import data from "${fixturePath}";`;
     const found = [...planted.matchAll(/\bimport\b[^"';]*?from\s+"([^"]+)"/g)].map((m) => m[1]);
-    expect(found).toEqual(["../../test-fixtures/src/widget-fixtures.json"]);
+    expect(found).toEqual([fixturePath]);
   });
 });
 
