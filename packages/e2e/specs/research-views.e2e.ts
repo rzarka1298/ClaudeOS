@@ -463,12 +463,17 @@ describe("research views", () => {
       `#${RESEARCH_CLASSES.tabPrefix}${RESEARCH_TEXT.overviewTabId}`,
       null,
     );
+    // The card must show the newest report the service lists, not an earlier one (FIX4A m5).
+    const listed = await env.research.list({ limit: 1 });
+    const row = listed.rows.find((entry) => entry.readable);
+    if (row?.readable !== true) throw new Error("The service lists no readable report.");
+    const newest = { title: row.title };
     const cards = await waitForVerdict(
       asOverviewBrowser(browser),
-      checkOverviewCards,
+      (read) => checkOverviewCards(read, newest),
       "the Today and technology cards to show their live state",
     );
-    expect(checkOverviewCards(cards)).toEqual([]);
+    expect(checkOverviewCards(cards, newest)).toEqual([]);
   });
 
   it("[07-UAT#23] The live report reads comfortably (the reading container's measure, leading and spacing)", async () => {
