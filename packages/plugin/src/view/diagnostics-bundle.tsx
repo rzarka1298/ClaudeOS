@@ -84,6 +84,7 @@ const SAVE_NOTICES: Readonly<Record<SaveOutcome["kind"], string>> = {
   unavailable: SAVE_UNAVAILABLE_REASON,
   "inside-vault": "That location is inside your vault. Choose a folder outside the vault.",
   "invalid-path": SAVE_FAILED,
+  exists: "A file with that name already exists. Choose a new name. Nothing was written.",
   failed: SAVE_FAILED,
 };
 

@@ -33,8 +33,8 @@ declare module "electron" {
 
   /**
    * The save dialog (plan 08-16, D-12): only what `health/export.ts` asks for. `defaultPath` is
-   * always a bare file name, never a directory; `showOverwriteConfirmation` makes the dialog ask
-   * before replacing a file the owner picked.
+   * always a bare file name, never a directory. The save never replaces a file (FIX4B m9, D-12a),
+   * so `showOverwriteConfirmation` is not requested.
    */
   export interface SaveDialogOptions {
     readonly title?: string;
@@ -59,11 +59,19 @@ declare module "electron" {
      * (08-UI-SPEC S4, owner UAT item 35), so `health/export.ts` feature-detects it and falls
      * back to Copy only.
      */
-    showSaveDialog?: ((options: SaveDialogOptions) => Promise<SaveDialogResult>) | undefined;
+    showSaveDialog?:
+      | {
+          (options: SaveDialogOptions): Promise<SaveDialogResult>;
+          /** With the parent window, so the dialog is a sheet on the window that asked (FIX4B m8). */
+          (window: unknown, options: SaveDialogOptions): Promise<SaveDialogResult>;
+        }
+      | undefined;
   }
 
   export interface Remote {
     readonly dialog?: RemoteDialog | undefined;
+    /** The window this renderer lives in. Optional: a popout window may not expose it. */
+    readonly getCurrentWindow?: (() => unknown) | undefined;
   }
 
   export const remote: Remote | undefined;

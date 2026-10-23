@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EMPTY_PROJECTS_SNAPSHOT, type ProjectView } from "@ccc/domain";
@@ -31,7 +39,11 @@ import {
 import ClaudeCommandCenterPlugin from "../main.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { assertNoPrivatePathValues } from "../settings.js";
-import { remote } from "../test-support/electron-stub.js";
+import {
+  remote,
+  type SaveDialogOptions,
+  saveDialogOptionsOf,
+} from "../test-support/electron-stub.js";
 import { allOkHealth, HEALTH_NOW } from "../test-support/health-fixtures.js";
 import type { Plugin as StubObsidianPlugin } from "../test-support/obsidian-stub.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
@@ -394,10 +406,10 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     expect(readFileSync(target, "utf8")).toBe(preview);
   });
 
-  it("Test 2: the dialog gets the bare default name for the UTC date, a JSON filter and overwrite confirmation", async () => {
-    let seen: Parameters<typeof remote.dialog.showSaveDialog>[0] | undefined;
-    remote.dialog.showSaveDialog = (options) => {
-      seen = options;
+  it("Test 2: the dialog gets the bare default name for the UTC date and a JSON filter, and no overwrite confirmation", async () => {
+    let seen: SaveDialogOptions | undefined;
+    remote.dialog.showSaveDialog = (...args) => {
+      seen = saveDialogOptionsOf(...args);
       return Promise.resolve({ canceled: true });
     };
     const f = vaultFixture();
@@ -405,7 +417,22 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     await pressSave(f);
     expect(seen?.defaultPath).toBe("claude-command-center-diagnostics-2026-10-22.json");
     expect(seen?.filters).toEqual([{ name: "JSON", extensions: ["json"] }]);
-    expect(seen?.properties).toContain("showOverwriteConfirmation");
+    expect(seen?.properties ?? []).not.toContain("showOverwriteConfirmation");
+  });
+
+  it("FIX4B m9 (D-12a): an existing file is never replaced: the status line says so and the file is byte-identical", async () => {
+    const target = join(outside, "taken.json");
+    writeFileSync(target, "KEEP ME");
+    choose(target);
+    const f = vaultFixture();
+    openPreview(f);
+    await pressSave(f);
+    expect(f.notify).toHaveBeenLastCalledWith(
+      "A file with that name already exists. Choose a new name. Nothing was written.",
+    );
+    expect(readFileSync(target, "utf8")).toBe("KEEP ME");
+    expect(readdirSync(outside)).toEqual(["taken.json"]);
+    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
   });
 
   it("Test 3: a path inside the vault is refused with the fixed sentence and nothing is written", async () => {
@@ -427,11 +454,19 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     await pressSave(f);
     expect(f.notify).toHaveBeenLastCalledWith("Save cancelled. Nothing was written.");
 
+    // A folder already has that name: the save never replaces anything (D-12a).
     mkdirSync(join(outside, "dir.json"));
     choose(join(outside, "dir.json"));
     await pressSave(f);
-    expect(f.notify).toHaveBeenLastCalledWith("Couldn't save the bundle.");
+    expect(f.notify).toHaveBeenLastCalledWith(
+      "A file with that name already exists. Choose a new name. Nothing was written.",
+    );
     expect(readdirSync(outside)).toEqual(["dir.json"]);
+
+    // A write that cannot happen (the folder is missing) is the generic failure.
+    choose(join(outside, "nope", "b.json"));
+    await pressSave(f);
+    expect(f.notify).toHaveBeenLastCalledWith("Couldn't save the bundle.");
 
     choose(join(outside, "not-json.txt"));
     await pressSave(f);
@@ -902,7 +937,7 @@ describe("FIX4B m6: the open preview rebuilds when any input it is built from ch
     const before = preview();
     const launchers = {
       ...EMPTY_PROJECTS_SNAPSHOT.launchers,
-      antigravity: "ready" as const,
+      antigravity: "set-up" as const,
     };
     await act(async () => {
       projectsSnapshot.value = { projects: [], launchers };

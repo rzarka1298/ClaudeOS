@@ -20,6 +20,11 @@ export type SaveOutcome =
   | { readonly kind: "inside-vault" }
   /** The chosen path is not an absolute `.json` file path. */
   | { readonly kind: "invalid-path" }
+  /**
+   * A file (or a link, or a folder) already has that name. The save never replaces anything
+   * (FIX4B m9, decision D-12a): the owner chooses a new name and nothing was written.
+   */
+  | { readonly kind: "exists" }
   | { readonly kind: "failed" };
 
 export interface BundleExportPort {
