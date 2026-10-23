@@ -123,15 +123,23 @@ const EXIT_ITEM_NOT_FOUND = 44;
  * `account` throws, before any process is spawned.
  *
  * Bounded by {@link HAS_SECRET_TIMEOUT_MS} with SIGKILL, spawned directly (no
- * shell), by absolute path. It runs only on an owner gesture (opening or
+ * shell), by absolute path. An optional `signal` (the health probe's own) kills
+ * the child when it fires; a signal that has already fired spawns nothing and
+ * answers `error`. It runs only on an owner gesture (opening or
  * re-checking Diagnostics), never on a timer, so any one-time Keychain access
  * dialog appears only when the owner is looking at the screen; the first
  * real-keychain run is confirmed prompt-free by an owner UAT item (ADR-0017).
  */
-export async function hasSecret(account: string): Promise<"present" | "absent" | "error"> {
+export async function hasSecret(
+  account: string,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<"present" | "absent" | "error"> {
   assertSafeIdentifier(account, "account");
   // A leading dash would read as a `security` option, not an account; no real account starts with one.
   if (account.startsWith("-")) throw new UnsafeSecretInputError("account");
+  const { signal } = options;
+  // A caller that has already given up gets no process at all.
+  if (signal?.aborted === true) return "error";
   try {
     const result = await execa(
       SECURITY_BINARY,
@@ -143,10 +151,15 @@ export async function hasSecret(account: string): Promise<"present" | "absent" |
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
+        // The health probe's own signal (plan 08-12): an abort kills the child instead of leaving it
+        // to run out its own 1.5 s cap.
+        ...(signal === undefined ? {} : { cancelSignal: signal }),
       },
     );
-    // A child that was killed or timed out has no answer, whatever exit code it was reporting.
-    if (result.timedOut === true || result.isTerminated === true) return "error";
+    // A child that was killed, canceled or timed out has no answer, whatever exit code it was reporting.
+    if (result.timedOut === true || result.isTerminated === true || result.isCanceled === true) {
+      return "error";
+    }
     if (result.exitCode === 0 && result.failed !== true) return "present";
     if (result.exitCode === EXIT_ITEM_NOT_FOUND) return "absent";
     return "error";

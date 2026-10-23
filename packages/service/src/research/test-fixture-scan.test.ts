@@ -106,6 +106,10 @@ export const TEST_SUPPORT_FOLDERS: readonly string[] = [
 ];
 export const TEST_SUPPORT_FILES: readonly string[] = [
   "packages/test-fixtures/src/service-harness.ts",
+  // Plan 08-12: the real-process diagnostics drills start a sandboxed service with the guarded
+  // key-account override pointing at a nonexistent `ccc-uat-` test account, so a gesture health
+  // check never asks the owner's Keychain about the owner's research key. Test support only.
+  "packages/test-fixtures/src/diagnostics-drill-kit.ts",
 ];
 
 const isTest = (file: string): boolean => {

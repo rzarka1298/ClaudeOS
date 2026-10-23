@@ -257,3 +257,45 @@ describe("FIX1A hardening: every spawn is the absolute /usr/bin/security, never 
     ]);
   });
 });
+
+describe("hasSecret with the caller's abort signal (plan 08-12, FIX2A)", () => {
+  const ACCOUNT = "ccc-probe-absent-0123456789abcdef";
+
+  it("hands the signal to execa as cancelSignal, so an abort kills the child", async () => {
+    const controller = new AbortController();
+    execaMock.mockResolvedValueOnce({ exitCode: 44, failed: true });
+    await expect(hasSecret(ACCOUNT, { signal: controller.signal })).resolves.toBe("absent");
+    const [, , options] = execaMock.mock.calls[0] as [string, string[], Record<string, unknown>];
+    expect(options.cancelSignal).toBe(controller.signal);
+  });
+
+  it("adds no cancelSignal when no signal is given", async () => {
+    execaMock.mockResolvedValueOnce({ exitCode: 44, failed: true });
+    await hasSecret(ACCOUNT);
+    const [, , options] = execaMock.mock.calls[0] as [string, string[], Record<string, unknown>];
+    expect("cancelSignal" in options).toBe(false);
+  });
+
+  it("answers error without spawning when the signal has already fired", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(hasSecret(ACCOUNT, { signal: controller.signal })).resolves.toBe("error");
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("a canceled child is error whatever exit code it reports", async () => {
+    const controller = new AbortController();
+    execaMock.mockResolvedValueOnce({ exitCode: 44, failed: true, isCanceled: true });
+    await expect(hasSecret(ACCOUNT, { signal: controller.signal })).resolves.toBe("error");
+    execaMock.mockResolvedValueOnce({ exitCode: 0, failed: true, isCanceled: true });
+    await expect(hasSecret(ACCOUNT, { signal: controller.signal })).resolves.toBe("error");
+  });
+
+  it("still rejects an unsafe account before any spawn, signal or not", async () => {
+    const controller = new AbortController();
+    await expect(hasSecret("has space", { signal: controller.signal })).rejects.toBeInstanceOf(
+      UnsafeSecretInputError,
+    );
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+});

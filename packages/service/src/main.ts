@@ -1,6 +1,6 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { type Clock, DEFAULT_HEARTBEAT_INTERVAL_MS, type ProjectId, type RunId } from "@ccc/domain";
-import { createSecurityCliSecretStore } from "@ccc/keychain";
+import { createSecurityCliSecretStore, hasSecret } from "@ccc/keychain";
 import {
   applyMigrations,
   createDiagnosticEffects,
@@ -26,6 +26,7 @@ import {
 } from "./codex/detection.js";
 import { type CodexServices, startCodexServices } from "./codex/services.js";
 import { createDiagnosticsServices } from "./diagnostics/services.js";
+import { createDiagnosticsPortSets } from "./diagnostics-wiring.js";
 import { createEventBus } from "./events/event-bus.js";
 // The composition root is the ONLY importer of the executors folder (APPR-01,
 // T-06-02): effect code is reachable only through the engine's definitions.
@@ -50,6 +51,7 @@ import {
   sweepStaleScripts,
 } from "./projects/script-dir.js";
 import { createCommandSpawner } from "./projects/spawner.js";
+import { isExecutableFile } from "./projects/terminal-launchers.js";
 import { createSafeFetcher } from "./research/fetch/index.js";
 import { RESEARCH_API_KEY_ACCOUNT } from "./research/research-key.js";
 import { createResearchRouteServices } from "./research/route-services.js";
@@ -432,11 +434,32 @@ async function main(): Promise<void> {
   // flight to stale and an instance that lost the bind must never do that to a live run.
   const researchSlot = createResearchRouteSlot();
 
-  // Phase 8 (plan 08-07, D-02, D-04): the diagnostics health services, built from narrow ports.
-  // The vault port reads the persisted root; the hooks, collectors, scheduler and launchers ports
-  // are wired by plan 08-12, so those rows read `subsystem-not-wired` until then.
+  // Phase 8 (plan 08-07, D-02, D-04; plan 08-12 wires the rest): the diagnostics health services,
+  // built from narrow, read-only ports. The vault port reads the persisted root; the hooks,
+  // collectors, scheduler and launchers port sets come from `createDiagnosticsPortSets`, which is
+  // handed only the reads a probe may make. The research key account is the SAME variable the
+  // research pipeline reads its key from (resolved here, once, below the override resolution), so
+  // the presence check can never ask about a different account; the presence check itself runs only
+  // on an owner gesture (Amendment A1) and never when the guarded test transport replaces the key.
+  // The research status is a getter over the late-bound slot: closed `subsystem-not-wired` until
+  // the research services are bound after the socket.
+  const researchKeyAccount = researchOverrides.keyAccount ?? RESEARCH_API_KEY_ACCOUNT;
   const diagnostics = createDiagnosticsServices({
     vault: { readRoot: readVaultRoot },
+    ...createDiagnosticsPortSets({
+      usage: usageServices,
+      codexIntegration: codexServices.routeDeps.integration,
+      research: researchSlot.services,
+      researchKeyAccount,
+      hasSecret,
+      overrideTransportActive: researchOverrides.transport !== undefined,
+      listLauncherConfigs: () => listLauncherConfigs(store.db),
+      probeBundle: (bundleId, options) => launchers.detector.probeBundle(bundleId, options),
+      isExecutableFile,
+      installSecretPresent: installSecret.length > 0,
+      db: store.db,
+      now: () => new Date(),
+    }),
     serviceFacts: {
       version: SERVICE_VERSION,
       startedAt,
@@ -491,7 +514,6 @@ async function main(): Promise<void> {
   // the socket bind. The Anthropic key is read here and nowhere else (D-04, ADR-0017): the
   // transport receives a closure, never a key string. A test override (guarded) may replace the
   // fetcher, the transport and the key account.
-  const researchKeyAccount = researchOverrides.keyAccount ?? RESEARCH_API_KEY_ACCOUNT;
   const research = createResearchServices({
     db: store.db,
     getVaultRoot: readVaultRoot,
