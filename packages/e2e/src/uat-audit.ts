@@ -169,6 +169,8 @@ export interface AuditTestHooks {
 const OD7 = "OD-7";
 /** The record this module writes; it is never listed as an unregistered UAT file. */
 const RECORD_NAME = "08-UAT-AUDIT.md";
+/** The runner's per-phase report (`report --write-script`), e.g. `07-UAT-AUTO-REPORT.md`. */
+const AUTO_REPORT_NAME = /^\d+(?:\.\d+)?-UAT-AUTO-REPORT\.md$/;
 
 function emptyOutput(): AdapterOutput {
   return {
@@ -630,6 +632,9 @@ export function auditPhases(input: AuditInput): AuditResult {
           /UAT/.test(file) &&
           file.endsWith(".md") &&
           file !== RECORD_NAME &&
+          // A runner report is the ratification source every script adapter reads (see the
+          // ratified-run lookup above), not a second evidence file.
+          !AUTO_REPORT_NAME.test(file) &&
           !registered.has(`${folderName}/${file}`)
         ) {
           unregistered.push(`${folderName}/${file}`);

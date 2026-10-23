@@ -945,8 +945,9 @@ real("the real tree (Test 4, private checkouts only)", () => {
       "05.1": "16/16",
       "05.2": "1/1",
       "06": "26/26",
-      "07": "0/24",
-      "08": "0/39",
+      // 07 and 08 fill in as the ratified automated runs and the owner's sitting record results.
+      "07": "\\d+/24",
+      "08": "\\d+/39",
     };
     for (const [phase, count] of Object.entries(counts)) {
       expect(text, phase).toMatch(

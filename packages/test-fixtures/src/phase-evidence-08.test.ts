@@ -1039,7 +1039,8 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
       if (closed) expect(["recorded", "recorded-with-exceptions"], phase).toContain(row?.status);
       else {
         expect(row?.status, phase).toBe("pending-live-uat");
-        expect(row?.recorded, phase).toMatch(/^0\//);
+        // Ratified automated results count before the owner's sitting; the total never changes.
+        expect(row?.recorded, phase).toMatch(phase === "07" ? /^\d+\/24$/ : /^\d+\/39$/);
       }
     }
     if (!closed) expect(num("pending-live-uat")).toBe(2);
