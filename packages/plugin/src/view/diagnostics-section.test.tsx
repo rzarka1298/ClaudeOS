@@ -1089,3 +1089,44 @@ describe("Task 2 (adjustment): the Codex doctor action lands where Check Codex h
     expect(settingsSectionRequested.value).toBe("launchers");
   });
 });
+
+describe("the closed reason code is on the DOM for the runner (plan 08-20 drills)", () => {
+  it("puts each row's and part's reason code, and nothing else of the answer, in data-reason", async () => {
+    configure();
+    renderSection();
+    await settle();
+    expect(rows().map((row) => row.getAttribute("data-reason"))).toEqual([
+      "service-live",
+      "vault-not-set-up",
+      "hooks-not-installed",
+      "statusline-not-installed",
+      "never-run",
+      "launcher-not-set-up",
+    ]);
+    const parts = [...rowNamed("Usage collectors").querySelectorAll("[data-part]")];
+    expect(parts.map((part) => part.getAttribute("data-reason"))).toEqual([
+      "telemetry-ok",
+      "statusline-not-installed",
+      "analysis-off",
+      "spool-clean",
+      "codex-not-installed",
+      "codex-hooks-not-installed",
+      "codex-bridge-not-installed",
+      "codex-doctor-not-run",
+    ]);
+  });
+
+  it("reads service-not-running on every cleared row", async () => {
+    configure();
+    renderSection({ connection: { kind: "disconnected", reason: "x" } });
+    await settle();
+    expect(rows().map((row) => row.getAttribute("data-reason"))).toEqual([
+      "service-unreachable",
+      "service-not-running",
+      "service-not-running",
+      "service-not-running",
+      "service-not-running",
+      "service-not-running",
+    ]);
+  });
+});

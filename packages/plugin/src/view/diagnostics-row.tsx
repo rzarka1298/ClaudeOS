@@ -229,7 +229,12 @@ function PartView({
   const { reason, nextStep } = reasonText(part.reasonCode, { facts: part.facts, now });
   const action = displayedAction(part.reasonCode, part.setupAction);
   return (
-    <li className="ccc-health-part" data-part={part.partId} data-status={part.status}>
+    <li
+      className="ccc-health-part"
+      data-part={part.partId}
+      data-status={part.status}
+      data-reason={part.reasonCode}
+    >
       <div className="ccc-health-part-head">
         <span className="ccc-health-part-name">{PART_NAMES[part.partId] ?? part.partId}</span>
         <StatusChip status={part.status} subsystem={part.partId} />
@@ -406,7 +411,12 @@ export function HealthRow({
   }
 
   return (
-    <li className="ccc-health-row" data-status={row.status} data-subsystem={row.id}>
+    <li
+      className="ccc-health-row"
+      data-status={row.status}
+      data-subsystem={row.id}
+      data-reason={row.reasonCode}
+    >
       <div>
         <h5 className="ccc-settings-item-title">{name}</h5>
         <StatusChip status={row.status} subsystem={row.id} />
