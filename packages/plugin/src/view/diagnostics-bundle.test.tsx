@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildDiagnosticBundle, serialiseBundle } from "@ccc/domain/diagnostic-bundle.js";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ConnectionState } from "../connection-state.js";
 import { clearDiagnostics } from "../diagnostics.js";
@@ -9,6 +12,8 @@ import {
   type BundleSources,
   currentRuntimeFacts,
 } from "../health/bundle-input.js";
+import { saveBundle, saveDialogAvailable } from "../health/export.js";
+import { configureBundleExport } from "../health/export-port.js";
 import {
   healthPhase,
   healthResponse as healthSignal,
@@ -16,6 +21,7 @@ import {
   resetHealthState,
 } from "../health/state.js";
 import { resetProjectsState } from "../projects/projects-state.js";
+import { remote } from "../test-support/electron-stub.js";
 import { allOkHealth, HEALTH_NOW } from "../test-support/health-fixtures.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
 import { DiagnosticBundleBlock } from "./diagnostics-bundle.js";
@@ -279,5 +285,196 @@ describe("Task 1 (tracer): Show bundle preview builds, verifies and shows the ex
     expect(headings.slice(-1)).toEqual(["Diagnostic bundle"]);
     expect(within(content).getByRole("button", { name: "Show bundle preview" })).toBeTruthy();
     expect(content.textContent).not.toContain("bundleVersion");
+  });
+});
+
+describe("Task 2: Save bundle through the typed dialog, 0600, never inside the vault", () => {
+  const SAVE_UNAVAILABLE = "The save dialog isn't available here. Use Copy bundle instead.";
+  let root: string;
+  let vault: string;
+  let outside: string;
+
+  /** The fixture with a real vault folder behind `display.vaultBasePath`. */
+  function vaultFixture(copy?: () => Promise<void>): Fixture {
+    const f = fixture(copy);
+    return {
+      ...f,
+      host: { ...f.host, display: { ...f.host.display, vaultBasePath: vault } },
+    };
+  }
+
+  function choose(path: string | undefined, canceled = false): void {
+    remote.dialog.showSaveDialog = () => Promise.resolve({ canceled, filePath: path });
+  }
+
+  /**
+   * Presses Save and waits for its status-line outcome. A save does real file I/O, which finishes
+   * in later macrotasks than the microtasks `flush` drains, so it waits on the observable result.
+   */
+  async function pressSave(f: Fixture): Promise<void> {
+    const before = f.notify.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Save bundle" }));
+    await waitFor(() => expect(f.notify.mock.calls.length).toBeGreaterThan(before));
+  }
+
+  function openPreview(f: Fixture) {
+    answered();
+    const view = renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    return view;
+  }
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "ccc-bundle-ui-"));
+    vault = join(root, "Vault");
+    outside = join(root, "out");
+    mkdirSync(vault);
+    mkdirSync(outside);
+    choose(undefined, true);
+    configureBundleExport({ saveDialogAvailable, save: saveBundle });
+  });
+
+  afterEach(() => {
+    configureBundleExport(null);
+    choose(undefined, true);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("Test 1: writes the preview string byte for byte with mode 0600 and says Bundle saved. without the path", async () => {
+    const target = join(outside, "diagnostics.json");
+    choose(target);
+    const f = vaultFixture();
+    openPreview(f);
+    const previewText = screen.getByRole("region", {
+      name: "Diagnostic bundle preview",
+    }).textContent;
+
+    await pressSave(f);
+
+    expect(readFileSync(target, "utf8")).toBe(previewText);
+    expect(readFileSync(target, "utf8")).toBe(expectedText(f));
+    expect(statSync(target).mode & 0o777).toBe(0o600);
+    expect(f.notify).toHaveBeenCalledTimes(1);
+    expect(f.notify).toHaveBeenCalledWith("Bundle saved.");
+    // The path is never printed: not in the status line, not anywhere in the page.
+    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
+    expect(document.body.textContent).not.toContain(root);
+    expect(readdirSync(outside)).toEqual(["diagnostics.json"]);
+    expect(readdirSync(vault)).toEqual([]);
+  });
+
+  it("the preview, Copy and Save use one string", async () => {
+    const target = join(outside, "same.json");
+    choose(target);
+    const f = vaultFixture();
+    openPreview(f);
+    fireEvent.click(screen.getByRole("button", { name: "Copy bundle" }));
+    await flush();
+    await pressSave(f);
+    const preview = screen.getByRole("region", { name: "Diagnostic bundle preview" }).textContent;
+    expect(f.copyText.mock.calls[0]?.[0]).toBe(preview);
+    expect(readFileSync(target, "utf8")).toBe(preview);
+  });
+
+  it("Test 2: the dialog gets the bare default name for the UTC date, a JSON filter and overwrite confirmation", async () => {
+    let seen: Parameters<typeof remote.dialog.showSaveDialog>[0] | undefined;
+    remote.dialog.showSaveDialog = (options) => {
+      seen = options;
+      return Promise.resolve({ canceled: true });
+    };
+    const f = vaultFixture();
+    openPreview(f);
+    await pressSave(f);
+    expect(seen?.defaultPath).toBe("claude-command-center-diagnostics-2026-10-22.json");
+    expect(seen?.filters).toEqual([{ name: "JSON", extensions: ["json"] }]);
+    expect(seen?.properties).toContain("showOverwriteConfirmation");
+  });
+
+  it("Test 3: a path inside the vault is refused with the fixed sentence and nothing is written", async () => {
+    choose(join(vault, "diagnostics.json"));
+    const f = vaultFixture();
+    openPreview(f);
+    await pressSave(f);
+    expect(f.notify).toHaveBeenCalledWith(
+      "That location is inside your vault. Choose a folder outside the vault.",
+    );
+    expect(readdirSync(vault)).toEqual([]);
+    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
+  });
+
+  it("a cancelled dialog says nothing was written; a failed write says it couldn't save", async () => {
+    const f = vaultFixture();
+    openPreview(f);
+    choose(undefined, true);
+    await pressSave(f);
+    expect(f.notify).toHaveBeenLastCalledWith("Save cancelled. Nothing was written.");
+
+    mkdirSync(join(outside, "dir.json"));
+    choose(join(outside, "dir.json"));
+    await pressSave(f);
+    expect(f.notify).toHaveBeenLastCalledWith("Couldn't save the bundle.");
+    expect(readdirSync(outside)).toEqual(["dir.json"]);
+
+    choose(join(outside, "not-json.txt"));
+    await pressSave(f);
+    expect(f.notify).toHaveBeenLastCalledWith("Couldn't save the bundle.");
+    expect(readdirSync(outside)).toEqual(["dir.json"]);
+  });
+
+  it("Test 4: with no save dialog the button is aria-disabled with the visible reason, and Copy still works", async () => {
+    // @ts-expect-error test double: simulate a renderer with no showSaveDialog
+    remote.dialog.showSaveDialog = undefined;
+    const f = vaultFixture();
+    openPreview(f);
+    const save = screen.getByRole("button", { name: "Save bundle" });
+    expect(save.getAttribute("aria-disabled")).toBe("true");
+    expect(save.hasAttribute("disabled")).toBe(false);
+    const reason = (save.getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent ?? "");
+    expect(reason).toContain(SAVE_UNAVAILABLE);
+
+    fireEvent.click(save);
+    await flush();
+    expect(f.notify).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy bundle" }));
+    await flush();
+    expect(f.copyText).toHaveBeenCalledTimes(1);
+    expect(f.notify).toHaveBeenCalledWith("Bundle copied.");
+  });
+
+  it("an unconfigured export port reads as no dialog: Save is aria-disabled and writes nothing", async () => {
+    configureBundleExport(null);
+    choose(join(outside, "x.json"));
+    const f = vaultFixture();
+    openPreview(f);
+    const save = screen.getByRole("button", { name: "Save bundle" });
+    expect(save.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(save);
+    await flush();
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("a second press while the dialog is open is ignored", async () => {
+    let calls = 0;
+    remote.dialog.showSaveDialog = () => {
+      calls += 1;
+      return new Promise(() => {});
+    };
+    const f = vaultFixture();
+    openPreview(f);
+    const save = screen.getByRole("button", { name: "Save bundle" });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    await flush();
+    expect(calls).toBe(1);
+    expect(save.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("offers no Save while the preview is collapsed", () => {
+    answered();
+    renderBlock(vaultFixture());
+    expect(screen.queryByRole("button", { name: "Save bundle" })).toBeNull();
   });
 });

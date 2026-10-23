@@ -6,6 +6,8 @@ import {
 } from "@ccc/domain/diagnostics.js";
 import type { HostRegistry } from "../host-registry.js";
 import { configureHealth, HealthApiError } from "./api.js";
+import { saveBundle, saveDialogAvailable } from "./export.js";
+import { configureBundleExport } from "./export-port.js";
 import { onHealthLive, resetHealthState, watchConnection } from "./state.js";
 
 /**
@@ -65,6 +67,9 @@ export function wireHealth(registry: HostRegistry, deps: WireHealthDeps): Health
     },
   });
   live = mine;
+  // The save half of the diagnostic bundle (plan 08-16). The views read it through the port and
+  // never import Electron or the file system themselves; this module is reachable only from main.
+  configureBundleExport({ saveDialogAvailable, save: saveBundle });
   const stopWatching = watchConnection();
 
   let disposed = false;
@@ -76,6 +81,7 @@ export function wireHealth(registry: HostRegistry, deps: WireHealthDeps): Health
     if (live === mine) {
       live = null;
       configureHealth(null);
+      configureBundleExport(null);
       resetHealthState();
     }
   };

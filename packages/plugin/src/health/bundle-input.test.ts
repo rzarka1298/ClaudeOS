@@ -35,7 +35,7 @@ const CANARY_REASON = "ECONNREFUSED quillsocket-canary";
 
 function project(overrides: Partial<ProjectView> = {}): ProjectView {
   return {
-    projectId: "project-1" as ProjectView["projectId"],
+    projectId: "project-1",
     displayName: CANARY_PROJECT,
     displayPath: `~/code/${CANARY_FOLDER}`,
     pinned: false,

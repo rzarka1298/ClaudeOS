@@ -9,6 +9,7 @@ import {
   currentRuntimeFacts,
   type VerifyAndSerialise,
 } from "../health/bundle-input.js";
+import { bundleExport, type SaveOutcome } from "../health/export-port.js";
 import { healthPhase, healthResponse, healthVaultCheck } from "../health/state.js";
 import { projectsSnapshot } from "../projects/projects-state.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
@@ -32,6 +33,20 @@ export interface DiagnosticBundleBlockProps {
   readonly notify: (message: string) => void;
   readonly verify?: VerifyAndSerialise | undefined;
 }
+
+export const SAVE_UNAVAILABLE_REASON =
+  "The save dialog isn't available here. Use Copy bundle instead.";
+const SAVE_FAILED = "Couldn't save the bundle.";
+
+/** The status line for each save outcome. None of them names a path (T-08-42). */
+const SAVE_NOTICES: Readonly<Record<SaveOutcome["kind"], string>> = {
+  saved: "Bundle saved.",
+  cancelled: "Save cancelled. Nothing was written.",
+  unavailable: SAVE_UNAVAILABLE_REASON,
+  "inside-vault": "That location is inside your vault. Choose a folder outside the vault.",
+  "invalid-path": SAVE_FAILED,
+  failed: SAVE_FAILED,
+};
 
 const NUMBER = new Intl.NumberFormat("en");
 const PLURAL = new Intl.PluralRules("en");
@@ -91,6 +106,10 @@ export function DiagnosticBundleBlock({
   const openRef = useRef(false);
   openRef.current = open;
   const copyGate = useActionGate("bundle:copy");
+  const saveGate = useActionGate("bundle:save");
+  const saveReasonId = useId();
+  const exporter = bundleExport();
+  const saveAvailable = exporter.saveDialogAvailable();
 
   /** Builds from the values as they are at this moment (signals read with `peek`). */
   function build(): BundleOutcome | null {
@@ -152,6 +171,22 @@ export function DiagnosticBundleBlock({
     }
   }
 
+  /**
+   * The whole Save gesture. It saves the very string on screen (`outcome.text`), through the port,
+   * which opens the dialog and refuses the vault; the press claims the gate before any await.
+   */
+  async function save(): Promise<void> {
+    if (outcome?.kind !== "offered" || !saveAvailable || !saveGate.begin()) return;
+    try {
+      const result = await exporter.save(outcome.text, host.display.vaultBasePath, nowRef.current);
+      notify(SAVE_NOTICES[result.kind]);
+    } catch {
+      notify(SAVE_FAILED);
+    } finally {
+      saveGate.end();
+    }
+  }
+
   function onPreviewKeyDown(event: KeyboardEvent): void {
     if (event.key !== "Escape") return;
     event.preventDefault();
@@ -192,6 +227,18 @@ export function DiagnosticBundleBlock({
             >
               Copy bundle
             </button>
+            <button
+              type="button"
+              className="ccc-connect-button"
+              data-variant="secondary"
+              aria-busy={saveGate.busy ? "true" : undefined}
+              aria-disabled={saveGate.busy || !saveAvailable ? "true" : undefined}
+              aria-describedby={saveAvailable ? undefined : saveReasonId}
+              onClick={() => void save()}
+            >
+              Save bundle
+            </button>
+            {!saveAvailable && <p id={saveReasonId}>{SAVE_UNAVAILABLE_REASON}</p>}
           </div>
         </>
       )}

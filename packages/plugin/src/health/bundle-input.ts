@@ -75,9 +75,12 @@ export function readRuntimeFacts(
   };
 }
 
-/** {@link readRuntimeFacts} over the real global scope (a browser harness has no `process`: all null). */
+/**
+ * {@link readRuntimeFacts} over this window's scope (Obsidian's renderer has `process`; the browser
+ * harness does not, and every fact is then `null`). `window`, not `globalThis`, for popout windows.
+ */
 export function currentRuntimeFacts(obsidianVersion: string | null): RuntimeFacts {
-  return readRuntimeFacts(globalThis as unknown as RuntimeScope, obsidianVersion);
+  return readRuntimeFacts(window, obsidianVersion);
 }
 
 /** Everything the bundle is built from. Each field maps to a documented bundle field or to nothing. */

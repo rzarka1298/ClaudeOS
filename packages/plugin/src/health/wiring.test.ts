@@ -4,6 +4,7 @@ import { createHostRegistry, type HostRegistry } from "../host-registry.js";
 import { FakeObsidianHost } from "../test-support/fake-obsidian-host.js";
 import { healthResponse as fixtureResponse } from "../test-support/health-fixtures.js";
 import { healthApi, healthConfigured } from "./api.js";
+import { bundleExport } from "./export-port.js";
 import { healthPhase, healthResponse, registerHealthView, resetHealthState } from "./state.js";
 import { wireHealth } from "./wiring.js";
 
@@ -47,6 +48,15 @@ describe("wireHealth", () => {
       code: "service-disconnected",
     });
     expect(getHealth).toHaveBeenCalledTimes(1);
+  });
+
+  it("configures the bundle export port with the real save dialog and releases it on unload (plan 08-16)", () => {
+    expect(bundleExport().saveDialogAvailable()).toBe(false);
+    wireHealth(registry, { getHealth: () => Promise.resolve(fixtureResponse()) });
+    // The electron stub carries a save dialog, so the configured port reports one.
+    expect(bundleExport().saveDialogAvailable()).toBe(true);
+    registry.disposeAll();
+    expect(bundleExport().saveDialogAvailable()).toBe(false);
   });
 
   it("maps a client error onto the closed vocabulary and never forwards its message", async () => {
