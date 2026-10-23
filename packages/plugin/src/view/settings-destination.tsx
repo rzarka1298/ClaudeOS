@@ -12,6 +12,7 @@ import { ApprovalsTasksSettings } from "./settings-approvals-tasks.js";
 import { StatusLine } from "./settings-controls.js";
 import type { SettingsHost } from "./settings-host.js";
 import { IntegrationsSection } from "./settings-integrations.js";
+import { PathsSection } from "./settings-paths.js";
 import { ProjectsSettings } from "./settings-projects.js";
 import {
   SETTINGS_SECTION_LABELS,
@@ -87,6 +88,9 @@ export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionVie
   ),
   "approvals-tasks": ({ host, connection, notify }) => (
     <ApprovalsTasksSettings host={host} connection={connection} notify={notify} />
+  ),
+  paths: ({ host, connection, now, notify }) => (
+    <PathsSection host={host} connection={connection} now={now} notify={notify} />
   ),
   visual: ({ host, notify }) => <VisualSettings host={host} notify={notify} />,
   security: ({ host, connection, now, notify }) => (

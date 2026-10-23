@@ -182,6 +182,22 @@ describe("what reaches data.json (plan 08-11, T-08-28; FIX2B m8)", () => {
     expect(plugin.saved).toHaveLength(0);
   });
 
+  it("drops an unknown key from a hand-edited data.json at load, so the next save writes exactly four keys (FIX2B)", async () => {
+    const plugin = await loadPlugin({
+      reducedMotion: "reduced",
+      homeDir: "/Users/username",
+      extra: { anything: true },
+    });
+    loaded = plugin;
+    expect(Object.keys(plugin.settings).sort()).toEqual(ALLOWED_KEYS);
+    expect(plugin.settings).not.toHaveProperty("homeDir");
+    // The save guard would have refused the home path; the load already dropped it.
+    await plugin.settingsHost?.saveSettings();
+    expect(plugin.saved).toHaveLength(1);
+    expect(Object.keys(plugin.saved[0] as object).sort()).toEqual(ALLOWED_KEYS);
+    expect(JSON.stringify(plugin.saved[0])).not.toContain("username");
+  });
+
   it("resolves a partial stored file over the defaults and still saves only the four keys", async () => {
     const plugin = await loadPlugin({ reducedMotion: "reduced" });
     loaded = plugin;

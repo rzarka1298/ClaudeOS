@@ -3939,6 +3939,11 @@ fieldset.ccc-template-rows > legend {
   user-select: text;
 }
 
+/* An `Unknown` path value: muted ink, with the reason on the line below. */
+.ccc-command-center .ccc-setting-unknown {
+  color: var(--ccc-ink-muted);
+}
+
 /* ---- S4 diagnostic bundle preview -------------------------------------- */
 
 .ccc-command-center .ccc-bundle-preview {

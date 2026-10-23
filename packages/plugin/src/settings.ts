@@ -44,9 +44,15 @@ export const DEFAULT_SETTINGS: CommandCenterSettings = {
 export function mergeSettings(loaded: unknown): CommandCenterSettings {
   const onDisk =
     loaded !== null && typeof loaded === "object" && !Array.isArray(loaded)
-      ? (loaded as Partial<CommandCenterSettings>)
+      ? (loaded as Record<string, unknown>)
       : {};
-  const merged: CommandCenterSettings = { ...DEFAULT_SETTINGS, ...onDisk };
+  // Only the known keys are read from disk (FIX2B, D-16): a hand-edited data file with an extra
+  // key loads without it, so every save writes exactly the keys of DEFAULT_SETTINGS.
+  const merged: CommandCenterSettings = { ...DEFAULT_SETTINGS };
+  const writable = merged as unknown as Record<string, unknown>;
+  for (const key of Object.keys(DEFAULT_SETTINGS)) {
+    if (Object.hasOwn(onDisk, key)) writable[key] = onDisk[key];
+  }
   const notifyApprovals: unknown = merged.notifyApprovals;
   return {
     ...merged,
