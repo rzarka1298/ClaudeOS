@@ -97,14 +97,23 @@ const RESEARCH_FIXTURE_PATH = join(HARNESS_DIR, "research-fixtures.json");
 
 /** The Phase 8 harness modules (plan 08-21): Settings, Diagnostics and the Overview slice. Each may
  * import preact, the plugin barrel and its own synthetic fixture file, nothing else (T-08-52). */
-const PHASE8_CELLS = [["settings-cells.tsx", "./settings-fixtures.json"]].map(
-  ([file, fixture]) => ({
-    file: file as string,
-    path: join(HARNESS_DIR, file as string),
-    fixtureSpecifier: fixture as string,
-    fixturePath: join(HARNESS_DIR, (fixture as string).slice(2)),
-  }),
-);
+const PHASE8_CELLS = [
+  { file: "settings-cells.tsx", fixture: "./settings-fixtures.json", siblings: [] },
+  // The Diagnostics cells reuse the Settings frame and its fixture seams from the sibling module,
+  // itself held to the same three imports.
+  {
+    file: "diagnostics-cells.tsx",
+    fixture: "./diagnostics-fixtures.json",
+    siblings: ["./settings-cells"],
+  },
+  { file: "overview-cells.tsx", fixture: "./overview-fixtures.json", siblings: [] },
+].map((cells) => ({
+  file: cells.file,
+  path: join(HARNESS_DIR, cells.file),
+  fixtureSpecifier: cells.fixture,
+  fixturePath: join(HARNESS_DIR, cells.fixture.slice(2)),
+  siblings: cells.siblings as readonly string[],
+}));
 
 /** The exact set of modules the harness entry may import (order irrelevant).
  * `./task-fixtures.json` was added deliberately by plan 06-22 for the Tasks and
@@ -117,12 +126,16 @@ const PHASE8_CELLS = [["settings-cells.tsx", "./settings-fixtures.json"]].map(
  * 05.1-27: the one delegating import for the Codex card, toolbar and pair-launch
  * cells; that module's own imports are pinned separately below. `./research-cells`
  * was added deliberately by plan 07-16: the one delegating import for the Research
- * destination cells; its own imports are pinned separately below. Nothing else was
- * added to the set. */
+ * destination cells; its own imports are pinned separately below. `./settings-cells`,
+ * `./diagnostics-cells` and `./overview-cells` were added deliberately by plan 08-21: the
+ * delegating imports for the Settings destination, the Diagnostics states and the Overview slice;
+ * their own imports are pinned by `PHASE8_CELLS` above. Nothing else was added to the set. */
 const ALLOWED_IMPORTS = [
   "../src/widget-fixtures.json",
   "./approval-fixtures.json",
   "./codex-cells",
+  "./diagnostics-cells",
+  "./overview-cells",
   "./research-cells",
   "./settings-cells",
   "./task-fixtures.json",
@@ -184,7 +197,7 @@ function importSpecifiers(source: string): string[] {
 }
 
 describe("visual harness purity (PRIV-04 layer 1, T-03-03)", () => {
-  it("imports exactly preact, @ccc/plugin, the three synthetic fixture files and the Codex, Research and Settings cells modules", () => {
+  it("imports exactly preact, @ccc/plugin, the three synthetic fixture files and the Codex, Research, Settings, Diagnostics and Overview cells modules", () => {
     const specifiers = importSpecifiers(readIfPresent(MAIN_PATH)).filter(
       (specifier) => !TOLERATED_IMPORTS.has(specifier),
     );
@@ -272,13 +285,15 @@ describe("visual harness purity (PRIV-04 layer 1, T-03-03)", () => {
   });
 
   describe.each(PHASE8_CELLS)("$file (plan 08-21, T-08-52)", (cells) => {
-    it("imports exactly preact, @ccc/plugin and its own synthetic fixture file", () => {
+    it("imports exactly preact, @ccc/plugin, its own synthetic fixture file and (Diagnostics only) the Settings cells", () => {
       expect(existsSync(cells.path)).toBe(true);
       const specifiers = importSpecifiers(readIfPresent(cells.path)).filter(
         (specifier) => !TOLERATED_IMPORTS.has(specifier),
       );
 
-      expect(specifiers).toEqual([cells.fixtureSpecifier, "@ccc/plugin", "preact"].sort());
+      expect(specifiers).toEqual(
+        [cells.fixtureSpecifier, "@ccc/plugin", "preact", ...cells.siblings].sort(),
+      );
       expect(resolve(dirname(cells.path), cells.fixtureSpecifier)).toBe(cells.fixturePath);
     });
 

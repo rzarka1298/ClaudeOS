@@ -26,7 +26,11 @@ import {
 import { DiagnosticsHealthResponseSchema } from "@ccc/domain/diagnostics.js";
 import { DetectionResponseSchema } from "@ccc/domain/launch.js";
 import { ScanStateResponseSchema } from "@ccc/domain/projects.js";
-import { ResearchStatusResponseSchema } from "@ccc/domain/research-routes.js";
+import {
+  ResearchListRowSchema,
+  ResearchStatusResponseSchema,
+} from "@ccc/domain/research-routes.js";
+import { TaskDueTodayResponseSchema } from "@ccc/domain/tasks.js";
 import { describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -54,10 +58,15 @@ function collectStrings(
   return into;
 }
 
-const FIXTURE_FILES = ["settings-fixtures.json", "diagnostics-fixtures.json"] as const;
+const FIXTURE_FILES = [
+  "settings-fixtures.json",
+  "diagnostics-fixtures.json",
+  "overview-fixtures.json",
+] as const;
 
 const settings = load("settings-fixtures.json");
 const diagnostics = load("diagnostics-fixtures.json");
+const overview = load("overview-fixtures.json");
 
 /** The synthetic home the fixtures use: the one placeholder segment the privacy scanner accepts. */
 const PLACEHOLDER_HOME = "/Users/username/";
@@ -94,6 +103,61 @@ describe("Task 1 (schemas): every service-shaped payload parses against the stri
     expect(fresh.rows.some((row) => row.status === "failing" || row.status === "degraded")).toBe(
       false,
     );
+  });
+});
+
+describe("Task 2 (Overview feeds): the feed answers parse against the schemas the service sends", () => {
+  const feeds = overview.value.feeds as {
+    dueToday: Record<string, unknown>;
+    automation: Record<string, unknown>;
+    reports: Record<string, { latest: unknown }>;
+  };
+
+  it("parses every due-today answer, research status and report row", () => {
+    for (const [name, answer] of Object.entries(feeds.dueToday)) {
+      const parsed = TaskDueTodayResponseSchema.safeParse(answer);
+      expect(parsed.success, `dueToday ${name}`).toBe(true);
+    }
+    for (const [name, status] of Object.entries(feeds.automation)) {
+      const parsed = ResearchStatusResponseSchema.safeParse(status);
+      expect(parsed.success, `automation ${name}`).toBe(true);
+    }
+    for (const [name, answer] of Object.entries(feeds.reports)) {
+      if (answer.latest === null) continue;
+      const parsed = ResearchListRowSchema.safeParse(answer.latest);
+      expect(parsed.success, `reports ${name}`).toBe(true);
+    }
+  });
+
+  it("names exactly the eight slice states of the UI-SPEC table, each pointing at feeds that exist", () => {
+    const cases = overview.value.cases as Record<
+      string,
+      {
+        today: { tasks: string; automation: string } | null;
+        tech: { reports: string } | null;
+      }
+    >;
+    expect(Object.keys(cases).sort()).toEqual(
+      [
+        "overview-slice-ready",
+        "overview-slice-nextopen",
+        "overview-slice-failure",
+        "overview-slice-empty",
+        "overview-slice-partial-stale",
+        "overview-slice-disconnected",
+        "overview-slice-loading",
+        "overview-slice-error",
+      ].sort(),
+    );
+    for (const [name, spec] of Object.entries(cases)) {
+      if (spec.today !== null && spec.today.tasks !== "error") {
+        expect(feeds.dueToday[spec.today.tasks], `${name} tasks`).toBeDefined();
+        expect(feeds.automation[spec.today.automation], `${name} automation`).toBeDefined();
+      }
+      if (spec.tech !== null && spec.tech.reports !== "error") {
+        expect(feeds.reports[spec.tech.reports], `${name} reports`).toBeDefined();
+      }
+    }
   });
 });
 

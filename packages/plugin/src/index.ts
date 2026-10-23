@@ -47,6 +47,8 @@ export { configureHealth } from "./health/api.js";
 export type { VerifyAndSerialise } from "./health/bundle-input.js";
 export type { MotionMode } from "./motion.js";
 export { motionMode } from "./motion.js";
+export type { FeedSnapshot, LatestReportAnswer } from "./overview/overview-feeds.js";
+export { techIntelStateFor, todayStateFor } from "./overview/overview-feeds.js";
 export type { FolderPick, PickFolderOptions } from "./projects/folder-picker.js";
 // Phase 05.1 (plan 27) harness contract: the one launch status store the pair-launch cells pre-load.
 export type {

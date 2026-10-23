@@ -49,7 +49,27 @@ interface PageSpec {
   readonly params: Readonly<Record<string, string>>;
   /** Text every page must show, so an empty or wrong render can never pass. */
   readonly mustSample: readonly string[];
+  /**
+   * Focus targets the page must carry (`FOCUS_TARGETS` entries). A ring is measured only when its
+   * control is on the page, so naming it here keeps a missing control from passing unmeasured.
+   */
+  readonly focus?: readonly string[];
+  /** Selectors that must NOT be on the page (a refused bundle renders no preview). */
+  readonly absent?: readonly string[];
 }
+
+/**
+ * The Phase 8 focus targets (UI-SPEC "Contrast pages"). The Today row is the list-row button the
+ * card really uses (`.ccc-today-row` is not a class of this phase), scoped to the Today card; the
+ * Technology card's one control is its `Open report` button.
+ */
+const NAV_ITEM = ".ccc-settings-nav-item";
+const SWITCH = ".ccc-switch";
+const SELECT = ".ccc-select";
+const BUNDLE_PREVIEW = ".ccc-bundle-preview";
+const HEALTH_ROW_BUTTON = ".ccc-health-row button.ccc-connect-button";
+const TODAY_ROW = ".ccc-card:has(.ccc-today-section) button.ccc-list-primary";
+const INTEL_BUTTON = ".ccc-intel-latest button.ccc-connect-button";
 
 const PAGES: readonly PageSpec[] = [
   {
@@ -100,9 +120,143 @@ const PAGES: readonly PageSpec[] = [
   },
   // Phase 8 (plan 08-21, D-31, D-32): the real Settings destination, one section per page.
   {
+    name: "settings projects",
+    params: { view: "settings", case: "settings-projects", width: "full", nav: "1" },
+    mustSample: ["Projects", "Go to the projects view", "ExampleProjects"],
+    focus: [NAV_ITEM],
+  },
+  {
+    name: "settings launchers",
+    params: { view: "settings", case: "settings-launchers", width: "full", nav: "1" },
+    mustSample: ["Launchers", "Detect apps"],
+    focus: [NAV_ITEM],
+  },
+  {
+    name: "settings integrations",
+    params: { view: "settings", case: "settings-integrations", width: "full", nav: "1" },
+    mustSample: ["Integrations", "Copy install command", "Not part of this version"],
+    focus: [NAV_ITEM],
+  },
+  {
+    name: "settings approvals and tasks",
+    params: { view: "settings", case: "settings-approvals-tasks", width: "full", nav: "1" },
+    mustSample: ["Approval notifications", "Rebuild task index", "On"],
+    focus: [NAV_ITEM, SWITCH],
+  },
+  {
+    name: "settings paths",
+    params: { view: "settings", case: "settings-paths", width: "full", nav: "1" },
+    mustSample: ["Managed vault", "~/"],
+    focus: [NAV_ITEM],
+  },
+  {
+    name: "settings visual",
+    params: { view: "settings", case: "settings-visual", width: "full", nav: "1" },
+    mustSample: ["Reduced motion", "System"],
+    focus: [NAV_ITEM, SELECT],
+  },
+  {
+    // The tracer page. Security's `dl.ccc-detail-fields` reuses the Phase 5 facts-list rule inside
+    // Settings, so this page is also where that rule's contrast is measured (UI-SPEC review item).
     name: "settings security",
     params: { view: "settings", case: "settings-security", width: "full", nav: "1" },
-    mustSample: ["Transcript analysis", "Always allow", "Present"],
+    mustSample: ["Transcript analysis", "Always allow", "Present", "Install secret in keychain"],
+    focus: [NAV_ITEM, SWITCH],
+  },
+  {
+    name: "settings schedules",
+    params: { view: "settings", case: "settings-schedules", width: "full", nav: "1" },
+    mustSample: ["Manual trigger only", "Open the research view"],
+    focus: [NAV_ITEM],
+  },
+  // The Diagnostics section in its states, and the bundle block.
+  {
+    name: "diagnostics fresh install",
+    params: { view: "diagnostics", case: "diagnostics-fresh", width: "full", nav: "1" },
+    mustSample: ["Run checks again", "Running", "Needs setup", "Not part of this version"],
+    focus: [NAV_ITEM, HEALTH_ROW_BUTTON],
+  },
+  {
+    name: "diagnostics every status kind",
+    params: { view: "diagnostics", case: "diagnostics-mixed", width: "full", nav: "1" },
+    mustSample: ["Degraded", "Failing", "Unknown", "Needs setup", "Running", "Codex hooks"],
+    focus: [NAV_ITEM, HEALTH_ROW_BUTTON],
+  },
+  {
+    name: "diagnostics disconnected",
+    params: { view: "diagnostics", case: "diagnostics-disconnected", width: "full", nav: "1" },
+    mustSample: ["Failing", "Can't be checked while"],
+    focus: [NAV_ITEM],
+  },
+  {
+    name: "diagnostics error",
+    params: { view: "diagnostics", case: "diagnostics-error", width: "full", nav: "1" },
+    mustSample: ["Couldn't run the checks"],
+    focus: [NAV_ITEM],
+  },
+  {
+    name: "diagnostics bundle preview",
+    params: { view: "diagnostics", case: "diagnostics-bundle", width: "full", nav: "1" },
+    // `Save bundle` is `aria-disabled` here (no save dialog in the harness), so it is exempt from the
+    // text check like every disabled control; the reason it is described by is on the page and measured.
+    mustSample: ["Copy bundle", "bundleVersion", "save dialog isn't available"],
+    focus: [NAV_ITEM, BUNDLE_PREVIEW],
+  },
+  {
+    name: "diagnostics bundle refused",
+    params: { view: "diagnostics", case: "diagnostics-bundle-refused", width: "full", nav: "1" },
+    mustSample: ["Bundle not offered", "refused by a privacy check"],
+    focus: [NAV_ITEM],
+    absent: [BUNDLE_PREVIEW],
+  },
+  {
+    name: "settings narrow",
+    params: { view: "settings", case: "settings-security", width: "narrow", nav: "1" },
+    mustSample: ["Security"],
+    focus: [NAV_ITEM],
+  },
+  // The Overview with the five slice cards in six of its eight states (loading and error carry
+  // no new text and are covered by the pixel cells).
+  {
+    name: "overview slice ready",
+    params: { view: "overview", case: "overview-slice-ready", nav: "1" },
+    mustSample: [
+      "Today",
+      "Due today",
+      "Overdue",
+      "Technology and market intelligence",
+      "Open report",
+      "not part of this version",
+    ],
+    focus: [TODAY_ROW, INTEL_BUTTON],
+  },
+  {
+    name: "overview slice next open",
+    params: { view: "overview", case: "overview-slice-nextopen", nav: "1" },
+    mustSample: ["Next open task", "Next due"],
+    focus: [TODAY_ROW],
+  },
+  {
+    name: "overview slice failure",
+    params: { view: "overview", case: "overview-slice-failure", nav: "1" },
+    mustSample: ["Research run failed", "Open the research view"],
+    focus: [TODAY_ROW],
+  },
+  {
+    name: "overview slice empty",
+    params: { view: "overview", case: "overview-slice-empty", nav: "1" },
+    mustSample: ["Nothing here yet", "No reports yet"],
+  },
+  {
+    name: "overview slice stale and partial",
+    params: { view: "overview", case: "overview-slice-partial-stale", nav: "1" },
+    mustSample: ["Stale", "Partial", "Open the research view"],
+    focus: [TODAY_ROW],
+  },
+  {
+    name: "overview slice disconnected",
+    params: { view: "overview", case: "overview-slice-disconnected", nav: "1" },
+    mustSample: ["Service disconnected", "Unavailable"],
   },
 ];
 
@@ -195,7 +349,12 @@ async function harvest(page: Page): Promise<Harvest> {
         const type = el.getAttribute("type");
         if (type === "radio" || type === "checkbox" || type === "hidden") continue;
         const field = el as HTMLInputElement;
-        samples.push({ ...base, kind: "value", text: field.value || `(empty ${tag})` });
+        // A select shows the label of its chosen option, not the option's value (`System`, not `auto`).
+        const shown =
+          tag === "select"
+            ? ((el as HTMLSelectElement).selectedOptions[0]?.textContent?.trim() ?? "")
+            : field.value;
+        samples.push({ ...base, kind: "value", text: shown || `(empty ${tag})` });
         if (el.getAttribute("placeholder") !== null && field.value === "") {
           const holder = getComputedStyle(el, "::placeholder");
           samples.push({
@@ -220,6 +379,17 @@ async function harvest(page: Page): Promise<Harvest> {
       }
       own = own.replace(/\s+/g, " ").trim();
       if (own !== "") samples.push({ ...base, kind: "text", text: own.slice(0, 60) });
+      // A switch and the bundle preview region have an edge or a fill that tells them from what
+      // they sit on (SC 1.4.11), so they are measured like a form field (Phase 8, D-32).
+      if (el.matches("[role='switch'], .ccc-bundle-preview")) {
+        fields.push({
+          where: describe(el),
+          borderColor: style.borderTopColor,
+          borderWidth: Number.parseFloat(style.borderTopWidth),
+          backgrounds: chain(el, "self"),
+          surround: chain(el, "parent"),
+        });
+      }
     }
     return { samples, fields, unreadable };
   });
@@ -394,6 +564,15 @@ const FOCUS_TARGETS = [
   ".ccc-report-citations button",
   ".ccc-command-center textarea.ccc-text-input",
   ".ccc-command-center input.ccc-text-input",
+  // Phase 8 (plan 08-21): the Settings nav, the switch, the select, the bundle preview region, the
+  // health-row buttons, the Today rows and the Technology card's button.
+  NAV_ITEM,
+  SWITCH,
+  SELECT,
+  BUNDLE_PREVIEW,
+  HEALTH_ROW_BUTTON,
+  TODAY_ROW,
+  INTEL_BUTTON,
 ];
 
 function summarise(host: Host, name: string, measured: readonly Measured[]): string {
@@ -404,54 +583,102 @@ function summarise(host: Host, name: string, measured: readonly Measured[]): str
   ].join("\n");
 }
 
+interface Assessment {
+  readonly report: string;
+  /** Everything wrong with the page: a missing sample, an unreadable colour, a ratio below its floor. */
+  readonly failures: readonly string[];
+  readonly sampleCount: number;
+}
+
+/** Opens one page in one host theme, waits for the harness, and measures it. */
+async function assessPage(page: Page, spec: PageSpec, host: Host): Promise<Assessment> {
+  await page.goto(harnessUrl({ ...spec.params, host }));
+  // A harness error (a typo in a case or a view) fails at once, with its text, instead of a timeout.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            document.querySelector(".ccc-harness-error")?.textContent ??
+            (document.documentElement.getAttribute("data-harness-ready") === "true"
+              ? "ready"
+              : "waiting"),
+        ),
+      { timeout: 30_000 },
+    )
+    .toBe("ready");
+  await expect(page.locator(".ccc-command-center")).toHaveCount(1);
+
+  const found = await harvest(page);
+  const { measured, problems } = measureSamples(found);
+  const rings: Measured[] = [];
+  const failures: string[] = [];
+  for (const selector of FOCUS_TARGETS) {
+    const ring = await focusRing(page, selector);
+    if (ring !== null) rings.push(ring);
+  }
+  for (const wanted of spec.focus ?? []) {
+    if ((await page.locator(wanted).count()) === 0) {
+      failures.push(`focus target ${wanted} is not on the page, so its ring was not measured`);
+    }
+  }
+  for (const unwanted of spec.absent ?? []) {
+    if ((await page.locator(unwanted).count()) > 0) {
+      failures.push(`${unwanted} is on the page and must not be`);
+    }
+  }
+  const all = [...measured, ...rings];
+
+  // Not vacuous: the page drew text, and the named subjects are among what was measured.
+  if (found.samples.length <= 5) failures.push(`only ${found.samples.length} text samples`);
+  for (const wanted of spec.mustSample) {
+    if (!found.samples.some((sample) => sample.text.toLowerCase().includes(wanted.toLowerCase()))) {
+      failures.push(`${wanted} was not on the page`);
+    }
+  }
+  failures.push(...problems);
+  failures.push(
+    ...all
+      .filter((m) => m.ratio < m.floor)
+      .map((m) => `${m.ratio.toFixed(2)}:1 < ${m.floor}:1  ${m.label}`),
+  );
+  return { report: summarise(host, spec.name, all), failures, sampleCount: found.samples.length };
+}
+
 for (const host of HOSTS) {
   for (const spec of PAGES) {
     test(`contrast - ${spec.name} - host ${host}`, {
       annotation: { type: NO_BASELINE_ANNOTATION, description: `${spec.name}/${host}` },
     }, async ({ page }) => {
       test.setTimeout(90_000);
-      await page.goto(harnessUrl({ ...spec.params, host }));
-      // A harness error (a typo in a case or a view) fails at once, with its text, instead of a timeout.
-      await expect
-        .poll(
-          () =>
-            page.evaluate(
-              () =>
-                document.querySelector(".ccc-harness-error")?.textContent ??
-                (document.documentElement.getAttribute("data-harness-ready") === "true"
-                  ? "ready"
-                  : "waiting"),
-            ),
-          { timeout: 30_000 },
-        )
-        .toBe("ready");
-      await expect(page.locator(".ccc-command-center")).toHaveCount(1);
-
-      const found = await harvest(page);
-      const { measured, problems } = measureSamples(found);
-      const rings: Measured[] = [];
-      for (const selector of FOCUS_TARGETS) {
-        const ring = await focusRing(page, selector);
-        if (ring !== null) rings.push(ring);
-      }
-      const all = [...measured, ...rings];
-      const report = summarise(host, spec.name, all);
-      test.info().annotations.push({ type: "lowest-contrast", description: report });
-      console.log(report);
-
-      // Not vacuous: the page drew text, and the named subjects are among what was measured.
-      expect(found.samples.length).toBeGreaterThan(5);
-      for (const wanted of spec.mustSample) {
-        expect(
-          found.samples.some((sample) => sample.text.toLowerCase().includes(wanted.toLowerCase())),
-          `${wanted} was not on the page`,
-        ).toBe(true);
-      }
-      expect(problems).toEqual([]);
-      const failures = all
-        .filter((m) => m.ratio < m.floor)
-        .map((m) => `${m.ratio.toFixed(2)}:1 < ${m.floor}:1  ${m.label}`);
-      expect(failures).toEqual([]);
+      const assessment = await assessPage(page, spec, host);
+      test.info().annotations.push({ type: "lowest-contrast", description: assessment.report });
+      console.log(assessment.report);
+      expect(assessment.failures).toEqual([]);
     });
   }
+}
+
+// Non-vacuity (Phase 8, D-32): a page that draws the tab strip and none of what it must show fails
+// through `mustSample`, so a harness that renders nothing can never pass a contrast page.
+for (const host of HOSTS) {
+  test(`contrast - a blank settings page fails through mustSample - host ${host}`, {
+    annotation: { type: NO_BASELINE_ANNOTATION, description: `blank/${host}` },
+  }, async ({ page }) => {
+    const blank: PageSpec = {
+      name: "blank settings",
+      params: { view: "settings", case: "__empty", width: "full", nav: "1" },
+      mustSample: ["Transcript analysis", "Always allow", "Present"],
+      focus: [SWITCH],
+    };
+    const assessment = await assessPage(page, blank, host);
+    // The tab strip gives it enough text to be a page, so only the named subjects fail.
+    expect(assessment.sampleCount).toBeGreaterThan(5);
+    for (const wanted of blank.mustSample) {
+      expect(assessment.failures, wanted).toContain(`${wanted} was not on the page`);
+    }
+    expect(assessment.failures).toContain(
+      `focus target ${SWITCH} is not on the page, so its ring was not measured`,
+    );
+  });
 }

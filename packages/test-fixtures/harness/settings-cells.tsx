@@ -227,9 +227,18 @@ export function installSettingsHolders(behaviour: HealthBehaviour, answer: Healt
 // the scripted presses, and once it has stayed unchanged for a few beats.
 // ---------------------------------------------------------------------------
 
+/** One press: a CSS selector, or the visible text of a button. */
+export type Press = { readonly selector: string } | { readonly button: string };
+
+function findPress(press: Press): HTMLElement | null {
+  if ("selector" in press) return document.querySelector<HTMLElement>(press.selector);
+  const buttons = document.querySelectorAll<HTMLButtonElement>(".ccc-settings-content button");
+  return [...buttons].find((button) => button.textContent?.trim() === press.button) ?? null;
+}
+
 export interface ReadySpec {
-  /** Selectors pressed in order, one per beat, each once it exists. */
-  readonly presses?: readonly string[];
+  /** Presses made in order, one per beat, each once its target exists. */
+  readonly presses?: readonly Press[];
   /** True when the state the case names is on screen. */
   readonly done: () => boolean;
 }
@@ -251,7 +260,7 @@ export function startReady(spec: ReadySpec): void {
     if (next !== undefined) {
       // One press per beat: effects (focus moves, rebuilds) settle between presses.
       if (Date.now() - lastPressAt < 80) return;
-      const target = document.querySelector<HTMLElement>(next);
+      const target = findPress(next);
       if (target !== null) {
         presses.shift();
         lastPressAt = Date.now();
@@ -351,6 +360,16 @@ export function SettingsCell({ params }: { readonly params: URLSearchParams }): 
   const width = params.get("width") ?? "full";
   if (!isWidth(width)) {
     return <HarnessError message={`Unknown width "${width}" - expected narrow or full.`} />;
+  }
+  // Test-only (non-vacuity): a page with the tab strip and no destination, so a contrast page that
+  // names text the destination draws must fail through its `mustSample`, never pass on an empty render.
+  if (caseId === "__empty") {
+    document.documentElement.setAttribute("data-harness-ready", "true");
+    return (
+      <div className="ccc-command-center" data-motion={motionMode.value}>
+        <DestinationTabs activeId="settings" pendingCount={0} />
+      </div>
+    );
   }
   const section = caseId.startsWith("settings-") ? caseId.slice("settings-".length) : "";
   if (!isSection(section)) {
