@@ -134,6 +134,45 @@ describe("mergeSettings drops unknown keys at load (FIX2B, D-16)", () => {
   });
 });
 
+describe("mergeSettings validates each key's type and falls back per key (FIX4B m10)", () => {
+  it("replaces a hand-edited value of the wrong type with that key's default only", () => {
+    const merged = mergeSettings({
+      socketPathOverride: 42,
+      lastOpenedDestination: { evil: true },
+      reducedMotion: "sometimes",
+      notifyApprovals: "yes",
+    });
+    expect(merged).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("keeps the good keys when only one is bad", () => {
+    expect(
+      mergeSettings({
+        socketPathOverride: "/run/x.sock",
+        lastOpenedDestination: 7,
+        reducedMotion: "reduced",
+        notifyApprovals: false,
+      }),
+    ).toEqual({
+      socketPathOverride: "/run/x.sock",
+      lastOpenedDestination: DEFAULT_SETTINGS.lastOpenedDestination,
+      reducedMotion: "reduced",
+      notifyApprovals: false,
+    });
+  });
+
+  for (const bad of [undefined, 0, false, [], {}, "x"]) {
+    it(`falls back to null for a socketPathOverride of ${JSON.stringify(bad)} unless it is a string`, () => {
+      const merged = mergeSettings({ socketPathOverride: bad });
+      expect(merged.socketPathOverride).toBe(typeof bad === "string" ? bad : null);
+    });
+  }
+
+  it("accepts an explicit null socketPathOverride", () => {
+    expect(mergeSettings({ socketPathOverride: null }).socketPathOverride).toBeNull();
+  });
+});
+
 describe("the notifyApprovals setting (plan 06-09, D-26, PLUG-07)", () => {
   it("defaults on in a fresh settings object and for a data file written before the key existed", () => {
     expect(DEFAULT_SETTINGS.notifyApprovals).toBe(true);
@@ -166,8 +205,8 @@ describe("the notifyApprovals setting (plan 06-09, D-26, PLUG-07)", () => {
       notifyApprovals: true,
     });
     expect(
-      mergeSettings({ socketPathOverride: "/run/x.sock", reducedMotion: "reduce" }),
-    ).toMatchObject({ socketPathOverride: "/run/x.sock", reducedMotion: "reduce" });
+      mergeSettings({ socketPathOverride: "/run/x.sock", reducedMotion: "reduced" }),
+    ).toMatchObject({ socketPathOverride: "/run/x.sock", reducedMotion: "reduced" });
     expect(() => assertNoCredentialFields({ approvalToken: "x" })).toThrow(/approvalToken/);
   });
 
