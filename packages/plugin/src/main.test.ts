@@ -55,3 +55,16 @@ describe("main.ts has one write path to plugin data (plan 08-11, D-16)", () => {
     expect(source).toMatch(/assertNoPrivatePathValues\(this\.settings\)/);
   });
 });
+
+describe("main.ts wires the Diagnostics health once, with the reconnect hook (plan 08-13, Amendment A1)", () => {
+  it("injects the diagnostics client call and calls wireHealth once", () => {
+    expect(source.match(/wireHealth\(/g)).toHaveLength(1);
+    expect(source).toMatch(/getDiagnosticsHealth\(this\.client, trigger\)/);
+  });
+
+  it("adds the health reconnect hook to the combined connect hook, and names no gesture trigger", () => {
+    expect(source).toMatch(/combineOnLive\([\s\S]*health\.onLive[\s\S]*\)/);
+    // Only the section's two owner actions send `gesture`; the plugin entry point never does.
+    expect(source).not.toMatch(/["']gesture["']/);
+  });
+});

@@ -322,3 +322,57 @@ describe("the parts disclosure text (Test 2)", () => {
     expect(PART_NAMES.codex).toBe("Codex");
   });
 });
+
+describe("sentence case (R-F1)", () => {
+  /** Product names, button names and the one quoted UI string the copy may capitalise mid-sentence. */
+  const ALLOWED = new Set([
+    "Claude",
+    "Code",
+    "Codex",
+    "Obsidian",
+    "Terminal",
+    "Finder",
+    "Antigravity",
+    "Anthropic",
+    "Mac",
+    "API",
+    "Run",
+    "Check",
+    "Settings",
+    "Diagnostics",
+  ]);
+
+  function capitalisedMidSentence(text: string): string[] {
+    const withoutQuoted = text.replace(/"[^"]*"/g, "");
+    const found: string[] = [];
+    for (const sentence of withoutQuoted.split(/(?<=[.!?])\s+/)) {
+      const words = sentence.split(/\s+/).slice(1);
+      for (const word of words) {
+        const bare = word.replace(/^[("']+|[.,;:!?)'"]+$/g, "").replace(/'s$/, "");
+        if (/^[A-Z]/.test(bare) && !ALLOWED.has(bare)) found.push(bare);
+      }
+    }
+    return found;
+  }
+
+  it("capitalises no running-copy word outside the product names", () => {
+    const offenders: string[] = [];
+    for (const code of ALL_REASONS) {
+      const { reason, nextStep } = reasonText(code, { facts: FULL_FACTS, now: NOW });
+      for (const sentence of [reason, nextStep ?? ""]) {
+        const words = capitalisedMidSentence(sentence);
+        // A formatted date or time carries its own capitals (month name, AM); it is a typed value.
+        const real = words.filter((word) => !/^(?:Oct|AM|PM)$/.test(word));
+        if (real.length > 0) offenders.push(`${code}: ${real.join(", ")}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("writes every section label in lower case after the verb", () => {
+    for (const section of SETTINGS_SECTION_IDS) {
+      const label = setupActionLabel({ kind: "go-to-section", section });
+      expect(capitalisedMidSentence(label)).toEqual([]);
+    }
+  });
+});
