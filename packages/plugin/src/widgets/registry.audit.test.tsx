@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanup, fireEvent, render } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { settingsSectionRequested, takeSettingsSectionRequest } from "../view/settings-sections.js";
 import type { QuickActionDescriptor } from "./contract.js";
 import { ENABLED_FLAGS, FEATURE_FLAGS } from "./feature-flags.js";
 import { WidgetFrame } from "./frame.js";
@@ -174,7 +175,8 @@ describe("every button on every registered card routes through the dispatcher", 
     expect(emitted).toEqual([]);
   });
 
-  it("GitHub discoveries' Connect button still lands on settings and names GitHub", () => {
+  it("GitHub discoveries' Connect button lands on settings (integrations section, R-10) and names GitHub", () => {
+    takeSettingsSectionRequest();
     const ctx = {
       navigate: vi.fn(),
       notify: vi.fn(),
@@ -192,7 +194,11 @@ describe("every button on every registered card routes through the dispatcher", 
     );
     fireEvent.click(getByRole("button", { name: "Connect GitHub" }));
     expect(ctx.navigate).toHaveBeenCalledExactlyOnceWith("settings");
-    expect(ctx.notify.mock.calls[0]?.[0]).toMatch(/GitHub.*Settings/);
+    expect(settingsSectionRequested.peek()).toBe("integrations");
+    expect(ctx.notify).toHaveBeenCalledExactlyOnceWith(
+      "GitHub isn't part of this version. The integrations section lists each account.",
+    );
+    takeSettingsSectionRequest();
   });
 
   // SC-6 (rewritten, not deleted): the live Quick actions (D-38, PR-08, and

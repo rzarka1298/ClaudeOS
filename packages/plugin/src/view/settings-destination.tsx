@@ -5,11 +5,13 @@ import type { ConnectionState } from "../connection-state.js";
 import type { FolderPick, PickFolderOptions } from "../projects/folder-picker.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type { ProjectsActions, ScanActions } from "../projects/projects-actions.js";
+import { DiagnosticBundleBlock } from "./diagnostics-bundle.js";
 import { DiagnosticsSection } from "./diagnostics-section.js";
 import { type LaunchersSession, LaunchersSettings } from "./launchers-settings.js";
 import { ApprovalsTasksSettings } from "./settings-approvals-tasks.js";
 import { StatusLine } from "./settings-controls.js";
 import type { SettingsHost } from "./settings-host.js";
+import { IntegrationsSection } from "./settings-integrations.js";
 import { ProjectsSettings } from "./settings-projects.js";
 import {
   SETTINGS_SECTION_LABELS,
@@ -18,6 +20,7 @@ import {
   settingsSectionRequested,
   takeSettingsSectionRequest,
 } from "./settings-sections.js";
+import { SecuritySection } from "./settings-security.js";
 import { VisualSettings } from "./settings-visual.js";
 
 /**
@@ -73,12 +76,26 @@ export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionVie
       pickFolder={pickFolder}
     />
   ),
+  integrations: ({ host, connection, now, notify, launchersSession }) => (
+    <IntegrationsSection
+      host={host}
+      connection={connection}
+      now={now}
+      notify={notify}
+      launchersSession={launchersSession}
+    />
+  ),
   "approvals-tasks": ({ host, connection, notify }) => (
     <ApprovalsTasksSettings host={host} connection={connection} notify={notify} />
   ),
   visual: ({ host, notify }) => <VisualSettings host={host} notify={notify} />,
+  security: ({ host, connection, now, notify }) => (
+    <SecuritySection host={host} connection={connection} now={now} notify={notify} />
+  ),
   diagnostics: ({ host, connection, now, notify }) => (
-    <DiagnosticsSection host={host} connection={connection} now={now} notify={notify} />
+    <DiagnosticsSection host={host} connection={connection} now={now} notify={notify}>
+      <DiagnosticBundleBlock host={host} connection={connection} now={now} notify={notify} />
+    </DiagnosticsSection>
   ),
   launchers: ({ connection, now, notify, launchersActions, launchersSession }) => (
     <LaunchersSettings

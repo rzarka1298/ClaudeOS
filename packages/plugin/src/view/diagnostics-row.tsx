@@ -79,7 +79,8 @@ export function StatusChip({
   );
 }
 
-function FreshnessBadge({ freshness }: { readonly freshness: Freshness }): VNode {
+/** The freshness badge, shared with the Security section's Keychain chips (plan 08-15, R-F5). */
+export function FreshnessBadge({ freshness }: { readonly freshness: Freshness }): VNode {
   return (
     <span className="ccc-badge" data-badge={freshness}>
       <span className="ccc-badge-glyph" aria-hidden="true">

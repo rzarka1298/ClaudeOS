@@ -128,15 +128,20 @@ describe("PERF-03: a slow source settling later changes only its own card", () =
 });
 
 describe("quick actions move focus to the owning destination (C-11 focus)", () => {
-  it("focuses the Settings tab, not the unmounted button, after a connect action", () => {
+  it("moves focus to a live element, not the unmounted button, after a connect action", () => {
     render(<Shell notify={vi.fn()} />);
     // Plan 08-14: Today has no Connect button any more; GitHub discoveries keeps one.
     const button = screen.getByRole("button", { name: "Connect GitHub" });
     button.focus();
     fireEvent.click(button);
 
+    // Plan 08-15 (R-10): the connect action asks for the integrations section, so focus lands on
+    // that section's heading inside the Settings destination (the tab is selected, the button is gone).
     const settings = screen.getByRole("tab", { name: "Settings" });
-    expect(document.activeElement).toBe(settings);
+    expect(settings.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 3, name: "Integrations" }),
+    );
     expect(button.isConnected).toBe(false);
   });
 });

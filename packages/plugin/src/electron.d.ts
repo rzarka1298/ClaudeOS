@@ -31,8 +31,35 @@ declare module "electron" {
     readonly properties: readonly ("openDirectory" | "createDirectory")[];
   }
 
+  /**
+   * The save dialog (plan 08-16, D-12): only what `health/export.ts` asks for. `defaultPath` is
+   * always a bare file name, never a directory; `showOverwriteConfirmation` makes the dialog ask
+   * before replacing a file the owner picked.
+   */
+  export interface SaveDialogOptions {
+    readonly title?: string;
+    readonly buttonLabel?: string;
+    readonly defaultPath?: string;
+    readonly filters?: readonly {
+      readonly name: string;
+      readonly extensions: readonly string[];
+    }[];
+    readonly properties?: readonly ("createDirectory" | "showOverwriteConfirmation")[];
+  }
+
+  export interface SaveDialogResult {
+    readonly canceled: boolean;
+    readonly filePath?: string | undefined;
+  }
+
   export interface RemoteDialog {
     showOpenDialog?: ((options: OpenDialogOptions) => Promise<OpenDialogResult>) | undefined;
+    /**
+     * Optional like `showOpenDialog`: a popout window's Electron surface is undocumented
+     * (08-UI-SPEC S4, owner UAT item 35), so `health/export.ts` feature-detects it and falls
+     * back to Copy only.
+     */
+    showSaveDialog?: ((options: SaveDialogOptions) => Promise<SaveDialogResult>) | undefined;
   }
 
   export interface Remote {

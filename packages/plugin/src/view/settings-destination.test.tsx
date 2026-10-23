@@ -159,6 +159,8 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
       "-1",
       "-1",
       "-1",
+      "-1",
+      "-1",
     ]);
     expect(items.every((item) => item.tagName === "BUTTON")).toBe(true);
     expect(items.every((item) => item.getAttribute("type") === "button")).toBe(true);
@@ -166,7 +168,15 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
 
   it("Test 3: arrow keys move focus without activating, wrapping at both ends", () => {
     renderShell();
-    const order = ["Projects", "Launchers", "Approvals and tasks", "Visual", "Diagnostics"];
+    const order = [
+      "Projects",
+      "Launchers",
+      "Integrations",
+      "Approvals and tasks",
+      "Visual",
+      "Security",
+      "Diagnostics",
+    ];
     navItem("Projects").focus();
     fireEvent.keyDown(navItem("Projects"), { key: "ArrowDown" });
     expect(document.activeElement).toBe(navItem("Launchers"));
@@ -255,12 +265,14 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
     const labels = within(nav())
       .getAllByRole("button")
       .map((button) => button.textContent);
-    // Integrations, Paths, Security and Schedules arrive with 08-15 and 08-18.
+    // Paths and Schedules arrive with 08-18.
     expect(labels).toEqual([
       "Projects",
       "Launchers",
+      "Integrations",
       "Approvals and tasks",
       "Visual",
+      "Security",
       "Diagnostics",
     ]);
   });
@@ -278,5 +290,21 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
       "true",
     );
     expect(document.activeElement).toBe(sectionHeading("Launchers"));
+  });
+
+  it("the Overview Connect action's request lands on the Integrations heading and connects nothing (R-10)", async () => {
+    renderShell("overview");
+    await act(async () => {
+      requestSettingsSection("integrations");
+      requestDestination("settings");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(document.activeElement).toBe(sectionHeading("Integrations"));
+    expect(screen.queryByRole("button", { name: /connect|sign in/i })).toBeNull();
   });
 });

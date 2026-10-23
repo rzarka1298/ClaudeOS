@@ -26,13 +26,33 @@ export interface OpenDialogOptions {
   readonly title?: string;
 }
 
+/**
+ * The save dialog double (plan 08-16): replaceable like `showOpenDialog`, and cancelled by
+ * default so a test that does not set it up can never write a file.
+ */
+export interface SaveDialogOptions {
+  readonly title?: string;
+  readonly buttonLabel?: string;
+  readonly defaultPath?: string;
+  readonly filters?: readonly { readonly name: string; readonly extensions: readonly string[] }[];
+  readonly properties?: readonly string[];
+}
+
+export interface SaveDialogResult {
+  readonly canceled: boolean;
+  readonly filePath?: string | undefined;
+}
+
 export const remote: {
   dialog: {
     showOpenDialog: (options: OpenDialogOptions) => Promise<OpenDialogResult>;
+    showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
   };
 } = {
   dialog: {
     showOpenDialog: (_options: OpenDialogOptions): Promise<OpenDialogResult> =>
       Promise.resolve({ canceled: true, filePaths: [] }),
+    showSaveDialog: (_options: SaveDialogOptions): Promise<SaveDialogResult> =>
+      Promise.resolve({ canceled: true }),
   },
 };

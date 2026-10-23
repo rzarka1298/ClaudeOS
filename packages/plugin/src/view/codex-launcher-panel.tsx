@@ -197,7 +197,7 @@ function idList(ids: readonly string[]): string {
 }
 
 /** The health region: fixed lines plus allowlisted check ids, never other doctor output (R4). */
-function HealthLines({ state }: { readonly state: CodexDoctorState }): VNode | null {
+export function HealthLines({ state }: { readonly state: CodexDoctorState }): VNode | null {
   switch (state.kind) {
     case "checking":
       return <>Checking…</>;

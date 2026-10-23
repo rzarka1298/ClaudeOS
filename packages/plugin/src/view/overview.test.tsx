@@ -467,7 +467,11 @@ describe("quick actions reach the one dispatcher through the shell (C-11)", () =
       "true",
     );
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify.mock.calls[0]?.[0]).toMatch(/Settings/);
+    // Plan 08-15 (R-10): the Connect action lands on the integrations section and says the truth.
+    expect(notify.mock.calls[0]?.[0]).toBe(
+      "GitHub isn't part of this version. The integrations section lists each account.",
+    );
+    expect(screen.getByRole("heading", { level: 3, name: "Integrations" })).toBeTruthy();
   });
 });
 
