@@ -1,22 +1,59 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 import { REPO_ROOT } from "../repo-paths.js";
-import { SETTINGS_CLASSES, SETTINGS_TEXT } from "./settings-copy.js";
+import type { ThemeReading } from "./contrast-probe.js";
+import type { MotionSample } from "./cross-support.js";
+import { findUnguardedMutations, MUTATING_HELPERS } from "./health-support.js";
+import { SETTINGS_CLASSES, SETTINGS_SECTION_IDS, SETTINGS_TEXT } from "./settings-copy.js";
 import {
   assertNoAbsolutePath,
+  checkContrastReading,
+  checkDataJson,
   checkFocusNotMoved,
+  checkKeyboardWalk,
+  checkLauncherSaved,
+  checkLaunchersListed,
   checkNavigation,
+  checkNoCredentialControl,
+  checkPaths,
+  checkReducedMotion,
+  checkRegistered,
+  checkSameReducedMotion,
+  checkScanFolderListed,
+  checkSchedules,
   checkSectionFocused,
+  checkSectionSettled,
+  checkSecurityFacts,
+  checkServiceAway,
+  contrastSubjects,
+  dataJsonKeys,
+  describeLogScan,
+  type FocusStop,
   findAbsolutePathProblems,
+  motionSelectOf,
+  OVERVIEW_CONTRAST_SUBJECTS,
   openSection,
+  readDataJson,
   readSettingsNav,
   rendererFocusNavItem,
+  rendererReadReducedMotion,
+  restoreSystemMotion,
   SETTINGS_DOM_CONFIG,
+  SETTINGS_MUTATING_HELPERS,
+  type SettingsButtonRead,
+  type SettingsChipRead,
+  type SettingsControlRead,
+  type SettingsExtras,
+  type SettingsFactRead,
   type SettingsRead,
+  type SettingsRowRead,
+  scanLogForPrivateText,
+  walkTabStops,
+  withBase,
 } from "./settings-support.js";
 
 /**
@@ -424,5 +461,1145 @@ describe("findAbsolutePathProblems and assertNoAbsolutePath (Test 2)", () => {
       expect(String(error)).not.toContain("janedoe");
     }
     expect(() => assertNoAbsolutePath("~/fine", facts)).not.toThrow();
+  });
+});
+
+// ===========================================================================
+// Plan 08-22 Task 2: items 10 to 18 and 34
+
+const AWAY = SETTINGS_TEXT.serviceAway;
+
+const BLANK: SettingsRead = {
+  mounted: true,
+  heading: "Settings",
+  description: "",
+  statusLine: "",
+  statusRole: "status",
+  nav: [],
+  section: { heading: "", headingFocused: false, headingTabIndex: null },
+  focus: null,
+  facts: [],
+  rows: [],
+  buttons: [],
+  inputs: 0,
+  paths: [],
+  results: [],
+  subheads: [],
+  paragraphs: [],
+  statusTexts: [],
+  text: "",
+  busy: false,
+};
+
+function fact(name: string, over: Partial<SettingsFactRead> = {}): SettingsFactRead {
+  return {
+    name,
+    text: "",
+    lines: [],
+    chips: [],
+    stale: false,
+    code: [],
+    unknown: false,
+    loading: false,
+    buttons: [],
+    ...over,
+  };
+}
+
+function control(over: Partial<SettingsControlRead> = {}): SettingsControlRead {
+  return {
+    kind: "button",
+    label: "",
+    checked: null,
+    value: null,
+    options: [],
+    disabled: false,
+    busy: false,
+    describedText: [],
+    ...over,
+  };
+}
+
+function row(name: string, over: Partial<SettingsControlRead> = {}): SettingsRowRead {
+  return { name, paragraphs: [], control: control({ label: name, ...over }), results: [] };
+}
+
+function button(label: string, disabled = false): SettingsButtonRead {
+  return { label, name: null, disabled, busy: false };
+}
+
+function section(over: Partial<SettingsRead>): SettingsRead {
+  return { ...BLANK, ...over };
+}
+
+/** Runs a renderer function over `html` with `setup` run on the document first. */
+function runWith(
+  name: string,
+  html: string,
+  args: unknown[],
+  setup: (window: JsdomWindow) => void = () => {},
+): unknown {
+  const { JSDOM } = loadJsdom();
+  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`);
+  const window = dom.window;
+  setup(window);
+  const context = vm.createContext({
+    document: window.document,
+    window,
+    Event: window.Event,
+    getComputedStyle: (window.getComputedStyle as (n: unknown) => unknown).bind(window),
+  });
+  return JSON.parse(
+    JSON.stringify(
+      vm.runInContext(`(${rendererText(name)}).apply(null, ${JSON.stringify(args)})`, context) ??
+        null,
+    ),
+  );
+}
+
+describe("renderer helpers of the section cases (Test 2)", () => {
+  const PANELS = `<div class="ccc-settings-content">
+    <h3 tabindex="-1">Launchers</h3>
+    <p class="ccc-list-meta">1 of 3 launchers set up</p>
+    <button type="button" class="ccc-connect-button">Detect apps</button>
+    <p class="ccc-launch-status">Detected 2 minutes ago</p>
+    <section class="ccc-card ccc-launcher-panel"><h4 class="ccc-section-label">Antigravity</h4>
+      <span class="ccc-badge" data-launcher-badge="not-set-up">Not set up</span>
+      <button type="button" class="ccc-connect-button" aria-disabled="true">Save launcher</button></section>
+    <section class="ccc-card ccc-launcher-panel"><h4 class="ccc-section-label">Claude Code</h4>
+      <span class="ccc-badge" data-launcher-badge="set-up">Set up</span>
+      <label for="p">Path to claude</label><input id="p" type="text">
+      <button type="button" class="ccc-connect-button">Save launcher</button></section>
+    <ul><li class="ccc-scan-folder-row"><p class="ccc-display-path">…/tmp/scan-root</p><p class="ccc-list-meta">Not scanned yet</p></li></ul>
+    <article class="ccc-card ccc-project-card"><h4 class="ccc-project-card-name">alpha-demo</h4></article>
+  </div>`;
+
+  it("presses the nth button of a scope with the given label, or reports it absent", () => {
+    const pressed: string[] = [];
+    const setup = (window: JsdomWindow): void => {
+      const list = window.document as unknown as {
+        querySelectorAll(s: string): ArrayLike<{
+          addEventListener(t: string, l: () => void): void;
+          textContent: string;
+        }>;
+      };
+      const all = list.querySelectorAll("button");
+      for (let i = 0; i < all.length; i += 1) {
+        all[i]?.addEventListener("click", () => pressed.push(`${i}`));
+      }
+    };
+    const scoped = (heading: string | null, label: string, nth: number) =>
+      runWith(
+        "rendererPressButton",
+        PANELS,
+        [{ scope: "section.ccc-launcher-panel", heading, label, nth }],
+        setup,
+      );
+    expect(scoped("Claude Code", "Save launcher", 0)).toBe(true);
+    expect(pressed).toEqual(["2"]);
+    expect(scoped("Nowhere", "Save launcher", 0)).toBe(false);
+    expect(scoped("Claude Code", "Save launcher", 1)).toBe(false);
+    expect(scoped(null, "Save launcher", 1)).toBe(true);
+    expect(pressed).toEqual(["2", "2"]);
+  });
+
+  it("types into the field a label names and tells the form's own handlers", () => {
+    const seen: string[] = [];
+    const typed = runWith(
+      "rendererTypeByLabel",
+      PANELS,
+      ["Path to claude", "/some/place"],
+      (window) => {
+        (
+          window.document as unknown as {
+            querySelector(s: string): {
+              addEventListener(t: string, l: (e: unknown) => void): void;
+            };
+          }
+        )
+          .querySelector("#p")
+          .addEventListener("input", () => seen.push("input"));
+      },
+    );
+    expect(typed).toBe(true);
+    expect(seen).toEqual(["input"]);
+    expect(runWith("rendererTypeByLabel", PANELS, ["No such label", "x"])).toBe(false);
+  });
+
+  it("chooses a select option by its visible text and fires change, or reports it absent", () => {
+    const html = `<div class="ccc-settings-content"><div class="ccc-setting-row" role="group"><div class="ccc-setting-row-text"><span>Reduced motion</span></div><div class="ccc-setting-row-control"><span class="ccc-select-wrap"><select class="ccc-select"><option value="auto">System</option><option value="reduced">Always reduced</option></select></span></div></div></div>`;
+    const changes: string[] = [];
+    const setup = (window: JsdomWindow): void => {
+      (
+        window.document as unknown as {
+          querySelector(s: string): {
+            addEventListener(t: string, l: () => void): void;
+            value: string;
+          };
+        }
+      )
+        .querySelector("select")
+        .addEventListener("change", () => changes.push("change"));
+    };
+    const choose = (row: string, option: string) =>
+      runWith("rendererChooseOption", html, [SETTINGS_DOM_CONFIG, row, option], setup);
+    expect(choose("Reduced motion", "Always reduced")).toBe(true);
+    expect(changes).toEqual(["change"]);
+    expect(choose("Reduced motion", "Nope")).toBe(false);
+    expect(choose("Other row", "System")).toBe(false);
+  });
+
+  it("presses the control of the named setting row", () => {
+    const pressed: string[] = [];
+    const setup = (window: JsdomWindow): void => {
+      (
+        window.document as unknown as {
+          querySelector(s: string): { addEventListener(t: string, l: () => void): void };
+        }
+      )
+        .querySelector('[role="switch"]')
+        .addEventListener("click", () => pressed.push("switch"));
+    };
+    const press = (row: string) =>
+      runWith("rendererPressRowControl", BASE_HTML, [SETTINGS_DOM_CONFIG, row], setup);
+    expect(press("Transcript analysis")).toBe(true);
+    expect(pressed).toEqual(["switch"]);
+    expect(press("No such row")).toBe(false);
+  });
+
+  it("reads scan folders, launcher panels, the set-up line and project cards", () => {
+    const extras = runWith("rendererReadExtras", PANELS, [
+      {
+        content: "ccc-settings-content",
+        scanRow: "ccc-scan-folder-row",
+        displayPath: "ccc-display-path",
+        listMeta: "ccc-list-meta",
+        panel: "ccc-launcher-panel",
+        panelTitle: "ccc-section-label",
+        launchStatus: "ccc-launch-status",
+        projectCardName: "ccc-project-card-name",
+        attrBadge: "data-launcher-badge",
+        attrDisabled: "aria-disabled",
+      },
+    ]) as SettingsExtras;
+    expect(extras.scanFolders).toEqual([{ path: "…/tmp/scan-root", meta: "Not scanned yet" }]);
+    expect(extras.panels.map((panel) => [panel.title, panel.badge])).toEqual([
+      ["Antigravity", "not-set-up"],
+      ["Claude Code", "set-up"],
+    ]);
+    expect(extras.panels[0]?.buttons).toEqual([{ label: "Save launcher", disabled: true }]);
+    expect(extras.setUpLine).toBe("1 of 3 launchers set up");
+    expect(extras.detectLine).toBe("Detected 2 minutes ago");
+    expect(extras.projectCards).toEqual(["alpha-demo"]);
+  });
+
+  it("returns the section markup, and nothing when the destination is absent", () => {
+    const markup = runWith("rendererReadMarkup", BASE_HTML, [SETTINGS_CLASSES.settings]) as string;
+    expect(markup.startsWith("<section")).toBe(true);
+    expect(markup).toContain("Transcript analysis");
+    expect(runWith("rendererReadMarkup", "<div></div>", [SETTINGS_CLASSES.settings])).toBe("");
+  });
+
+  it("lists the focusable controls of a section in tab order, hiding collapsed ones and collapsing radios", () => {
+    const html = `<div class="ccc-settings-content"><h3 tabindex="-1">X</h3>
+      <button type="button">First</button>
+      <button type="button" aria-label="Second named" aria-disabled="true">Second</button>
+      <div style="display:none"><button type="button">Hidden</button></div>
+      <button type="button" tabindex="-1">Not a stop</button>
+      <input type="radio" name="g" id="r1"><input type="radio" name="g" id="r2" checked>
+      <input type="text" aria-label="Typed field">
+      <select aria-label="Pick"><option>a</option></select></div>`;
+    const list = runWith("rendererListFocusables", html, ["ccc-settings-content"]) as {
+      label: string;
+      tag: string;
+    }[];
+    expect(list.map((entry) => `${entry.tag}:${entry.label}`)).toEqual([
+      "button:First",
+      "button:Second named",
+      "input:input",
+      "input:Typed field",
+      "select:Pick",
+    ]);
+  });
+
+  it("reads the focused element as a tab stop with its ring facts", () => {
+    const stop = runWith(
+      "rendererReadFocusStop",
+      `<div class="ccc-settings-content"><button type="button" id="b">Go</button></div>`,
+      ["ccc-settings-content"],
+      (window) => {
+        (window.document as unknown as { querySelector(s: string): { focus(): void } })
+          .querySelector("#b")
+          .focus();
+      },
+    ) as FocusStop;
+    expect(stop).toMatchObject({ label: "Go", tag: "button", inContent: true });
+    expect(runWith("rendererReadFocusStop", "<div></div>", ["ccc-settings-content"])).toBeNull();
+  });
+
+  it("never mentions the keepNames helper in any renderer function it sends", () => {
+    for (const name of [
+      "rendererPressButton",
+      "rendererTypeByLabel",
+      "rendererChooseOption",
+      "rendererPressRowControl",
+      "rendererReadExtras",
+      "rendererReadMarkup",
+      "rendererListFocusables",
+      "rendererReadFocusStop",
+      "rendererOsPrefersReduced",
+      "rendererReadReducedMotion",
+      "rendererFocusNavItem",
+    ]) {
+      expect(rendererText(name), name).not.toContain("__name");
+    }
+  });
+});
+
+describe("the sandbox data file (Test 2, item 18)", () => {
+  function runRoot(): string {
+    return mkdtempSync(join("/tmp", "ccc-uat."));
+  }
+
+  it("reads the key set of a data file inside the run root", () => {
+    const root = runRoot();
+    try {
+      const file = join(root, "data.json");
+      writeFileSync(
+        file,
+        JSON.stringify({
+          socketPathOverride: "x",
+          lastOpenedDestination: "overview",
+          reducedMotion: "auto",
+          notifyApprovals: true,
+        }),
+      );
+      expect(dataJsonKeys(file, root)).toEqual([
+        "lastOpenedDestination",
+        "notifyApprovals",
+        "reducedMotion",
+        "socketPathOverride",
+      ]);
+      expect(readDataJson(file, root).reducedMotion).toBe("auto");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a path outside the run root, a link and a file that is not an object", () => {
+    const root = runRoot();
+    const other = runRoot();
+    try {
+      const outside = join(other, "data.json");
+      writeFileSync(outside, "{}");
+      expect(() => dataJsonKeys(outside, root)).toThrow(/outside the run root/);
+      const link = join(root, "link.json");
+      symlinkSync(outside, link);
+      expect(() => dataJsonKeys(link, root)).toThrow();
+      const list = join(root, "list.json");
+      writeFileSync(list, "[1]");
+      expect(() => dataJsonKeys(list, root)).toThrow(/not a JSON object/);
+      expect(() => dataJsonKeys(join(root, "missing.json"), root)).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts exactly the four keys with plain values and names every deviation", () => {
+    const good = {
+      socketPathOverride: "/tmp/ccc-uat.x/rt/svc.sock",
+      lastOpenedDestination: "settings",
+      reducedMotion: "auto",
+      notifyApprovals: true,
+    };
+    expect(checkDataJson(good)).toEqual([]);
+    expect(checkDataJson({ ...good, extra: 1 })).toEqual(["the data file holds the key extra"]);
+    const { notifyApprovals: _gone, ...fewer } = good;
+    expect(checkDataJson(fewer)).toEqual(["the data file lacks the key notifyApprovals"]);
+    expect(checkDataJson({ ...good, reducedMotion: "maybe" })).toEqual([
+      "reducedMotion holds an unknown value",
+    ]);
+    expect(checkDataJson({ ...good, notifyApprovals: "yes" })).toEqual([
+      "notifyApprovals is not a boolean",
+    ]);
+    expect(checkDataJson({ ...good, token: "x" }).join(" ")).toContain("token");
+  });
+});
+
+describe("scanLogForPrivateText (Test 3, item 18)", () => {
+  const facts = {
+    runRoot: "/tmp/ccc-uat.AbC123",
+    homeDir: "/Users/janedoe",
+    userName: "janedoe",
+    projectNames: ["alpha-demo"],
+  };
+
+  it("reports nothing for a log of event names and ids", () => {
+    const log = [
+      '{"level":30,"msg":"listening","socketPath":"/tmp/ccc-uat.AbC123/rt/svc.sock"}',
+      '{"level":30,"msg":"request","route":"/api/v1/health","status":200}',
+      '{"level":30,"msg":"proposal","proposalId":"prop-0001","state":"pending"}',
+    ].join("\n");
+    expect(scanLogForPrivateText(log, facts)).toEqual({});
+  });
+
+  it("counts a home path, the run root outside the startup line, a project name and a token shape by category", () => {
+    const log = [
+      '{"msg":"listening","socketPath":"/tmp/ccc-uat.AbC123/rt/svc.sock"}',
+      '{"msg":"scan","path":"/Users/janedoe/code/x"}',
+      '{"msg":"open","path":"/tmp/ccc-uat.AbC123/vaults/live"}',
+      '{"msg":"register","name":"alpha-demo"}',
+      '{"msg":"auth","header":"Bearer abcdefghijklmnopqrstuvwxyz0123456789"}',
+      '{"msg":"key","value":"sk-ant-abcdefgh12345678"}',
+    ].join("\n");
+    expect(scanLogForPrivateText(log, facts)).toEqual({
+      "home path": 1,
+      "run root": 1,
+      "project name": 1,
+      "token shape": 2,
+    });
+  });
+
+  it("does not take a UUID or a plain hash for a token", () => {
+    const log =
+      '{"msg":"run","runId":"123e4567-e89b-12d3-a456-426614174000","etag":"abcdef0123456789"}';
+    expect(scanLogForPrivateText(log, facts)).toEqual({});
+  });
+
+  it("describes a finding without the text found", () => {
+    expect(describeLogScan({ "home path": 2, "token shape": 1 })).toEqual([
+      "the log holds 2 home path lines",
+      "the log holds 1 token shape line",
+    ]);
+    expect(describeLogScan({})).toEqual([]);
+  });
+});
+
+describe("the project and scan folder verdicts (Test 2, item 10)", () => {
+  it("accepts a registered project that the status line, the store and the destination agree on", () => {
+    expect(
+      checkRegistered({
+        statusLine: "Registered alpha-demo.",
+        name: "alpha-demo",
+        storeNames: ["alpha-demo"],
+        cardNames: ["alpha-demo", "other"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("names each place that disagrees", () => {
+    const problems = checkRegistered({
+      statusLine: "Registering…",
+      name: "alpha-demo",
+      storeNames: [],
+      cardNames: [],
+    });
+    expect(problems).toHaveLength(3);
+    expect(problems.join(" ")).toContain("status line");
+    expect(problems.join(" ")).toContain("store");
+    expect(problems.join(" ")).toContain("Projects destination");
+  });
+
+  it("accepts a listed scan folder with a display path and a store row", () => {
+    expect(
+      checkScanFolderListed({
+        rows: [{ path: "…/tmp/settings-scan", meta: "Not scanned yet" }],
+        folderName: "settings-scan",
+        storeRoots: 1,
+      }),
+    ).toEqual([]);
+  });
+
+  it("flags a missing row, an absolute path and an empty store", () => {
+    const problems = checkScanFolderListed({
+      rows: [{ path: "/Users/someone/settings-scan", meta: "" }],
+      folderName: "other",
+      storeRoots: 0,
+    });
+    expect(problems.join(" ")).toContain("no scan folder row");
+    expect(problems.join(" ")).toContain("absolute path");
+    expect(problems.join(" ")).toContain("store holds no scan folder");
+  });
+});
+
+describe("the launcher verdicts (Test 2, item 11)", () => {
+  const extras = (over: Partial<SettingsExtras> = {}): SettingsExtras => ({
+    scanFolders: [],
+    panels: [
+      {
+        title: "Antigravity",
+        badge: "not-set-up",
+        buttons: [{ label: "Save launcher", disabled: false }],
+      },
+      {
+        title: "Claude Code",
+        badge: "not-set-up",
+        buttons: [{ label: "Save launcher", disabled: false }],
+      },
+      {
+        title: "Claude Desktop",
+        badge: "not-set-up",
+        buttons: [{ label: "Save launcher", disabled: false }],
+      },
+    ],
+    setUpLine: "0 of 3 launchers set up",
+    detectLine: "Detected just now",
+    projectCards: [],
+    ...over,
+  });
+
+  it("accepts the three configurable panels with a detect line and a set-up count", () => {
+    expect(checkLaunchersListed(extras())).toEqual([]);
+  });
+
+  it("flags a missing panel, a missing count and a detection that failed", () => {
+    const problems = checkLaunchersListed(
+      extras({ panels: [], setUpLine: "", detectLine: "Couldn't detect apps." }),
+    );
+    expect(problems.join(" ")).toContain("Claude Code");
+    expect(problems.join(" ")).toContain("set-up count");
+    expect(problems.join(" ")).toContain("detection");
+  });
+
+  it("accepts a Claude Code launcher saved with the Set up badge and a count of one", () => {
+    const saved = extras({
+      setUpLine: "1 of 3 launchers set up",
+      panels: [
+        { title: "Claude Code", badge: "set-up", buttons: [] },
+        { title: "Antigravity", badge: "not-set-up", buttons: [] },
+      ],
+    });
+    expect(checkLauncherSaved(saved, "Claude Code")).toEqual([]);
+    expect(checkLauncherSaved(extras(), "Claude Code").join(" ")).toContain("Set up");
+  });
+});
+
+describe("the Paths verdict (Test 2, item 12)", () => {
+  const good = section({
+    facts: [
+      fact("Managed vault", { code: ["…/vaults/live"] }),
+      fact("Service data folder", { code: ["…/rt"] }),
+      fact("Service socket", { code: ["~/sock/svc.sock"] }),
+    ],
+  });
+
+  it("accepts three display paths and no input", () => {
+    expect(checkPaths(good)).toEqual([]);
+  });
+
+  it("flags an absolute path, an Unknown value, a loading value, an input and a wrong set of rows", () => {
+    const bad = section({
+      inputs: 1,
+      facts: [
+        fact("Managed vault", { code: ["/tmp/ccc-uat.x/vaults/live"] }),
+        fact("Service data folder", { unknown: true, lines: ["No managed vault is set up yet."] }),
+        fact("Service socket", { loading: true }),
+      ],
+    });
+    const joined = checkPaths(bad).join(" ");
+    expect(joined).toContain("not a display path");
+    expect(joined).toContain("reads Unknown");
+    expect(joined).toContain("still loading");
+    expect(joined).toContain("input");
+    expect(checkPaths(section({ facts: [] })).join(" ")).toContain("Managed vault");
+  });
+});
+
+describe("the Security and Schedules verdicts (Test 2, item 14)", () => {
+  const chip = (word: string, status: string): SettingsChipRead => ({ status, word });
+  const security = section({
+    facts: [
+      fact("Service connection", { text: "A local socket that only you can read (mode 0600)." }),
+      fact("Network listener", {
+        text: "None. The companion service doesn't listen on any network port.",
+      }),
+      fact("Connection tokens", {
+        text: "Each lasts 1 hour. The plugin asks for a new one when it expires.",
+      }),
+      fact("Install secret in keychain", { chips: [chip("Present", "ok")] }),
+      fact("Research key in keychain", { chips: [chip("Unknown", "unknown")] }),
+      fact("Always allow", {
+        text: "No always-allow control exists. Every consequential action asks you each time.",
+      }),
+    ],
+    buttons: [
+      button("Off"),
+      button("Delete cached usage analytics"),
+      button("Go to the approvals and tasks section"),
+    ],
+    rows: [row("Transcript analysis", { kind: "switch", label: "Off", checked: false })],
+  });
+
+  it("accepts the six facts, the Present install chip and an honest research chip", () => {
+    expect(checkSecurityFacts(security)).toEqual([]);
+  });
+
+  it("flags a missing fact, a wrong chip and a research chip that claims more than the service said", () => {
+    const wrong = section({
+      ...security,
+      facts: security.facts.map((entry) =>
+        entry.name === "Install secret in keychain"
+          ? fact(entry.name, { chips: [chip("Missing", "failing")] })
+          : entry,
+      ),
+    });
+    expect(checkSecurityFacts(wrong).join(" ")).toContain("Install secret");
+    expect(checkSecurityFacts(section({ facts: [] })).join(" ")).toContain("Service connection");
+  });
+
+  it("finds no credential control among the buttons of Security", () => {
+    expect(checkNoCredentialControl(security)).toEqual([]);
+  });
+
+  it("flags a control that stores, rotates or deletes a credential, or allows always, and any input", () => {
+    for (const label of [
+      "Store key",
+      "Rotate secret",
+      "Delete token",
+      "Always allow",
+      "Remove credential",
+      "Set API key",
+    ]) {
+      expect(
+        checkNoCredentialControl(section({ buttons: [button(label)] })).join(" "),
+        label,
+      ).toContain(label);
+    }
+    expect(checkNoCredentialControl(section({ inputs: 1 })).join(" ")).toContain("input");
+  });
+
+  const schedules = section({
+    facts: [
+      fact("Topic", { text: "Research sources" }),
+      fact("Sources", { lines: ["2 sources configured"], code: ["one.example", "two.example"] }),
+      fact("Scheduling", { text: "Manual trigger only in this version." }),
+    ],
+    buttons: [button("Open the research view")],
+  });
+
+  it("accepts a manual-only Schedules section whose sources match the service", () => {
+    expect(checkSchedules(schedules, { count: 2, hosts: ["one.example", "two.example"] })).toEqual(
+      [],
+    );
+  });
+
+  it("flags a count or host mismatch, a timer control and a missing manual-only line", () => {
+    expect(
+      checkSchedules(schedules, { count: 3, hosts: ["one.example", "two.example"] }).join(" "),
+    ).toContain("3");
+    const timer = section({
+      ...schedules,
+      buttons: [button("Open the research view"), button("Run every day")],
+    });
+    expect(checkSchedules(timer).join(" ")).toContain("Run every day");
+    const noLine = section({ ...schedules, facts: schedules.facts.slice(0, 2) });
+    expect(checkSchedules(noLine).join(" ")).toContain("Scheduling");
+    const zero = section({
+      facts: [
+        fact("Topic", {}),
+        fact("Sources", {
+          lines: [
+            "0 sources configured",
+            "No sources are configured. A run would fail with no source to fetch.",
+          ],
+        }),
+        fact("Scheduling", { text: "Manual trigger only in this version." }),
+      ],
+      buttons: [button("Open the research view")],
+    });
+    expect(checkSchedules(zero, { count: 0, hosts: [] })).toEqual([]);
+  });
+});
+
+describe("the reduced motion verdicts (Test 2, items 13 and 34)", () => {
+  const moving: MotionSample = {
+    transitionDuration: "0.2s",
+    animationDuration: "0s",
+    animationName: "none",
+  };
+  const still: MotionSample = {
+    transitionDuration: "0s",
+    animationDuration: "0s",
+    animationName: "none",
+  };
+  const good = {
+    osPrefersReduced: false,
+    baselineRoot: "full",
+    reducedRoot: "reduced",
+    restoredRoot: "full",
+    baselineSamples: [moving],
+    reducedSamples: [still],
+    selectAfterReduced: "Always reduced",
+    selectAfterSystem: "System",
+    savedAfterReduced: "reduced",
+    savedAfterSystem: "auto",
+  };
+
+  it("accepts a switch to reduced that stops the motion, persists, and a switch back", () => {
+    expect(checkReducedMotion(good)).toEqual([]);
+  });
+
+  it("flags motion that continues, a value that was not saved and a baseline that proves nothing", () => {
+    expect(checkReducedMotion({ ...good, reducedSamples: [moving] }).join(" ")).toContain(
+      "still moves",
+    );
+    expect(checkReducedMotion({ ...good, savedAfterReduced: "auto" }).join(" ")).toContain(
+      "data file",
+    );
+    expect(checkReducedMotion({ ...good, baselineSamples: [still] }).join(" ")).toContain(
+      "baseline",
+    );
+    expect(checkReducedMotion({ ...good, reducedRoot: "full" }).join(" ")).toContain("root");
+    expect(checkReducedMotion({ ...good, restoredRoot: "reduced" }).join(" ")).toContain(
+      "restored",
+    );
+  });
+
+  it("skips the baseline when the operating system already asks for reduced motion", () => {
+    expect(
+      checkReducedMotion({
+        ...good,
+        osPrefersReduced: true,
+        baselineRoot: "reduced",
+        baselineSamples: [still],
+        restoredRoot: "reduced",
+      }),
+    ).toEqual([]);
+  });
+
+  it("accepts one reducedMotion value held by the Visual write, the native tab's host and the files", () => {
+    const same = { memory: "reduced", host: "reduced", saved: "reduced", disk: "reduced" };
+    expect(checkSameReducedMotion(same, "reduced")).toEqual([]);
+    expect(checkSameReducedMotion({ ...same, host: "auto" }, "reduced")).toEqual([
+      "the native tab's host holds auto, not reduced",
+    ]);
+    expect(checkSameReducedMotion({ ...same, disk: "auto" }, "reduced")).toEqual([
+      "the data file holds auto, not reduced",
+    ]);
+  });
+});
+
+describe("the service-away verdicts (Test 2, item 15)", () => {
+  const away = "Status unavailable — the companion service isn't running.";
+
+  it("accepts a Projects section with its note and every registering control inert", () => {
+    const read = section({
+      paragraphs: [SETTINGS_TEXT.serviceOwnedAway, AWAY],
+      buttons: [
+        button("Register a project", true),
+        button("Type a path instead", true),
+        button("Add a scan folder", true),
+        button("Type a path instead", true),
+        button("Go to the projects view"),
+      ],
+    });
+    expect(checkServiceAway("projects", read)).toEqual([]);
+    expect(
+      checkServiceAway("projects", {
+        ...read,
+        buttons: [button("Register a project", false)],
+      }).join(" "),
+    ).toContain("Register a project");
+  });
+
+  it("accepts Integrations with the unavailable sentence on every status row and enabled copy buttons", () => {
+    const read = section({
+      statusTexts: ["claude-hooks", "claude-statusline", "codex-hooks", "codex-bridge"].map(
+        (id) => ({ id, text: away }),
+      ),
+      buttons: [button("Copy install command"), button("Copy uninstall command")],
+    });
+    expect(checkServiceAway("integrations", read)).toEqual([]);
+    const lastGood = section({
+      ...read,
+      statusTexts: [{ id: "claude-hooks", text: "Installed. Last event 3 minutes ago." }],
+    });
+    expect(checkServiceAway("integrations", lastGood).join(" ")).toContain("claude-hooks");
+    const disabledCopy = section({ ...read, buttons: [button("Copy install command", true)] });
+    expect(checkServiceAway("integrations", disabledCopy).join(" ")).toContain(
+      "Copy install command",
+    );
+  });
+
+  it("accepts Approvals and tasks with the preference live and the two service actions inert and explained", () => {
+    const read = section({
+      rows: [
+        row("Approval notifications", { kind: "switch", label: "On", checked: true }),
+        row("Send a test approval", { disabled: true, describedText: ["x", AWAY] }),
+        row("Rebuild task index", { disabled: true, describedText: [AWAY] }),
+      ],
+    });
+    expect(checkServiceAway("approvals-tasks", read)).toEqual([]);
+    const unexplained = section({
+      rows: [
+        row("Approval notifications", { kind: "switch" }),
+        row("Send a test approval", { disabled: true }),
+        row("Rebuild task index", { disabled: true, describedText: [AWAY] }),
+      ],
+    });
+    expect(checkServiceAway("approvals-tasks", unexplained).join(" ")).toContain(
+      "Send a test approval",
+    );
+  });
+
+  it("accepts Paths with the service values Unknown and the socket still shown", () => {
+    const read = section({
+      facts: [
+        fact("Managed vault", { unknown: true, lines: ["Unknown", AWAY] }),
+        fact("Service data folder", { unknown: true, lines: ["Unknown", AWAY] }),
+        fact("Service socket", { code: ["~/sock/svc.sock"] }),
+      ],
+    });
+    expect(checkServiceAway("paths", read)).toEqual([]);
+    const lastGood = section({
+      ...read,
+      facts: [fact("Managed vault", { code: ["…/vaults/live"] }), ...read.facts.slice(1)],
+    });
+    expect(checkServiceAway("paths", lastGood).join(" ")).toContain("Managed vault");
+  });
+
+  it("accepts Visual with its select live, Security with no value shown as current, and Schedules Unknown", () => {
+    expect(
+      checkServiceAway(
+        "visual",
+        section({ rows: [row("Reduced motion", { kind: "select", label: "System" })] }),
+      ),
+    ).toEqual([]);
+    expect(
+      checkServiceAway(
+        "visual",
+        section({ rows: [row("Reduced motion", { kind: "select", disabled: true })] }),
+      ).join(" "),
+    ).toContain("Reduced motion");
+    const unknownChip: SettingsChipRead = { status: "unknown", word: "Unknown" };
+    const secure = section({
+      facts: [
+        fact("Install secret in keychain", { chips: [unknownChip], lines: [AWAY] }),
+        fact("Research key in keychain", { chips: [unknownChip], lines: [AWAY] }),
+      ],
+      rows: [
+        row("Transcript analysis", { kind: "switch", disabled: true, describedText: [AWAY] }),
+        row("Delete cached usage analytics", { disabled: true, describedText: [AWAY] }),
+      ],
+    });
+    expect(checkServiceAway("security", secure)).toEqual([]);
+    const present = section({
+      ...secure,
+      facts: [
+        fact("Install secret in keychain", { chips: [{ status: "ok", word: "Present" }] }),
+        secure.facts[1] as SettingsFactRead,
+      ],
+    });
+    expect(checkServiceAway("security", present).join(" ")).toContain("Present");
+    const schedules = section({
+      facts: [
+        fact("Topic", { unknown: true, lines: ["Unknown", AWAY] }),
+        fact("Sources", { unknown: true, lines: ["Unknown", AWAY] }),
+        fact("Scheduling", { text: "Manual trigger only in this version." }),
+      ],
+    });
+    expect(checkServiceAway("schedules", schedules)).toEqual([]);
+  });
+
+  it("accepts Launchers with the disconnected banner and Detect apps inert", () => {
+    const read = section({
+      paragraphs: ["Reconnect the service to detect, save or test launchers."],
+      buttons: [button("Detect apps", true)],
+    });
+    expect(checkServiceAway("launchers", read)).toEqual([]);
+    expect(
+      checkServiceAway("launchers", section({ buttons: [button("Detect apps", true)] })).join(" "),
+    ).toContain("banner");
+  });
+
+  it("has no verdict for Diagnostics (item 23 holds it)", () => {
+    expect(checkServiceAway("diagnostics", section({}))).toEqual([]);
+  });
+});
+
+describe("the keyboard walk verdict (Test 2, item 16)", () => {
+  const ring = { outlineStyle: "solid", outlineWidth: "2px", boxShadow: "none" };
+  const stop = (label: string, over: Partial<FocusStop> = {}): FocusStop => ({
+    label,
+    tag: "button",
+    inContent: true,
+    focusVisible: true,
+    ...ring,
+    ...over,
+  });
+  const expected = [
+    { label: "One", tag: "button" },
+    { label: "Two", tag: "button" },
+  ];
+
+  it("accepts a walk that visits every control in order with a visible ring on each", () => {
+    expect(checkKeyboardWalk("Visual", [stop("One"), stop("Two")], expected)).toEqual([]);
+  });
+
+  it("flags a control that was skipped, an order change and a stop with no ring", () => {
+    expect(checkKeyboardWalk("Visual", [stop("One")], expected).join(" ")).toContain(
+      "1 tab stops for 2",
+    );
+    expect(checkKeyboardWalk("Visual", [stop("Two"), stop("One")], expected).join(" ")).toContain(
+      "stop 0",
+    );
+    expect(
+      checkKeyboardWalk(
+        "Visual",
+        [stop("One"), stop("Two", { focusVisible: false })],
+        expected,
+      ).join(" "),
+    ).toContain("Two shows no focus ring");
+    expect(
+      checkKeyboardWalk(
+        "Visual",
+        [stop("One"), stop("Two", { outlineStyle: "none", outlineWidth: "0px" })],
+        expected,
+      ).join(" "),
+    ).toContain("Two shows no focus ring");
+  });
+
+  it("accepts a box shadow as the ring and checks the nav stop as well", () => {
+    const shadow = stop("Two", {
+      outlineStyle: "none",
+      outlineWidth: "0px",
+      boxShadow: "0 0 0 2px rgb(1, 2, 3)",
+    });
+    expect(checkKeyboardWalk("Visual", [stop("One"), shadow], expected)).toEqual([]);
+    expect(
+      checkKeyboardWalk(
+        "Visual",
+        [stop("One"), stop("Two")],
+        expected,
+        stop("Visual", { focusVisible: false }),
+      ).join(" "),
+    ).toContain("nav");
+  });
+
+  it("counts a walk that never left the section as unfinished", () => {
+    const wandering = [stop("One"), stop("Two"), stop("Three")];
+    expect(checkKeyboardWalk("Visual", wandering, expected).join(" ")).toContain(
+      "3 tab stops for 2",
+    );
+  });
+
+  it("walks the tab stops of a browser until focus leaves the section", async () => {
+    const reads: (FocusStop | null)[] = [
+      stop("One"),
+      stop("Two"),
+      stop("Out", { inContent: false }),
+    ];
+    const pressed: string[] = [];
+    const fake = {
+      keys: async (keys: string | string[]) => {
+        pressed.push(String(keys));
+      },
+      execute: async () => reads.shift() ?? null,
+    };
+    const stops = await walkTabStops(fake as never, 10);
+    expect(stops.map((entry) => entry.label)).toEqual(["One", "Two"]);
+    expect(pressed).toHaveLength(3);
+  });
+
+  it("stops walking at the limit and says so", async () => {
+    const fake = { keys: async () => {}, execute: async () => stop("Loop") };
+    await expect(walkTabStops(fake as never, 3)).rejects.toThrow(/never left the section/);
+  });
+});
+
+describe("the contrast verdict (Test 2, item 17)", () => {
+  const reading = (over: Partial<ThemeReading> = {}): ThemeReading => ({
+    base: "theme-dark",
+    measured: [{ label: 'text h3 "Visual"', ratio: 9, floor: 4.5 }],
+    problems: [],
+    texts: ["Visual", "Reduced motion", "Always reduced"],
+    ...over,
+  });
+
+  it("names the subjects each section must have measured", () => {
+    expect(contrastSubjects("visual")).toEqual(["visual", "reduced motion"]);
+    expect(contrastSubjects("diagnostics")).toContain("run checks again");
+    for (const id of SETTINGS_SECTION_IDS) {
+      expect(contrastSubjects(id).length, id).toBeGreaterThan(0);
+    }
+  });
+
+  it("accepts a reading that measured the subjects and found nothing under its floor", () => {
+    expect(checkContrastReading("Visual", reading(), contrastSubjects("visual"))).toEqual([]);
+  });
+
+  it("flags a ratio under its floor, an unreadable colour and a subject that was not measured", () => {
+    const low = reading({ measured: [{ label: 'text p "x"', ratio: 3.2, floor: 4.5 }] });
+    expect(checkContrastReading("Visual", low, contrastSubjects("visual")).join(" ")).toContain(
+      "3.20:1 < 4.5:1",
+    );
+    const unread = reading({ problems: ["text p: unreadable colour"] });
+    expect(checkContrastReading("Visual", unread, contrastSubjects("visual")).join(" ")).toContain(
+      "unreadable",
+    );
+    const nothing = reading({ texts: ["Visual"] });
+    expect(checkContrastReading("Visual", nothing, contrastSubjects("visual")).join(" ")).toContain(
+      '"reduced motion" was not measured',
+    );
+    expect(checkContrastReading("Visual", low, contrastSubjects("visual")).join(" ")).toContain(
+      "theme-dark",
+    );
+  });
+
+  it("names the Overview slice subjects", () => {
+    expect(OVERVIEW_CONTRAST_SUBJECTS).toEqual([
+      "today",
+      "technology and market intelligence",
+      "project shortcuts",
+      "active claude sessions",
+    ]);
+  });
+});
+
+describe("the mutation scan (Test 2)", () => {
+  it("flags a Settings mutation outside withRestore and withMode, and accepts one inside", () => {
+    const source = `
+      await chooseOption(sb, "Reduced motion", "Always reduced");
+      await withRestore(() => chooseOption(sb, "Reduced motion", "System"), async () => {
+        await chooseOption(sb, "Reduced motion", "Always reduced");
+      });
+      await pressRowControl(sb, "Rebuild task index");
+    `;
+    const found = findUnguardedMutations(source, SETTINGS_MUTATING_HELPERS);
+    expect(found.map((entry) => `${entry.call}:${entry.line}`)).toEqual([
+      "chooseOption:2",
+      "pressRowControl:6",
+    ]);
+  });
+
+  it("keeps the default list of the health drills when no list is given", () => {
+    expect(findUnguardedMutations("await removeProject(c, {});")).toHaveLength(1);
+    expect(findUnguardedMutations("await chooseOption(sb, 'a', 'b');")).toEqual([]);
+  });
+
+  it("includes the health drills' own helpers in the Settings list", () => {
+    for (const name of MUTATING_HELPERS) expect(SETTINGS_MUTATING_HELPERS).toContain(name);
+    expect(SETTINGS_MUTATING_HELPERS).toContain("removeScanRoot");
+  });
+});
+
+describe("the reduced motion readers and the theme swap (Test 2, items 13, 17 and 34)", () => {
+  it("asks the operating system's media query, and answers false where there is none", () => {
+    const run = (win: unknown): unknown =>
+      vm.runInContext(
+        `(${rendererText("rendererOsPrefersReduced")})()`,
+        vm.createContext({ window: win }),
+      );
+    const yes = { matchMedia: () => ({ matches: true }) };
+    const no = { matchMedia: () => ({ matches: false }) };
+    expect(run(yes)).toBe(true);
+    expect(run(no)).toBe(false);
+    expect(run({})).toBe(false);
+  });
+
+  it("reads reducedMotion from the plugin, the host the native tab reads and the loaded data", async () => {
+    const ctx = {
+      app: {
+        plugins: {
+          plugins: {
+            "claude-command-center": {
+              settings: { reducedMotion: "reduced" },
+              settingsHost: { settings: { reducedMotion: "reduced" } },
+              loadData: async () => ({ reducedMotion: "reduced", notifyApprovals: true }),
+            },
+          },
+        },
+      },
+    };
+    expect(await rendererReadReducedMotion(ctx, "claude-command-center")).toEqual({
+      memory: "reduced",
+      host: "reduced",
+      saved: "reduced",
+    });
+    expect(await rendererReadReducedMotion({}, "claude-command-center")).toEqual({
+      memory: undefined,
+      host: undefined,
+      saved: undefined,
+    });
+    expect(rendererText("rendererReadReducedMotion")).not.toContain("__name");
+  });
+
+  it("runs a step in a base theme and puts the old one back, even when the step throws", async () => {
+    const calls: unknown[] = [];
+    const fake = {
+      execute: async (_fn: unknown, base: unknown) => {
+        calls.push(base);
+        return { was: "theme-dark", now: base };
+      },
+    };
+    expect(await withBase(fake, "theme-light", async () => "done")).toBe("done");
+    expect(calls).toEqual(["theme-light", "theme-dark"]);
+    calls.length = 0;
+    await expect(
+      withBase(fake, "theme-light", async () => {
+        throw new Error("step failed");
+      }),
+    ).rejects.toThrow("step failed");
+    expect(calls).toEqual(["theme-light", "theme-dark"]);
+  });
+
+  it("judges a section settled only when nothing is busy and no value is a skeleton", () => {
+    expect(checkSectionSettled(section({}))).toEqual([]);
+    expect(checkSectionSettled(section({ busy: true })).join(" ")).toContain("busy");
+    expect(
+      checkSectionSettled(section({ facts: [fact("Managed vault", { loading: true })] })).join(" "),
+    ).toContain("Managed vault still loading");
+    expect(checkSectionSettled(section({ mounted: false }))).toEqual([
+      "the Settings destination is not on the page",
+    ]);
+  });
+});
+
+describe("restoreSystemMotion and the spec's mutation discipline (Test 2)", () => {
+  const deps = (label: string) => {
+    const calls: string[] = [];
+    return {
+      calls,
+      deps: {
+        open: async () => {
+          calls.push("open");
+        },
+        read: async () => section({ rows: [row("Reduced motion", { kind: "select", label })] }),
+        choose: async (rowName: string, option: string) => {
+          calls.push(`choose ${rowName} -> ${option}`);
+        },
+      },
+    };
+  };
+
+  it("puts the select back to System when a case left it on Always reduced", async () => {
+    const fake = deps("Always reduced");
+    expect(await restoreSystemMotion({} as never, fake.deps)).toBe(true);
+    expect(fake.calls).toEqual(["open", "choose Reduced motion -> System"]);
+  });
+
+  it("changes nothing when the select already reads System", async () => {
+    const fake = deps("System");
+    expect(await restoreSystemMotion({} as never, fake.deps)).toBe(false);
+    expect(fake.calls).toEqual(["open"]);
+  });
+
+  it("reads the Reduced motion choice from a read, or an empty string without the row", () => {
+    expect(motionSelectOf(section({ rows: [row("Reduced motion", { label: "System" })] }))).toBe(
+      "System",
+    );
+    expect(motionSelectOf(section({}))).toBe("");
+  });
+
+  it("finds no Settings mutation outside withRestore or withMode in settings-core.e2e.ts", () => {
+    const source = readFileSync(join(HERE, "..", "..", "specs", "settings-core.e2e.ts"), "utf8");
+    expect(findUnguardedMutations(source, SETTINGS_MUTATING_HELPERS)).toEqual([]);
+  });
+
+  it("control: the scan does flag a restore helper called on its own", () => {
+    expect(
+      findUnguardedMutations("await restoreSystemMotion(sb);", SETTINGS_MUTATING_HELPERS).length,
+    ).toBe(1);
   });
 });

@@ -16,6 +16,14 @@ const CONTROLS = `${VIEW}settings-controls.tsx`;
 const INTEGRATIONS = `${VIEW}settings-integrations.tsx`;
 const SECURITY = `${VIEW}settings-security.tsx`;
 const PATHS = `${VIEW}settings-paths.tsx`;
+const PROJECTS = `${VIEW}settings-projects.tsx`;
+const SCHEDULES = `${VIEW}settings-schedules.tsx`;
+const REGISTER = `${VIEW}register-flow.tsx`;
+const SCAN = `${VIEW}scan-folders.tsx`;
+const LAUNCHERS = `${VIEW}launchers-settings.tsx`;
+const CLAUDE_PANEL = `${VIEW}claude-code-panel.tsx`;
+const PANEL_KIT = `${VIEW}launcher-panel-kit.tsx`;
+const MODEL = `${VIEW}settings-model.ts`;
 const DESTINATIONS = `${VIEW}destinations.ts`;
 const TABS = `${VIEW}destination-tabs.tsx`;
 const SHELL = `${VIEW}shell.tsx`;
@@ -58,9 +66,89 @@ export const SETTINGS_TEXT_TABLE = {
   goToApprovals: ["Go to the approvals and tasks section", SECURITY, "literal"],
   // The service-away reason every service-bound control is described by.
   serviceAway: ["The companion service isn't running.", CONTROLS, "literal"],
+  serviceOwnedAway: [
+    "Projects, launchers and paths are managed by the companion service, which isn't running. They are read-only until it is back.",
+    PROJECTS,
+    "literal",
+  ],
   // Security and Paths facts (names of the dl rows).
   factInstallSecret: ["Install secret in keychain", SECURITY, "fragment"],
   factResearchKey: ["Research key in keychain", SECURITY, "fragment"],
+  factServiceConnection: ["Service connection", SECURITY, "fragment"],
+  factNetworkListener: ["Network listener", SECURITY, "fragment"],
+  factConnectionTokens: ["Connection tokens", SECURITY, "fragment"],
+  factAlwaysAllow: ["Always allow", SECURITY, "fragment"],
+  securityConnection: ["A local socket that only you can read (mode 0600).", SECURITY, "fragment"],
+  securityNetwork: [
+    "None. The companion service doesn't listen on any network port.",
+    SECURITY,
+    "fragment",
+  ],
+  securityTokens: ["Each lasts", SECURITY, "fragment"],
+  securityAlways: ["No always-allow control exists.", SECURITY, "fragment"],
+  chipPresent: ["Present", SECURITY, "literal"],
+  chipMissing: ["Missing", SECURITY, "literal"],
+  chipUnknown: ["Unknown", `packages/domain/src/diagnostics.ts`, "literal"],
+  chipNeedsSetup: ["Needs setup", `packages/domain/src/diagnostics.ts`, "literal"],
+  copyKeySetup: ["Copy key setup command", SECURITY, "literal"],
+  factManagedVault: ["Managed vault", PATHS, "fragment"],
+  factDataFolder: ["Service data folder", PATHS, "fragment"],
+  factSocket: ["Service socket", PATHS, "fragment"],
+  unknownWord: ["Unknown", PATHS, "fragment"],
+  // Schedules.
+  factTopic: ["Topic", SCHEDULES, "fragment"],
+  factSources: ["Sources", SCHEDULES, "fragment"],
+  factScheduling: ["Scheduling", SCHEDULES, "fragment"],
+  manualOnly: ["Manual trigger only in this version.", SCHEDULES, "literal"],
+  noSources: [
+    "No sources are configured. A run would fail with no source to fetch.",
+    SCHEDULES,
+    "literal",
+  ],
+  openResearchView: ["Open the research view", SCHEDULES, "literal"],
+  // Projects: register a folder and add a scan folder by typed path.
+  registerOpen: ["Register a project", REGISTER, "fragment"],
+  typePath: ["Type a path instead", REGISTER, "fragment"],
+  folderPath: ["Folder path", REGISTER, "fragment"],
+  registerFolder: ["Register folder", REGISTER, "fragment"],
+  registeredPrefix: ["Registered ", REGISTER, "fragment"],
+  addScanOpen: ["Add a scan folder", SCAN, "fragment"],
+  typeScanPath: ["Type a path instead for a scan folder", SCAN, "literal"],
+  addScanSubmit: ["Add scan folder", SCAN, "fragment"],
+  goToProjects: ["Go to the projects view", PROJECTS, "literal"],
+  // Launchers.
+  detectApps: ["Detect apps", LAUNCHERS, "fragment"],
+  detectedPrefix: ["Detected ", LAUNCHERS, "fragment"],
+  detectFailed: ["Couldn't detect apps.", LAUNCHERS, "fragment"],
+  launcherBanner: [
+    "Reconnect the service to detect, save or test launchers.",
+    LAUNCHERS,
+    "fragment",
+  ],
+  saveLauncher: ["Save launcher", CLAUDE_PANEL, "fragment"],
+  useDifferentPath: ["Use a different path", CLAUDE_PANEL, "fragment"],
+  pathToClaude: ["Path to claude", CLAUDE_PANEL, "fragment"],
+  panelAntigravity: ["Antigravity", PANEL_KIT, "literal"],
+  panelClaudeCode: ["Claude Code", PANEL_KIT, "literal"],
+  panelClaudeDesktop: ["Claude Desktop", PANEL_KIT, "literal"],
+  setUpCommand: ["set-up-launchers", `packages/plugin/src/projects/commands.ts`, "literal"],
+  openOverviewCommand: ["open-overview", "packages/plugin/src/main.ts", "literal"],
+  // Setting rows and their options.
+  rowReducedMotion: ["Reduced motion", MODEL, "literal"],
+  optionSystem: ["System", MODEL, "literal"],
+  optionAlwaysReduced: ["Always reduced", MODEL, "literal"],
+  rowTranscript: ["Transcript analysis", MODEL, "literal"],
+  rowDeleteUsage: ["Delete cached usage analytics", MODEL, "literal"],
+  rowNotifyApprovals: ["Approval notifications", MODEL, "literal"],
+  rowSendTest: ["Send a test approval", MODEL, "literal"],
+  rowRebuild: ["Rebuild task index", MODEL, "literal"],
+  // Integrations.
+  statusUnavailable: [
+    "Status unavailable — the companion service isn't running.",
+    MODEL,
+    "literal",
+  ],
+  copyInstall: ["Copy install command", INTEGRATIONS, "literal"],
 } as const satisfies CopyTable;
 
 export const SETTINGS_CLASSES_TABLE = {

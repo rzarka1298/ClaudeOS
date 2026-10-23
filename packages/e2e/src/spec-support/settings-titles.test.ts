@@ -26,8 +26,10 @@ function numbersOf(list: readonly string[]): number[] {
 }
 
 describe("settings core spec titles", () => {
-  it("holds [08-UAT#09] so far (Task 2 adds 10 to 18 and 34), once", () => {
-    expect(numbersOf(titlesOf(CORE_SPEC))).toEqual([9]);
+  it("holds exactly [08-UAT#09] to [08-UAT#18] and [08-UAT#34], once each", () => {
+    expect(numbersOf(titlesOf(CORE_SPEC)).sort((a, b) => a - b)).toEqual([
+      9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 34,
+    ]);
   });
 
   it("holds no title for any other item", () => {
