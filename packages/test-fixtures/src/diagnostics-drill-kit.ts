@@ -361,5 +361,6 @@ export function makeScratchDir(prefix: string): string {
 }
 
 export function removeScratchDir(path: string): void {
-  rmSync(path, { recursive: true, force: true });
+  // The service may still be writing into a vault it just set up (ENOTEMPTY), so the removal retries.
+  rmSync(path, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
 }

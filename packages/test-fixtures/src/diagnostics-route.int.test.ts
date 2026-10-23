@@ -24,6 +24,12 @@ import { type DrillContext, pollHealth, withDrillService } from "./diagnostics-d
  */
 
 /**
+ * A vault the service has just set up is still being indexed in the background: removing it while
+ * the service writes into it can answer ENOTEMPTY, so the removal retries (a load flake seen once).
+ */
+const REMOVE_TREE = { recursive: true, force: true, maxRetries: 8, retryDelay: 100 } as const;
+
+/**
  * The service runs through the drill kit: its own runtime folder, scratch Claude config folder,
  * Codex isolation variables, a nonexistent research-key test account (so a `gesture` check never
  * reaches the owner's real research key), and a preload that records non-loopback connections and
@@ -172,7 +178,7 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
 describe("Test 6 (real process): the vault row after a throwaway vault is set up", () => {
   const extraDirs: string[] = [];
   afterEach(() => {
-    for (const dir of extraDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    for (const dir of extraDirs.splice(0)) rmSync(dir, REMOVE_TREE);
   });
 
   it("reads vault-ready with a display path and a salted fingerprint, and never the root", async () => {
@@ -227,7 +233,7 @@ describe("Test 6 (real process): the vault row after a throwaway vault is set up
         path: VAULT_SETUP_PATH,
         body: { vaultRoot },
       });
-      rmSync(vaultRoot, { recursive: true, force: true });
+      rmSync(vaultRoot, REMOVE_TREE);
 
       const health = await context.health("gesture");
       expect(health.rows[0]).toMatchObject({ status: "failing", reasonCode: "vault-root-missing" });

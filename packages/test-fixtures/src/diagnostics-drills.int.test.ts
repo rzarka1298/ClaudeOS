@@ -403,7 +403,7 @@ describe("Test 5 (launchers): a saved executable, then a missing one, and nothin
           });
           expect(rowById(missing, "launchers")).toMatchObject({ status: "failing" });
         } finally {
-          rmSync(binDir, { recursive: true, force: true });
+          rmSync(binDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
         }
 
         // Nothing was launched: no process was ever started with the saved executable.
