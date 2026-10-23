@@ -33,6 +33,7 @@ export function nonexistentResearchAccount(): string {
 export type RecordedEvent =
   | { readonly kind: "connect"; readonly host: string; readonly port: number | null }
   | { readonly kind: "lookup"; readonly host: string }
+  | { readonly kind: "dgram"; readonly socketType: string }
   | { readonly kind: "spawn"; readonly fn: string; readonly file: string; readonly args: string[] };
 
 /**
@@ -42,17 +43,26 @@ export type RecordedEvent =
  * - every `net.Socket#connect` whose target is not loopback (this is what `net.connect`,
  *   `tls.connect`, `http(s).request` and `fetch` all reach); a unix-socket path is local and is not
  *   recorded;
- * - every non-loopback `dns.lookup`;
+ * - every non-loopback name lookup or resolution, through any of `dns.lookup`, `dns.promises.lookup`,
+ *   `dns.resolve*` / `dns.reverse` (callback and promise forms) and the `dns.Resolver` /
+ *   `dns.promises.Resolver` classes (recorded as `lookup`);
+ * - every `dgram.createSocket` (the service never needs a UDP socket; recorded as `dgram`);
  * - every child process started through `child_process` (file and the first arguments), so a test
  *   can count `security` spawns.
  *
  * It only observes: every call goes on to the original function.
+ *
+ * Out of scope (documented, FIX3A MINOR-5): network traffic made by a CHILD process. A spawned
+ * program (`security`, `mdfind`, `plutil`, a launcher's executable) is recorded as a spawn, but
+ * what it does on the network is not observable from this preload; the argv-level tests
+ * (absolute binary, fixed argv, no shell) are what bound it.
  */
 export function networkPreloadSource(logPath: string): string {
   return `"use strict";
 const fs = require("node:fs");
 const net = require("node:net");
 const dns = require("node:dns");
+const dgram = require("node:dgram");
 const cp = require("node:child_process");
 const LOG = ${JSON.stringify(logPath)};
 function isLoopback(host) {
@@ -76,11 +86,33 @@ net.Socket.prototype.connect = function (...args) {
   if (host !== null && !isLoopback(host)) record({ kind: "connect", host, port });
   return originalConnect.apply(this, args);
 };
-const originalLookup = dns.lookup;
-dns.lookup = function (hostname, ...rest) {
-  if (typeof hostname === "string" && !isLoopback(hostname)) record({ kind: "lookup", host: hostname });
-  return originalLookup.call(this, hostname, ...rest);
-};
+function copyProps(wrapped, original) {
+  for (const key of Reflect.ownKeys(original)) {
+    try { Object.defineProperty(wrapped, key, Object.getOwnPropertyDescriptor(original, key)); } catch (e) { /* non-configurable */ }
+  }
+  return wrapped;
+}
+function wrapHostFirst(target, names) {
+  for (const name of names) {
+    const original = target[name];
+    if (typeof original !== "function") continue;
+    target[name] = copyProps(function (host, ...rest) {
+      if (typeof host === "string" && !isLoopback(host)) record({ kind: "lookup", host });
+      return original.call(this, host, ...rest);
+    }, original);
+  }
+}
+const RESOLVE_NAMES = ["resolve", "resolve4", "resolve6", "resolveAny", "resolveCaa", "resolveCname", "resolveMx", "resolveNaptr", "resolveNs", "resolvePtr", "resolveSoa", "resolveSrv", "resolveTxt", "reverse"];
+const LOOKUP_NAMES = ["lookup"].concat(RESOLVE_NAMES);
+wrapHostFirst(dns, LOOKUP_NAMES);
+wrapHostFirst(dns.promises, LOOKUP_NAMES);
+wrapHostFirst(dns.Resolver.prototype, RESOLVE_NAMES);
+wrapHostFirst(dns.promises.Resolver.prototype, RESOLVE_NAMES);
+const originalCreateSocket = dgram.createSocket;
+dgram.createSocket = copyProps(function (type, ...rest) {
+  record({ kind: "dgram", socketType: typeof type === "string" ? type : (type && type.type) || "unknown" });
+  return originalCreateSocket.call(this, type, ...rest);
+}, originalCreateSocket);
 for (const fn of ["spawn", "execFile", "exec", "fork", "spawnSync", "execFileSync", "execSync"]) {
   const original = cp[fn];
   if (typeof original !== "function") continue;
@@ -89,9 +121,7 @@ for (const fn of ["spawn", "execFile", "exec", "fork", "spawnSync", "execFileSyn
     record({ kind: "spawn", fn, file: String(file), args });
     return original.call(this, file, ...rest);
   };
-  for (const key of Reflect.ownKeys(original)) {
-    try { Object.defineProperty(wrapped, key, Object.getOwnPropertyDescriptor(original, key)); } catch (e) { /* non-configurable */ }
-  }
+  copyProps(wrapped, original);
   cp[fn] = wrapped;
 }
 `;
@@ -222,7 +252,7 @@ export interface DrillContext {
   /** The raw wire body of a health call, for leak scans. */
   rawHealth(trigger?: "gesture" | "reconnect"): Promise<string>;
   events(): RecordedEvent[];
-  /** Non-loopback connections and lookups seen so far. */
+  /** Non-loopback connections and lookups, and any UDP socket, seen so far. */
   outbound(): RecordedEvent[];
   /**
    * EVERY presence lookup the service started (`/usr/bin/security find-generic-password` without
@@ -230,6 +260,11 @@ export interface DrillContext {
    * {@link DrillContext.researchAccount}.
    */
   keychainPresenceSpawns(): RecordedEvent[];
+  /**
+   * A throwaway folder INSIDE the run root (so it is already under `~/.ccc-test` and removed with
+   * the run, FIX3A MINOR-4); use it for throwaway vaults instead of a sibling under the shared base.
+   */
+  scratchDir(prefix: string): string;
   /** Adds a string (a path the test created) that no health body or diagnostics log line may hold. */
   forbid(value: string, label: string): void;
   /** Every raw health body this context has seen. */
@@ -262,7 +297,6 @@ export async function withDrillService<T>(
     return await withTempSocketDir(async ({ dir, socketPath }) => {
       const claudeDir = join(dir, "claude");
       mkdirSync(join(claudeDir, "projects"), { recursive: true });
-      process.env.CLAUDE_CONFIG_DIR = claudeDir;
       await options.prepare?.(dir);
       const preload = join(dir, "w2-preload.cjs");
       const recordPath = join(dir, "w2-record.ndjson");
@@ -275,6 +309,8 @@ export async function withDrillService<T>(
           // The hook spool and its dropped-records file live inside the run folder, whatever the
           // calling shell exported.
           CCC_SPOOL_PATH: join(dir, "spool", "hooks.ndjson"),
+          // The scratch Claude config goes to the child only; the runner's own environment is untouched.
+          CLAUDE_CONFIG_DIR: claudeDir,
           CCC_ENABLE_TEST_OVERRIDES: "1",
           CCC_RESEARCH_KEY_ACCOUNT: researchAccount,
           NODE_OPTIONS: `--require=${preload}`,
@@ -323,8 +359,16 @@ export async function withDrillService<T>(
         rawHealth: (trigger = "gesture") => wire(trigger),
         events,
         outbound: () =>
-          events().filter((event) => event.kind === "connect" || event.kind === "lookup"),
+          events().filter(
+            (event) =>
+              event.kind === "connect" || event.kind === "lookup" || event.kind === "dgram",
+          ),
         keychainPresenceSpawns: () => events().filter(isKeychainPresenceSpawn),
+        scratchDir: (prefix) => {
+          const folder = join(dir, "scratch");
+          mkdirSync(folder, { recursive: true });
+          return mkdtempSync(join(folder, prefix));
+        },
         forbid: (value, label) => {
           forbidden.set(value, label);
         },
@@ -377,7 +421,10 @@ export async function pollHealth(
   return last;
 }
 
-/** A throwaway folder under the shared test base (removed by the caller). */
+/**
+ * A throwaway folder under the shared test base (removed by the caller). For tests that run no
+ * service; a drill that has a context uses {@link DrillContext.scratchDir}, which lives in the run root.
+ */
 export function makeScratchDir(prefix: string): string {
   const base = join(homedir(), ".ccc-test");
   mkdirSync(base, { recursive: true });

@@ -107,6 +107,15 @@ describe("W2 positive control: the recorder records what it claims to and nothin
         net.Socket.prototype.connect = function () { return this; };
         const dns = require("node:dns");
         dns.lookup = function () {};
+        dns.promises.lookup = async function () { return {}; };
+        for (const name of ["resolve", "resolve4", "resolveTxt", "reverse"]) {
+          dns[name] = function () {};
+          dns.promises[name] = async function () { return []; };
+          dns.Resolver.prototype[name] = function () {};
+          dns.promises.Resolver.prototype[name] = async function () { return []; };
+        }
+        const dgram = require("node:dgram");
+        dgram.createSocket = function () { return {}; };
         const cp = require("node:child_process");
         cp.spawn = function () { return {}; };
         require(${JSON.stringify(preload)});
@@ -116,12 +125,30 @@ describe("W2 positive control: the recorder records what it claims to and nothin
         new net.Socket().connect(8080, "localhost");
         dns.lookup("control.test", () => {});
         dns.lookup("localhost", () => {});
+        dns.promises.lookup("promise-lookup.test");
+        dns.promises.lookup("localhost");
+        dns.resolve4("resolve4.test", () => {});
+        dns.resolve("resolve.test", () => {});
+        dns.resolve4("127.0.0.1", () => {});
+        dns.promises.resolveTxt("promise-txt.test");
+        dns.reverse("198.51.100.9", () => {});
+        new dns.Resolver().resolve4("resolver.test", () => {});
+        new dns.promises.Resolver().resolveTxt("promise-resolver.test");
+        dgram.createSocket("udp4");
         cp.spawn("/usr/bin/control-tool", ["one", "two"]);
       `;
       execFileSync(process.execPath, ["-e", script], { stdio: "ignore" });
       expect(readRecordedEvents(probeLog)).toEqual([
         { kind: "connect", host: "198.51.100.7", port: 443 },
         { kind: "lookup", host: "control.test" },
+        { kind: "lookup", host: "promise-lookup.test" },
+        { kind: "lookup", host: "resolve4.test" },
+        { kind: "lookup", host: "resolve.test" },
+        { kind: "lookup", host: "promise-txt.test" },
+        { kind: "lookup", host: "198.51.100.9" },
+        { kind: "lookup", host: "resolver.test" },
+        { kind: "lookup", host: "promise-resolver.test" },
+        { kind: "dgram", socketType: "udp4" },
         { kind: "spawn", fn: "spawn", file: "/usr/bin/control-tool", args: ["one", "two"] },
       ]);
     } finally {
@@ -130,12 +157,31 @@ describe("W2 positive control: the recorder records what it claims to and nothin
   });
 });
 
+describe("FIX3A MINOR-4: the kit leaves the runner's environment and the shared test base alone", () => {
+  it(
+    "does not set CLAUDE_CONFIG_DIR in the runner, and scratch folders live inside the run root",
+    async () => {
+      const before = process.env.CLAUDE_CONFIG_DIR;
+      await withDrillService(async (context) => {
+        expect(process.env.CLAUDE_CONFIG_DIR).toBe(before);
+        const scratch = context.scratchDir("dv-");
+        expect(scratch.startsWith(`${context.dir}/`)).toBe(true);
+        // The service still reads the scratch Claude config: its hooks row is about that folder.
+        const health = await context.health("reconnect");
+        expect(rowById(health, "hooks").reasonCode).toBe("hooks-not-installed");
+      });
+      expect(process.env.CLAUDE_CONFIG_DIR).toBe(before);
+    },
+    DRILL_TIMEOUT_MS,
+  );
+});
+
 describe("Test 1 (vault): removing the vault folder reads vault-root-missing, restoring it reads vault-ready", () => {
   it(
     "the specific reason follows the break and the repair",
     async () => {
       await withDrillService(async (context) => {
-        const vaultRoot = makeScratchDir("dv-");
+        const vaultRoot = context.scratchDir("dv-");
         const away = `${vaultRoot}-away`;
         context.forbid(vaultRoot, "the vault path");
         context.forbid(away, "the moved vault path");
@@ -490,7 +536,7 @@ describe("Task 3 Test 1/2: errno-bearing breaks read their own reasons and leak 
     "an unreadable, a read-only and a not-a-folder vault root; the modes are restored before the folder is removed",
     async () => {
       await withDrillService(async (context) => {
-        const vaultRoot = makeScratchDir("dv-");
+        const vaultRoot = context.scratchDir("dv-");
         context.forbid(vaultRoot, "the vault path");
         try {
           mkdirSync(join(vaultRoot, ".obsidian"), { recursive: true });
