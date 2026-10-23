@@ -1044,7 +1044,7 @@ describe("Task 3, Test 6: headings, focus and keyboard", () => {
       "Go to the security section",
       "Copy install command",
       "Copy install command",
-      "Go to the integrations section",
+      "Go to the launchers section",
     ]);
   });
 
@@ -1071,5 +1071,21 @@ describe("Task 3: the stylesheet carries every class the section emits", () => {
     ".ccc-health-part-name",
   ])("has a rule for %s", (selector) => {
     expect(STYLESHEET).toContain(`.ccc-command-center ${selector}`);
+  });
+});
+
+describe("Task 2 (adjustment): the Codex doctor action lands where Check Codex health lives", () => {
+  it("go-to-section integrations on a Codex doctor part opens the launchers section", async () => {
+    configure();
+    renderSection();
+    await settle();
+    const row = rowNamed("Usage collectors");
+    fireEvent.click(within(row).getByRole("button", { name: /^Show details/ }));
+    const doctor = row.querySelector<HTMLElement>("[data-part='codex-doctor']");
+    expect(doctor?.textContent).toContain("Check Codex health in the launchers section.");
+    fireEvent.click(
+      within(doctor as HTMLElement).getByRole("button", { name: "Go to the launchers section" }),
+    );
+    expect(settingsSectionRequested.value).toBe("launchers");
   });
 });

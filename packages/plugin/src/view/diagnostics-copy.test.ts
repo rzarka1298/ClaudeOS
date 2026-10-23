@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AnyReason,
   chipFor,
+  displayedAction,
   HIDE_DETAILS_LABEL,
   PART_NAMES,
   REASON_COPY,
@@ -374,5 +375,29 @@ describe("sentence case (R-F1)", () => {
       const label = setupActionLabel({ kind: "go-to-section", section });
       expect(capitalisedMidSentence(label)).toEqual([]);
     }
+  });
+});
+
+describe("displayedAction (UI-SPEC adjustment, D-44)", () => {
+  const INTEGRATIONS: SetupAction = { kind: "go-to-section", section: "integrations" };
+
+  it("sends the Codex doctor reasons to the launchers section, where Check Codex health lives", () => {
+    for (const code of [
+      "codex-doctor-not-run",
+      "codex-doctor-warning",
+      "codex-doctor-failed",
+    ] as const) {
+      expect(displayedAction(code, INTEGRATIONS)).toEqual({
+        kind: "go-to-section",
+        section: "launchers",
+      });
+    }
+  });
+
+  it("leaves every other action exactly as the service sent it", () => {
+    expect(displayedAction("codex-hooks-not-installed", INTEGRATIONS)).toBe(INTEGRATIONS);
+    const copy: SetupAction = { kind: "copy-command", command: "codex-bridge-install" };
+    expect(displayedAction("codex-bridge-outdated", copy)).toBe(copy);
+    expect(displayedAction("codex-doctor-ok", undefined)).toBeUndefined();
   });
 });

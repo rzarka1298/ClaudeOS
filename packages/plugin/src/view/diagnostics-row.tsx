@@ -15,6 +15,7 @@ import {
   type AnyReason,
   COLLECTORS_GROUPS,
   chipFor,
+  displayedAction,
   HIDE_DETAILS_LABEL,
   hideDetailsName,
   PART_NAMES,
@@ -226,6 +227,7 @@ function PartView({
   readonly notify: (message: string) => void;
 }): VNode {
   const { reason, nextStep } = reasonText(part.reasonCode, { facts: part.facts, now });
+  const action = displayedAction(part.reasonCode, part.setupAction);
   return (
     <li className="ccc-health-part" data-part={part.partId} data-status={part.status}>
       <div className="ccc-health-part-head">
@@ -235,8 +237,8 @@ function PartView({
       <p>{reason}</p>
       {/* The deciding part's next step and action live on the row: nothing appears twice. */}
       {!isDeciding && nextStep !== null && <p>{nextStep}</p>}
-      {!isDeciding && part.setupAction !== undefined && (
-        <SetupActionView action={part.setupAction} host={host} notify={notify} />
+      {!isDeciding && action !== undefined && (
+        <SetupActionView action={action} host={host} notify={notify} />
       )}
     </li>
   );
@@ -391,7 +393,10 @@ export function HealthRow({
   const deciding = parts === undefined ? undefined : decidingPart(row, parts);
   // The service sends the deciding part's action and facts on the row; either source will do.
   const facts = ("facts" in row ? row.facts : undefined) ?? deciding?.facts;
-  const action = ("setupAction" in row ? row.setupAction : undefined) ?? deciding?.setupAction;
+  const action = displayedAction(
+    row.reasonCode,
+    ("setupAction" in row ? row.setupAction : undefined) ?? deciding?.setupAction,
+  );
   const { reason, nextStep } = reasonText(row.reasonCode, { facts, now });
 
   let detail: string | null = serviceDetail;

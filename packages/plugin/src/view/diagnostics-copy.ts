@@ -256,15 +256,15 @@ export const REASON_COPY = {
   "codex-doctor-ok": { reason: "Codex health check found no problems." },
   "codex-doctor-not-run": {
     reason: "Codex health hasn't been checked yet.",
-    nextStep: "Check Codex health in the integrations section.",
+    nextStep: "Check Codex health in the launchers section.",
   },
   "codex-doctor-warning": {
     reason: "Codex health check reported warnings.",
-    nextStep: "Open Check Codex health in the integrations section.",
+    nextStep: "Open Check Codex health in the launchers section.",
   },
   "codex-doctor-failed": {
     reason: "Codex health check reported a failure.",
-    nextStep: "Open Check Codex health in the integrations section.",
+    nextStep: "Open Check Codex health in the launchers section.",
   },
   "codex-doctor-unrecognised": { reason: "Codex health check's answer wasn't recognised." },
 
@@ -519,6 +519,27 @@ export const NOT_IN_VERSION_SENTENCE =
 // Setup actions: three closed kinds, text owned here (D-08, D-39, T-08-35)
 
 const RESEARCH_KEY_SETUP_COMMAND = "node scripts/research-key-setup.mjs";
+
+/**
+ * The action a row or part actually offers. One plugin-side adjustment to what the service sends
+ * (UI-SPEC adjustment, plan 08-13, D-44): the Codex doctor reasons point at the integrations
+ * section in the UI-SPEC table, but `Check Codex health` lives today in the launchers section
+ * (`codex-launcher-panel.tsx`) and each control stays in exactly one section, so the button goes
+ * there. The service still only ever sends a closed action kind; the plugin owns where it lands.
+ */
+export function displayedAction(
+  reasonCode: AnyReason,
+  action: SetupAction | undefined,
+): SetupAction | undefined {
+  if (
+    action?.kind === "go-to-section" &&
+    action.section === "integrations" &&
+    reasonCode.startsWith("codex-doctor-")
+  ) {
+    return { kind: "go-to-section", section: "launchers" };
+  }
+  return action;
+}
 
 /** The repository-relative commands a `copy-command` action copies. Nothing here is ever run. */
 export const SETUP_COMMANDS: Readonly<Record<SetupCommandId, string>> = {
