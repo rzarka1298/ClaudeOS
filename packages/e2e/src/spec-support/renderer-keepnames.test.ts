@@ -202,6 +202,7 @@ describe("inline renderer functions in the specs and support modules", () => {
       "health-drills",
       "bundle-export",
       "settings-core",
+      "settings-integrations",
       "tasks-core",
       "tasks-scale",
       "tasks-views",

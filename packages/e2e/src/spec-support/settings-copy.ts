@@ -24,6 +24,9 @@ const LAUNCHERS = `${VIEW}launchers-settings.tsx`;
 const CLAUDE_PANEL = `${VIEW}claude-code-panel.tsx`;
 const PANEL_KIT = `${VIEW}launcher-panel-kit.tsx`;
 const MODEL = `${VIEW}settings-model.ts`;
+const CODEX = `${VIEW}codex-settings.ts`;
+const DELETE_MODAL = `${VIEW}delete-usage-modal.ts`;
+const DIAG = `${VIEW}diagnostics-copy.ts`;
 const DESTINATIONS = `${VIEW}destinations.ts`;
 const TABS = `${VIEW}destination-tabs.tsx`;
 const SHELL = `${VIEW}shell.tsx`;
@@ -149,6 +152,59 @@ export const SETTINGS_TEXT_TABLE = {
     "literal",
   ],
   copyInstall: ["Copy install command", INTEGRATIONS, "literal"],
+  copyUninstall: ["Copy uninstall command", MODEL, "literal"],
+  codexHooksInstallLabel: ["Copy install command for the Codex hooks", INTEGRATIONS, "literal"],
+  codexHooksUninstallLabel: ["Copy uninstall command for the Codex hooks", INTEGRATIONS, "literal"],
+  codexBridgeInstallLabel: ["Copy install command for the Codex bridge", INTEGRATIONS, "literal"],
+  claudeInstallCommand: ["./scripts/claude-hooks/install.sh", MODEL, "literal"],
+  claudeUninstallCommand: ["./scripts/claude-hooks/uninstall.sh", MODEL, "literal"],
+  codexInstallStep: ["./scripts/codex-hooks/install.sh", CODEX, "literal"],
+  codexUninstallStep: ["./scripts/codex-hooks/uninstall.sh", CODEX, "literal"],
+  codexBridgeStep: ["node scripts/codex/install-user-kit.mjs", CODEX, "literal"],
+  claudeInstallCopied: ["Install command copied. Run it in Terminal.", MODEL, "literal"],
+  claudeUninstallCopied: ["Uninstall command copied. Run it in Terminal.", MODEL, "literal"],
+  codexInstallCopied: ["Install step copied. Run it in Terminal.", INTEGRATIONS, "literal"],
+  codexUninstallCopied: ["Uninstall step copied. Run it in Terminal.", CODEX, "literal"],
+  claudeHooksNotInstalled: [
+    "Not installed. Session tracking and waiting-for-approval states need them.",
+    MODEL,
+    "literal",
+  ],
+  statuslineNotInstalled: ["Not installed. Plan usage reads", MODEL, "fragment"],
+  codexHooksNotInstalled: [
+    "Not installed. Live status for interactive Codex sessions",
+    CODEX,
+    "fragment",
+  ],
+  codexHooksUnknown: ["Status unknown. This app couldn't tell", CODEX, "fragment"],
+  codexBridgeNotInstalled: ["Not installed. Launches fall back to Terminal.", CODEX, "literal"],
+  groupAccounts: ["Accounts", INTEGRATIONS, "literal"],
+  nameGmail: ["Gmail", DIAG, "literal"],
+  nameCalendar: ["Google Calendar", DIAG, "literal"],
+  nameGithub: ["GitHub", DIAG, "literal"],
+  notInVersionTag: ["Not part of this version", DIAG, "literal"],
+  notInVersionSentence: [
+    "Connecting accounts arrives in a later milestone. Nothing is read from this account.",
+    DIAG,
+    "literal",
+  ],
+  // The delete confirmation and its outcomes.
+  dialogTitle: ["Delete cached usage analytics?", DELETE_MODAL, "literal"],
+  dialogBody: [
+    "This deletes the token counts, cost estimates, plan usage history and transcript coverage records",
+    DELETE_MODAL,
+    "fragment",
+  ],
+  dialogRecount: [
+    "Transcript analysis is on, so token counts will be recounted right away",
+    DELETE_MODAL,
+    "fragment",
+  ],
+  dialogConfirm: ["Delete usage analytics", DELETE_MODAL, "literal"],
+  dialogCancel: ["Cancel", DELETE_MODAL, "literal"],
+  usageDeleted: ["Cached usage analytics deleted.", MODEL, "literal"],
+  usageRetainedNote: ["Existing totals are kept until you delete them.", MODEL, "literal"],
+  rebuildStarted: ["Rebuilding the task index…", MODEL, "literal"],
 } as const satisfies CopyTable;
 
 export const SETTINGS_CLASSES_TABLE = {

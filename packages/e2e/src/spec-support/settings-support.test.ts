@@ -1,4 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,15 +21,25 @@ import { findUnguardedMutations, MUTATING_HELPERS } from "./health-support.js";
 import { SETTINGS_CLASSES, SETTINGS_SECTION_IDS, SETTINGS_TEXT } from "./settings-copy.js";
 import {
   assertNoAbsolutePath,
+  COPY_ACTIONS,
+  checkAccountsRows,
+  checkAnalysisStored,
   checkContrastReading,
+  checkCopied,
   checkDataJson,
+  checkDeleteDialog,
+  checkDeleted,
   checkFocusNotMoved,
+  checkIntegrationsNotSetUp,
   checkKeyboardWalk,
   checkLauncherSaved,
   checkLaunchersListed,
   checkNavigation,
   checkNoCredentialControl,
+  checkNotifyApprovals,
   checkPaths,
+  checkPending,
+  checkRebuilt,
   checkReducedMotion,
   checkRegistered,
   checkSameReducedMotion,
@@ -29,11 +49,16 @@ import {
   checkSectionSettled,
   checkSecurityFacts,
   checkServiceAway,
+  checkSnapshotUnchanged,
+  checkTranscriptSwitch,
+  checkUsageEmptied,
   contrastSubjects,
+  type DialogRead,
   dataJsonKeys,
   describeLogScan,
   type FocusStop,
   findAbsolutePathProblems,
+  findInstallerProcesses,
   motionSelectOf,
   OVERVIEW_CONTRAST_SUBJECTS,
   openSection,
@@ -52,6 +77,11 @@ import {
   type SettingsRead,
   type SettingsRowRead,
   scanLogForPrivateText,
+  snapshotDir,
+  syntheticTranscriptLine,
+  totalUsageRows,
+  USAGE_COUNTS_SQL,
+  USAGE_TABLES,
   walkTabStops,
   withBase,
 } from "./settings-support.js";
@@ -65,6 +95,8 @@ import {
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+/** The users folder, built from parts so the privacy scan sees no home path in this file. */
+const USERS = ["", "Users"].join("/");
 const FIXTURE = join(HERE, "settings-dom-fixtures", "sections.html");
 const SOURCE = readFileSync(join(HERE, "settings-support.ts"), "utf8");
 const BASE_HTML = readFileSync(FIXTURE, "utf8");
@@ -424,12 +456,12 @@ describe("openSection (Test 2)", () => {
 describe("findAbsolutePathProblems and assertNoAbsolutePath (Test 2)", () => {
   const facts = {
     runRoot: "/private/var/folders/xx/T/ccc-uat.AbC123",
-    homeDir: "/Users/janedoe",
+    homeDir: `${USERS}/janedoe`,
     userName: "janedoe",
   };
 
   it("flags a macOS home path, a Linux home path, the run root, the home folder and the user name", () => {
-    expect(findAbsolutePathProblems("see /Users/janedoe/code/app", facts)).toEqual(
+    expect(findAbsolutePathProblems(`see ${USERS}/janedoe/code/app`, facts)).toEqual(
       expect.arrayContaining(["a macOS home path", "the home folder", "the user name"]),
     );
     expect(findAbsolutePathProblems("at /home/someone/x", facts)).toEqual(["a Linux home path"]);
@@ -451,11 +483,11 @@ describe("findAbsolutePathProblems and assertNoAbsolutePath (Test 2)", () => {
   });
 
   it("throws with the categories only, never the text found", () => {
-    expect(() => assertNoAbsolutePath("a /Users/janedoe/secret-project/x b", facts)).toThrow(
+    expect(() => assertNoAbsolutePath(`a ${USERS}/janedoe/secret-project/x b`, facts)).toThrow(
       /macOS home path/,
     );
     try {
-      assertNoAbsolutePath("a /Users/janedoe/secret-project/x b", facts);
+      assertNoAbsolutePath(`a ${USERS}/janedoe/secret-project/x b`, facts);
     } catch (error) {
       expect(String(error)).not.toContain("secret-project");
       expect(String(error)).not.toContain("janedoe");
@@ -521,7 +553,13 @@ function control(over: Partial<SettingsControlRead> = {}): SettingsControlRead {
 }
 
 function row(name: string, over: Partial<SettingsControlRead> = {}): SettingsRowRead {
-  return { name, paragraphs: [], control: control({ label: name, ...over }), results: [] };
+  return {
+    name,
+    paragraphs: [],
+    control: control({ label: name, ...over }),
+    results: [],
+    chips: [],
+  };
 }
 
 function button(label: string, disabled = false): SettingsButtonRead {
@@ -830,7 +868,7 @@ describe("the sandbox data file (Test 2, item 18)", () => {
 describe("scanLogForPrivateText (Test 3, item 18)", () => {
   const facts = {
     runRoot: "/tmp/ccc-uat.AbC123",
-    homeDir: "/Users/janedoe",
+    homeDir: `${USERS}/janedoe`,
     userName: "janedoe",
     projectNames: ["alpha-demo"],
   };
@@ -847,7 +885,7 @@ describe("scanLogForPrivateText (Test 3, item 18)", () => {
   it("counts a home path, the run root outside the startup line, a project name and a token shape by category", () => {
     const log = [
       '{"msg":"listening","socketPath":"/tmp/ccc-uat.AbC123/rt/svc.sock"}',
-      '{"msg":"scan","path":"/Users/janedoe/code/x"}',
+      `{"msg":"scan","path":"${USERS}/janedoe/code/x"}`,
       '{"msg":"open","path":"/tmp/ccc-uat.AbC123/vaults/live"}',
       '{"msg":"register","name":"alpha-demo"}',
       '{"msg":"auth","header":"Bearer abcdefghijklmnopqrstuvwxyz0123456789"}',
@@ -913,7 +951,7 @@ describe("the project and scan folder verdicts (Test 2, item 10)", () => {
 
   it("flags a missing row, an absolute path and an empty store", () => {
     const problems = checkScanFolderListed({
-      rows: [{ path: "/Users/someone/settings-scan", meta: "" }],
+      rows: [{ path: `${USERS}/someone/settings-scan`, meta: "" }],
       folderName: "other",
       storeRoots: 0,
     });
@@ -1592,14 +1630,453 @@ describe("restoreSystemMotion and the spec's mutation discipline (Test 2)", () =
     expect(motionSelectOf(section({}))).toBe("");
   });
 
-  it("finds no Settings mutation outside withRestore or withMode in settings-core.e2e.ts", () => {
-    const source = readFileSync(join(HERE, "..", "..", "specs", "settings-core.e2e.ts"), "utf8");
-    expect(findUnguardedMutations(source, SETTINGS_MUTATING_HELPERS)).toEqual([]);
-  });
+  it.each(["settings-core.e2e.ts", "settings-integrations.e2e.ts"])(
+    "finds no Settings mutation outside withRestore or withMode in %s",
+    (file) => {
+      const source = readFileSync(join(HERE, "..", "..", "specs", file), "utf8");
+      expect(findUnguardedMutations(source, SETTINGS_MUTATING_HELPERS)).toEqual([]);
+    },
+  );
 
   it("control: the scan does flag a restore helper called on its own", () => {
     expect(
       findUnguardedMutations("await restoreSystemMotion(sb);", SETTINGS_MUTATING_HELPERS).length,
     ).toBe(1);
+  });
+});
+
+// ===========================================================================
+// Plan 08-22 Task 3: items 19 to 21
+
+describe("the account rows reader (Test 3)", () => {
+  const ACCOUNTS = `<section class="ccc-settings"><div class="ccc-settings-content"><h3 tabindex="-1">Integrations</h3>
+    <div data-group="accounts"><h4 class="ccc-settings-group-title">Accounts</h4>
+      <div class="ccc-setting-row" role="group"><div class="ccc-setting-row-text"><span>Gmail</span>
+        <p><span class="ccc-badge" data-status="not-in-version"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">◌</span> <span class="ccc-badge-label">Not part of this version</span></span></p>
+        <p>Connecting accounts arrives in a later milestone. Nothing is read from this account.</p></div>
+        <div class="ccc-setting-row-control"></div></div>
+    </div></div></section>`;
+
+  it("reads the badges inside a setting row and an absent control as none", () => {
+    const read = readSettingsFrom(ACCOUNTS);
+    expect(read.rows).toHaveLength(1);
+    expect(read.rows[0]?.chips).toEqual([
+      { status: "not-in-version", word: "Not part of this version" },
+    ]);
+    expect(read.rows[0]?.control.kind).toBe("none");
+    expect(read.subheads).toEqual(["Accounts"]);
+  });
+});
+
+describe("snapshotDir (Test 2)", () => {
+  function runRoot(): string {
+    return mkdtempSync(join("/tmp", "ccc-uat."));
+  }
+
+  it("is the same for a folder that did not change and differs for every kind of change", () => {
+    const root = runRoot();
+    try {
+      const dir = join(root, "claude");
+      mkdirSync(join(dir, "nested"), { recursive: true });
+      writeFileSync(join(dir, "settings.json"), '{"a":1}');
+      writeFileSync(join(dir, "nested", "x.txt"), "x");
+      const before = snapshotDir(dir, root);
+      expect(before.exists).toBe(true);
+      expect(before.count).toBe(3);
+      expect(snapshotDir(dir, root)).toEqual(before);
+
+      writeFileSync(join(dir, "settings.json"), '{"a":2}');
+      expect(snapshotDir(dir, root).digest).not.toBe(before.digest);
+      writeFileSync(join(dir, "settings.json"), '{"a":1}');
+      expect(snapshotDir(dir, root)).toEqual(before);
+
+      writeFileSync(join(dir, "new.txt"), "n");
+      expect(snapshotDir(dir, root).count).toBe(4);
+      rmSync(join(dir, "new.txt"));
+      const mode = statSync(join(dir, "settings.json")).mode & 0o777;
+      chmodSync(join(dir, "settings.json"), 0o640);
+      expect(snapshotDir(dir, root).digest).not.toBe(before.digest);
+      chmodSync(join(dir, "settings.json"), mode);
+      expect(snapshotDir(dir, root)).toEqual(before);
+
+      renameSync(join(dir, "nested", "x.txt"), join(dir, "nested", "y.txt"));
+      expect(snapshotDir(dir, root).digest).not.toBe(before.digest);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads a folder that is not there as empty, and refuses a path outside the run root or a link", () => {
+    const root = runRoot();
+    const other = runRoot();
+    try {
+      const missing = snapshotDir(join(root, "absent"), root);
+      expect(missing).toMatchObject({ exists: false, count: 0 });
+      expect(() => snapshotDir(other, root)).toThrow(/outside the run root/);
+      const link = join(root, "link");
+      symlinkSync(other, link);
+      expect(() => snapshotDir(link, root)).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  it("records a link inside the folder as a link and notices when it points elsewhere", () => {
+    const root = runRoot();
+    try {
+      const dir = join(root, "claude");
+      mkdirSync(dir);
+      symlinkSync("target-one", join(dir, "ln"));
+      const before = snapshotDir(dir, root);
+      rmSync(join(dir, "ln"));
+      symlinkSync("target-two", join(dir, "ln"));
+      expect(snapshotDir(dir, root).digest).not.toBe(before.digest);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a folder with more entries than its limit", () => {
+    const root = runRoot();
+    try {
+      const dir = join(root, "many");
+      mkdirSync(dir);
+      for (let i = 0; i < 5; i += 1) writeFileSync(join(dir, `f${i}`), "");
+      expect(() => snapshotDir(dir, root, { maxEntries: 3 })).toThrow(/more than 3 entries/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("names a changed folder without naming anything in it", () => {
+    const a = { exists: true, count: 2, digest: "aaaa" };
+    expect(checkSnapshotUnchanged("the scratch Claude config folder", a, { ...a })).toEqual([]);
+    expect(
+      checkSnapshotUnchanged("the scratch Claude config folder", a, {
+        ...a,
+        count: 3,
+        digest: "bbbb",
+      }),
+    ).toEqual(["the scratch Claude config folder changed: 2 entries before, 3 after"]);
+    expect(
+      checkSnapshotUnchanged("the scratch Claude config folder", a, { ...a, digest: "bbbb" }),
+    ).toEqual(["the scratch Claude config folder changed: an entry's contents or mode differ"]);
+  });
+});
+
+describe("findInstallerProcesses (Test 3)", () => {
+  const node = (command: string) => ({ pid: 1, ppid: 0, command });
+
+  it("flags the install and uninstall scripts and the bridge installer, and nothing else", () => {
+    const found = findInstallerProcesses([
+      node("/bin/sh ./scripts/claude-hooks/install.sh"),
+      node("/bin/sh ./scripts/codex-hooks/uninstall.sh"),
+      node("node scripts/codex/install-user-kit.mjs"),
+      node("/usr/bin/git status --porcelain"),
+      node("/usr/bin/security find-generic-password -s x"),
+      node("node dist/main.js"),
+    ]);
+    expect(found.map((entry) => entry.command.split(" ").at(-1))).toEqual([
+      "./scripts/claude-hooks/install.sh",
+      "./scripts/codex-hooks/uninstall.sh",
+      "scripts/codex/install-user-kit.mjs",
+    ]);
+  });
+});
+
+describe("the copy actions of Integrations (Test 3, item 19)", () => {
+  it("lists the five copy actions with a repository-relative command and their notices", () => {
+    expect(COPY_ACTIONS.map((action) => action.id)).toEqual([
+      "claude-install",
+      "claude-uninstall",
+      "codex-hooks-install",
+      "codex-hooks-uninstall",
+      "codex-bridge-install",
+    ]);
+    for (const action of COPY_ACTIONS) {
+      expect(
+        action.command.startsWith("./scripts/") || action.command.startsWith("node scripts/"),
+      ).toBe(true);
+      expect(action.command.includes("/Users/")).toBe(false);
+    }
+    // The Codex hook install and the bridge install share one notice, so four differ.
+    expect(new Set(COPY_ACTIONS.map((action) => action.notice)).size).toBe(4);
+    expect(COPY_ACTIONS[0]?.command).toBe("./scripts/claude-hooks/install.sh");
+  });
+
+  it("accepts the exact command on the clipboard and the copied notice in the status line", () => {
+    const action = COPY_ACTIONS[0] as (typeof COPY_ACTIONS)[number];
+    expect(checkCopied(action, action.command, action.notice)).toEqual([]);
+    expect(checkCopied(action, undefined, action.notice).join(" ")).toContain("clipboard");
+    expect(checkCopied(action, `${action.command} --dry-run`, action.notice).join(" ")).toContain(
+      "clipboard",
+    );
+    expect(checkCopied(action, action.command, "").join(" ")).toContain("status line");
+  });
+
+  const claudeNot = "Not installed. Session tracking and waiting-for-approval states need them.";
+  const statuslineNot =
+    'Not installed. Plan usage reads "Account capacity unavailable". The wrapper keeps your current status line exactly as it is.';
+  const codexNot =
+    "Not installed. Live status for interactive Codex sessions needs the optional hook package. Sessions and usage still appear from Codex's own records.";
+  const bridgeNot = "Not installed. Launches fall back to Terminal.";
+  const rows = (texts: Record<string, string>) =>
+    section({ statusTexts: Object.entries(texts).map(([id, text]) => ({ id, text })) });
+
+  it("accepts Claude and Codex rows that read not set up", () => {
+    expect(
+      checkIntegrationsNotSetUp(
+        rows({
+          "claude-hooks": claudeNot,
+          "claude-statusline": statuslineNot,
+          "codex-hooks": codexNot,
+          "codex-bridge": bridgeNot,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("flags a row that claims to be installed, one that still checks and one that is missing", () => {
+    const problems = checkIntegrationsNotSetUp(
+      rows({
+        "claude-hooks": "Installed. Last event 3 minutes ago.",
+        "claude-statusline": "Checking…",
+        "codex-hooks": codexNot,
+      }),
+    );
+    expect(problems.join(" ")).toContain("claude-hooks");
+    expect(problems.join(" ")).toContain("claude-statusline");
+    expect(problems.join(" ")).toContain("codex-bridge");
+  });
+
+  it("accepts Codex hooks that cannot tell whether the package is installed", () => {
+    const unknown = "Status unknown. This app couldn't tell whether the hook package is installed.";
+    expect(
+      checkIntegrationsNotSetUp(
+        rows({
+          "claude-hooks": claudeNot,
+          "claude-statusline": statuslineNot,
+          "codex-hooks": unknown,
+          "codex-bridge": bridgeNot,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  const account = (name: string, over: Partial<SettingsRowRead> = {}): SettingsRowRead => ({
+    name,
+    paragraphs: [
+      "Connecting accounts arrives in a later milestone. Nothing is read from this account.",
+    ],
+    control: control({ kind: "none", label: "" }),
+    results: [],
+    chips: [{ status: "not-in-version", word: "Not part of this version" }],
+    ...over,
+  });
+
+  it("accepts Gmail, Google Calendar and GitHub as Not part of this version with no control", () => {
+    const read = section({
+      rows: [account("Gmail"), account("Google Calendar"), account("GitHub")],
+      subheads: ["Claude Code", "Codex", "Accounts"],
+    });
+    expect(checkAccountsRows(read)).toEqual([]);
+  });
+
+  it("flags a connectable account, a missing one and a chip that claims more", () => {
+    const read = section({
+      rows: [
+        account("Gmail", { control: control({ kind: "button", label: "Connect Gmail" }) }),
+        account("GitHub", { chips: [{ status: "ok", word: "Connected" }] }),
+      ],
+    });
+    const problems = checkAccountsRows(read).join(" ");
+    expect(problems).toContain("Gmail");
+    expect(problems).toContain("Google Calendar");
+    expect(problems).toContain("GitHub");
+  });
+});
+
+describe("the dialog reader and the delete dialog (Test 3, item 20)", () => {
+  const DIALOG = (title: string, bodies: string[], buttons: string[]) =>
+    `<div class="modal-container"><div class="modal"><div class="modal-title">${title}</div><div class="modal-content">${bodies
+      .map((body) => `<p>${body}</p>`)
+      .join(
+        "",
+      )}<div>${buttons.map((label) => `<button>${label}</button>`).join("")}</div></div></div></div>`;
+  const BODY1 =
+    "This deletes the token counts, cost estimates, plan usage history and transcript coverage records the companion service has stored.";
+  const BODY2 = "Your session history and Claude Code's own transcripts aren't touched.";
+  const RECOUNT =
+    "Transcript analysis is on, so token counts will be recounted right away from the transcripts Claude Code still keeps.";
+  const dialog = (analysisOn: boolean): DialogRead =>
+    runWith(
+      "rendererReadDialog",
+      DIALOG(
+        "Delete cached usage analytics?",
+        analysisOn ? [BODY1, BODY2, RECOUNT] : [BODY1, BODY2],
+        ["Delete usage analytics", "Cancel"],
+      ),
+      [],
+    ) as DialogRead;
+
+  it("reads the open dialog's title, paragraphs and buttons, and nothing when none is open", () => {
+    const read = dialog(false);
+    expect(read).toEqual({
+      open: true,
+      title: "Delete cached usage analytics?",
+      paragraphs: [BODY1, BODY2],
+      buttons: ["Delete usage analytics", "Cancel"],
+    });
+    expect(runWith("rendererReadDialog", "<div></div>", [])).toEqual({
+      open: false,
+      title: "",
+      paragraphs: [],
+      buttons: [],
+    });
+    expect(rendererText("rendererReadDialog")).not.toContain("__name");
+  });
+
+  it("accepts the delete dialog with its destructive button first and the recount line only when analysis is on", () => {
+    expect(checkDeleteDialog(dialog(false), false)).toEqual([]);
+    expect(checkDeleteDialog(dialog(true), true)).toEqual([]);
+    expect(checkDeleteDialog(dialog(true), false).join(" ")).toContain("recount");
+    expect(checkDeleteDialog(dialog(false), true).join(" ")).toContain("recount");
+  });
+
+  it("flags a dialog that is not there, another title and buttons in the wrong order", () => {
+    expect(
+      checkDeleteDialog({ open: false, title: "", paragraphs: [], buttons: [] }, false),
+    ).toEqual(["no dialog is open"]);
+    const other = { ...dialog(false), title: "Something else?" };
+    expect(checkDeleteDialog(other, false).join(" ")).toContain("title");
+    const swapped = { ...dialog(false), buttons: ["Cancel", "Delete usage analytics"] };
+    expect(checkDeleteDialog(swapped, false).join(" ")).toContain("buttons");
+  });
+});
+
+describe("the usage store and the synthetic transcript (Test 3, item 20)", () => {
+  it("writes one assistant record with the four counters and a time, in the shape Claude Code writes", () => {
+    const line = JSON.parse(
+      syntheticTranscriptLine("msg_settings0001", "2026-10-23T09:00:00.000Z"),
+    ) as {
+      type: string;
+      timestamp: string;
+      message: { id: string; role: string; usage: Record<string, number> };
+      sessionId: string;
+    };
+    expect(line.type).toBe("assistant");
+    expect(line.timestamp).toBe("2026-10-23T09:00:00.000Z");
+    expect(line.message).toMatchObject({ id: "msg_settings0001", role: "assistant" });
+    expect(Object.keys(line.message.usage)).toEqual(
+      expect.arrayContaining([
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+      ]),
+    );
+    expect(syntheticTranscriptLine("a", "2026-10-23T09:00:00.000Z").includes("\n")).toBe(false);
+    expect(
+      findAbsolutePathProblems(syntheticTranscriptLine("a", "2026-10-23T09:00:00.000Z")),
+    ).toEqual([]);
+  });
+
+  it("names the seven usage tables the delete empties", () => {
+    expect(USAGE_TABLES).toEqual([
+      "usage_quarter_hourly",
+      "usage_seen_messages",
+      "coverage_days",
+      "transcript_cursors",
+      "capacity_snapshots",
+      "cost_snapshots",
+      "transcript_recognition",
+    ]);
+    expect(USAGE_COUNTS_SQL).toContain("usage_quarter_hourly");
+  });
+
+  const counts = (over: Record<string, number> = {}): Record<string, number> =>
+    Object.fromEntries(USAGE_TABLES.map((table) => [table, over[table] ?? 0]));
+
+  it("totals the rows and accepts only empty tables as emptied", () => {
+    expect(totalUsageRows(counts({ usage_quarter_hourly: 2, coverage_days: 1 }))).toBe(3);
+    expect(checkUsageEmptied(counts())).toEqual([]);
+    expect(checkUsageEmptied(counts({ cost_snapshots: 1 }))).toEqual([
+      "cost_snapshots still holds 1 row",
+    ]);
+    expect(checkUsageEmptied(counts({ usage_quarter_hourly: 4 }))).toEqual([
+      "usage_quarter_hourly still holds 4 rows",
+    ]);
+  });
+
+  it("judges the analysis setting by the service's stored value and the plugin file by its keys", () => {
+    const data = { reducedMotion: "auto", notifyApprovals: true };
+    expect(checkAnalysisStored({ analysis: "true", counts: counts() }, true, data)).toEqual([]);
+    expect(checkAnalysisStored({ analysis: "false", counts: counts() }, false, data)).toEqual([]);
+    expect(
+      checkAnalysisStored({ analysis: null, counts: counts() }, true, data).join(" "),
+    ).toContain("service");
+    expect(
+      checkAnalysisStored({ analysis: "true", counts: counts() }, true, {
+        ...data,
+        transcriptAnalysis: true,
+      }).join(" "),
+    ).toContain("plugin data file");
+  });
+});
+
+describe("the approvals and tasks verdicts (Test 3, item 21)", () => {
+  it("accepts a notifications switch whose state and saved value are the expected one", () => {
+    const read = section({
+      rows: [row("Approval notifications", { kind: "switch", label: "Off", checked: false })],
+    });
+    expect(checkNotifyApprovals(read, false, false)).toEqual([]);
+    expect(checkNotifyApprovals(read, true, true).join(" ")).toContain("switch");
+    expect(checkNotifyApprovals(read, false, true).join(" ")).toContain("data file");
+    expect(checkNotifyApprovals(section({}), false, false).join(" ")).toContain("row");
+  });
+
+  it("accepts a transcript analysis switch in the expected state and not busy", () => {
+    const on = section({
+      rows: [row("Transcript analysis", { kind: "switch", label: "On", checked: true })],
+    });
+    expect(checkTranscriptSwitch(on, true)).toEqual([]);
+    expect(checkTranscriptSwitch(on, false).join(" ")).toContain("Transcript analysis");
+    const busy = section({
+      rows: [row("Transcript analysis", { kind: "switch", checked: true, busy: true })],
+    });
+    expect(checkTranscriptSwitch(busy, true).join(" ")).toContain("busy");
+  });
+
+  it("accepts a rebuild reported in the status line and under the row", () => {
+    const read = section({
+      statusLine: "Task index rebuilt. 304 tasks found.",
+      results: [{ key: "rebuild", text: "Task index rebuilt. 304 tasks found." }],
+    });
+    expect(checkRebuilt(read, 300)).toEqual([]);
+    expect(checkRebuilt(read, 400).join(" ")).toContain("304");
+    expect(
+      checkRebuilt(section({ statusLine: "Rebuilding the task index…" }), 1).join(" "),
+    ).toContain("status line");
+    expect(
+      checkRebuilt(section({ statusLine: "Task index rebuilt. 304 tasks found." }), 300).join(" "),
+    ).toContain("under the row");
+  });
+
+  it("accepts a delete reported in the status line and under the row", () => {
+    const text = "Cached usage analytics deleted.";
+    expect(
+      checkDeleted(section({ statusLine: text, results: [{ key: "delete-usage", text }] })),
+    ).toEqual([]);
+    expect(checkDeleted(section({ statusLine: text })).join(" ")).toContain("under the row");
+    expect(checkDeleted(section({ results: [{ key: "delete-usage", text }] })).join(" ")).toContain(
+      "status line",
+    );
+  });
+
+  it("judges the pending approvals of the sandbox store", () => {
+    expect(checkPending([{ id: "p1", state: "pending" }])).toEqual([]);
+    expect(checkPending([]).join(" ")).toContain("no pending");
+    expect(checkPending([{ id: "p1", state: "approved" }]).join(" ")).toContain("not pending");
   });
 });

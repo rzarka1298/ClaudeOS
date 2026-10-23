@@ -49,3 +49,38 @@ describe("settings core spec titles", () => {
     expect(mine.sort((a, b) => a - b)).toEqual([9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 34]);
   });
 });
+
+const INTEGRATIONS_SPEC = "packages/e2e/specs/settings-integrations.e2e.ts";
+const INTEGRATIONS_ITEMS = [19, 20, 21] as const;
+
+describe("settings integrations spec titles", () => {
+  it("holds exactly [08-UAT#19], [08-UAT#20] and [08-UAT#21], once each", () => {
+    expect(numbersOf(titlesOf(INTEGRATIONS_SPEC)).sort((a, b) => a - b)).toEqual([
+      ...INTEGRATIONS_ITEMS,
+    ]);
+  });
+
+  it("holds no title for any other item", () => {
+    expect(
+      titlesOf(INTEGRATIONS_SPEC).filter((title) => !/^\[08-UAT#(19|2[01])\] /.test(title)),
+    ).toEqual([]);
+  });
+
+  it("maps items 19, 20 and 21 of the Phase 8 item plan to this spec file, and no other", () => {
+    const plan = specMapForPhase("08")?.itemPlan ?? [];
+    for (const number of INTEGRATIONS_ITEMS) {
+      expect(plan.find((entry) => entry.number === number)?.specFile, `item ${number}`).toBe(
+        INTEGRATIONS_SPEC,
+      );
+    }
+    const mine = plan.filter((entry) => entry.specFile === INTEGRATIONS_SPEC).map((e) => e.number);
+    expect(mine.sort((a, b) => a - b)).toEqual([...INTEGRATIONS_ITEMS]);
+  });
+
+  it("keeps items 19 to 21 out of the core spec and items 9 to 18 and 34 out of this one", () => {
+    expect(titlesOf(CORE_SPEC).some((title) => /^\[08-UAT#(19|2[01])\]/.test(title))).toBe(false);
+    expect(
+      titlesOf(INTEGRATIONS_SPEC).some((title) => /^\[08-UAT#(0[9]|1[0-8]|34)\]/.test(title)),
+    ).toBe(false);
+  });
+});

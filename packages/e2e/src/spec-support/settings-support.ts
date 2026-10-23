@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { PRIVACY_RULES } from "@ccc/domain";
 import {
   canonicalPath,
@@ -18,7 +19,13 @@ import {
   type ThemeReading,
   type ThemeSwitch,
 } from "./contrast-probe.js";
-import { allMotionOff, anyMotionOn, focusRingVisible, type MotionSample } from "./cross-support.js";
+import {
+  allMotionOff,
+  anyMotionOn,
+  focusRingVisible,
+  type MotionSample,
+  type ProcessNode,
+} from "./cross-support.js";
 import { type ClickStep, type HealthBrowser, MUTATING_HELPERS } from "./health-support.js";
 import { OVERVIEW_TEXT } from "./overview-copy.js";
 import {
@@ -105,6 +112,8 @@ export interface SettingsRowRead {
   readonly control: SettingsControlRead;
   /** The `p[data-result]` lines under the row. */
   readonly results: readonly { readonly key: string; readonly text: string }[];
+  /** The status badges inside the row (the Accounts rows carry `Not part of this version`). */
+  readonly chips: readonly SettingsChipRead[];
 }
 
 export interface SettingsButtonRead {
@@ -473,6 +482,15 @@ export function rendererReadSettings(c: SettingsDomConfig): SettingsRead {
         const result = resultNodes[j] as RNode;
         rowResults.push({ key: result.getAttribute(c.attrResult) ?? "", text: text(result) });
       }
+      const rowChips: SettingsChipRead[] = [];
+      const rowChipNodes = row.querySelectorAll(`.${c.badge}[${c.attrStatus}]`);
+      for (let j = 0; j < rowChipNodes.length; j += 1) {
+        const chip = rowChipNodes[j] as RNode;
+        rowChips.push({
+          status: chip.getAttribute(c.attrStatus),
+          word: text(chip.querySelector(`.${c.badgeLabel}`)),
+        });
+      }
       rows.push({
         name: text(first),
         paragraphs: paragraphsOf(textBlock),
@@ -496,6 +514,7 @@ export function rendererReadSettings(c: SettingsDomConfig): SettingsRead {
           describedText: described,
         },
         results: rowResults,
+        chips: rowChips,
       });
     }
 
@@ -1288,6 +1307,8 @@ export const SETTINGS_MUTATING_HELPERS: readonly string[] = Object.freeze([
   "addScanFolder",
   "saveClaudeLauncher",
   "restoreSystemMotion",
+  "pressDialogButton",
+  "clearPending",
   "stopService",
   "startService",
   "sendTestApproval",
@@ -2100,4 +2121,524 @@ export function checkContrastReading(
   }
   for (const line of contrastFailures(reading.measured)) problems.push(`${where}: ${line}`);
   return problems;
+}
+
+// ===========================================================================
+// Items 19 to 21: integrations, privacy controls, approvals and tasks
+
+// ---------------------------------------------------------------------------
+// A folder that must not change (the scratch Claude config folder after a copy)
+
+export interface DirSnapshot {
+  /** The folder is there. A folder that is not there reads as empty, so its appearing is a change. */
+  readonly exists: boolean;
+  /** Entries below the folder (files, folders and links). */
+  readonly count: number;
+  /** A SHA-256 over every entry's kind, path, mode and contents (or link target). */
+  readonly digest: string;
+}
+
+const DEFAULT_MAX_ENTRIES = 5_000;
+const DEFAULT_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const MSG_SNAPSHOT_OUTSIDE = "Refusing a folder outside the run root.";
+
+/**
+ * Hashes a scratch folder's entries and contents so a spec can assert the folder is unchanged after
+ * a copy action. The folder must lie strictly inside the run root and must not be a link; a folder
+ * that is not there reads as empty; a link inside it is recorded as a link, never followed. Folders
+ * over the entry or file-size limit are refused. The message never echoes a path.
+ */
+export function snapshotDir(
+  path: string,
+  runRoot: string,
+  limits: { maxEntries?: number; maxFileBytes?: number } = {},
+): DirSnapshot {
+  const maxEntries = limits.maxEntries ?? DEFAULT_MAX_ENTRIES;
+  const maxFileBytes = limits.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  const root = canonicalPath(runRoot);
+  // As written first (the run root may be reached through a link such as /tmp), then resolved.
+  if (!isStrictlyInside(resolve(runRoot), resolve(path))) throw new Error(MSG_SNAPSHOT_OUTSIDE);
+  if (isSymlinkOnDisk(path)) throw new Error(MSG_PATH_LINK);
+  const hash = createHash("sha256");
+  try {
+    lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { exists: false, count: 0, digest: hash.digest("hex") };
+    }
+    throw error;
+  }
+  const base = canonicalPath(path);
+  if (!isStrictlyInside(root, base)) throw new Error(MSG_SNAPSHOT_OUTSIDE);
+  let count = 0;
+  const walk = (folder: string, prefix: string): void => {
+    for (const name of readdirSync(folder).sort()) {
+      count += 1;
+      if (count > maxEntries) throw new Error(`The folder holds more than ${maxEntries} entries.`);
+      const full = join(folder, name);
+      const relative = prefix === "" ? name : `${prefix}/${name}`;
+      const info = lstatSync(full);
+      const mode = (info.mode & 0o777).toString(8);
+      if (info.isSymbolicLink()) {
+        hash.update(`l ${relative} ${readlinkSync(full)}\n`);
+      } else if (info.isDirectory()) {
+        hash.update(`d ${relative} ${mode}\n`);
+        walk(full, relative);
+      } else if (info.isFile()) {
+        if (info.size > maxFileBytes) throw new Error("A file in the folder is too large to hash.");
+        const body = createHash("sha256").update(readFileSync(full)).digest("hex");
+        hash.update(`f ${relative} ${mode} ${body}\n`);
+      } else {
+        hash.update(`o ${relative}\n`);
+      }
+    }
+  };
+  walk(base, "");
+  return { exists: true, count, digest: hash.digest("hex") };
+}
+
+/** A folder is as it was: the verdict names the folder and what differs, never an entry. */
+export function checkSnapshotUnchanged(
+  what: string,
+  before: DirSnapshot,
+  after: DirSnapshot,
+): string[] {
+  if (before.count !== after.count) {
+    return [`${what} changed: ${before.count} entries before, ${after.count} after`];
+  }
+  if (before.exists !== after.exists) return [`${what} changed: it did not exist before`];
+  if (before.digest !== after.digest) {
+    return [`${what} changed: an entry's contents or mode differ`];
+  }
+  return [];
+}
+
+/** Install and uninstall scripts and the bridge installer: nothing a copy action may start. */
+const INSTALLER_PROGRAM = /(?:^|[\s/])(?:un)?install(?:-user-kit)?\.(?:sh|mjs)(?:\s|$)/;
+
+export function findInstallerProcesses(nodes: readonly ProcessNode[]): ProcessNode[] {
+  return nodes.filter((node) => INSTALLER_PROGRAM.test(node.command));
+}
+
+// ---------------------------------------------------------------------------
+// Item 19: the setup states and the copy-only actions
+
+export interface CopyAction {
+  readonly id: string;
+  /** The button's text or `aria-label` that identifies it. */
+  readonly label: string;
+  /** The repository-relative command it copies. */
+  readonly command: string;
+  /** What the status line says afterwards. */
+  readonly notice: string;
+}
+
+/** The five copy actions of Integrations, in page order. Nothing here is ever run. */
+export const COPY_ACTIONS: readonly CopyAction[] = Object.freeze([
+  {
+    id: "claude-install",
+    label: SETTINGS_TEXT.copyInstall,
+    command: SETTINGS_TEXT.claudeInstallCommand,
+    notice: SETTINGS_TEXT.claudeInstallCopied,
+  },
+  {
+    id: "claude-uninstall",
+    label: SETTINGS_TEXT.copyUninstall,
+    command: SETTINGS_TEXT.claudeUninstallCommand,
+    notice: SETTINGS_TEXT.claudeUninstallCopied,
+  },
+  {
+    id: "codex-hooks-install",
+    label: SETTINGS_TEXT.codexHooksInstallLabel,
+    command: SETTINGS_TEXT.codexInstallStep,
+    notice: SETTINGS_TEXT.codexInstallCopied,
+  },
+  {
+    id: "codex-hooks-uninstall",
+    label: SETTINGS_TEXT.codexHooksUninstallLabel,
+    command: SETTINGS_TEXT.codexUninstallStep,
+    notice: SETTINGS_TEXT.codexUninstallCopied,
+  },
+  {
+    id: "codex-bridge-install",
+    label: SETTINGS_TEXT.codexBridgeInstallLabel,
+    command: SETTINGS_TEXT.codexBridgeStep,
+    notice: SETTINGS_TEXT.codexInstallCopied,
+  },
+]);
+
+/** The exact command reached the clipboard stub and the status line says it was copied. */
+export function checkCopied(
+  action: CopyAction,
+  clipboard: string | undefined,
+  statusLine: string,
+): string[] {
+  const problems: string[] = [];
+  if (clipboard === undefined) problems.push(`${action.id}: nothing reached the clipboard`);
+  else if (clipboard !== action.command) {
+    problems.push(`${action.id}: the clipboard holds something other than the command`);
+  }
+  if (statusLine !== action.notice) {
+    problems.push(`${action.id}: the status line reads "${statusLine}", not "${action.notice}"`);
+  }
+  return problems;
+}
+
+/**
+ * The four status rows read as not set up. Claude hooks and the status-line wrapper read not
+ * installed; Codex hooks read not installed or unknown (the sandbox seals Codex, so the app may
+ * not be able to tell); the bridge reads not installed. A row that still checks, claims to be
+ * installed or is missing is flagged.
+ */
+export function checkIntegrationsNotSetUp(read: SettingsRead): string[] {
+  const problems: string[] = [];
+  const rules: [string, (text: string) => boolean][] = [
+    ["claude-hooks", (text) => text === SETTINGS_TEXT.claudeHooksNotInstalled],
+    ["claude-statusline", (text) => text.startsWith(SETTINGS_TEXT.statuslineNotInstalled)],
+    [
+      "codex-hooks",
+      (text) =>
+        text.startsWith(SETTINGS_TEXT.codexHooksNotInstalled) ||
+        text.startsWith(SETTINGS_TEXT.codexHooksUnknown),
+    ],
+    ["codex-bridge", (text) => text === SETTINGS_TEXT.codexBridgeNotInstalled],
+  ];
+  for (const [id, accepts] of rules) {
+    const entry = read.statusTexts.find((status) => status.id === id);
+    if (entry === undefined) problems.push(`${id} is missing`);
+    else if (!accepts(entry.text)) problems.push(`${id} does not read as not set up`);
+  }
+  return problems;
+}
+
+const ACCOUNT_NAMES: readonly string[] = [
+  SETTINGS_TEXT.nameGmail,
+  SETTINGS_TEXT.nameCalendar,
+  SETTINGS_TEXT.nameGithub,
+];
+
+/** Gmail, Google Calendar and GitHub read Not part of this version, with the sentence and no control. */
+export function checkAccountsRows(read: SettingsRead): string[] {
+  const problems: string[] = [];
+  if (!read.subheads.includes(SETTINGS_TEXT.groupAccounts)) {
+    problems.push("the Accounts group is missing");
+  }
+  for (const name of ACCOUNT_NAMES) {
+    const entry = read.rows.find((candidate) => candidate.name === name);
+    if (entry === undefined) {
+      problems.push(`the ${name} account row is missing`);
+      continue;
+    }
+    if (entry.control.kind !== "none") {
+      problems.push(`the ${name} account row offers a control (${entry.control.label})`);
+    }
+    const chip = entry.chips[0];
+    if (
+      entry.chips.length !== 1 ||
+      chip?.status !== "not-in-version" ||
+      chip.word !== SETTINGS_TEXT.notInVersionTag
+    ) {
+      problems.push(`${name} does not read ${SETTINGS_TEXT.notInVersionTag}`);
+    }
+    if (!entry.paragraphs.includes(SETTINGS_TEXT.notInVersionSentence)) {
+      problems.push(`${name} lacks the sentence that nothing is read from the account`);
+    }
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Item 20: transcript analysis and Delete cached usage analytics
+
+export interface DialogRead {
+  readonly open: boolean;
+  readonly title: string;
+  readonly paragraphs: readonly string[];
+  readonly buttons: readonly string[];
+}
+
+/** Reads Obsidian's open modal: its title, paragraphs and buttons. SELF-CONTAINED (renderer function). */
+export function rendererReadDialog(): DialogRead {
+  const modal = document.querySelector(".modal");
+  if (modal === null) return { open: false, title: "", paragraphs: [], buttons: [] };
+  const t = [
+    (n: RNode | null): string =>
+      n === null ? "" : (n.textContent ?? "").replace(/\s+/g, " ").trim(),
+  ];
+  const text = t[0] as (n: RNode | null) => string;
+  const paragraphs: string[] = [];
+  const found = modal.querySelectorAll("p");
+  for (let i = 0; i < found.length; i += 1) paragraphs.push(text(found[i] as RNode));
+  const buttons: string[] = [];
+  const nodes = modal.querySelectorAll("button");
+  for (let i = 0; i < nodes.length; i += 1) buttons.push(text(nodes[i] as RNode));
+  return {
+    open: true,
+    title: text(modal.querySelector(".modal-title") ?? modal.querySelector("h2")),
+    paragraphs,
+    buttons,
+  };
+}
+
+export async function readDialog(browser: SettingsBrowser): Promise<DialogRead> {
+  return browser.execute(rendererReadDialog);
+}
+
+/** Presses a button of the open dialog (Obsidian's own modal). */
+export async function pressDialogButton(browser: SettingsBrowser, label: string): Promise<void> {
+  await pollUntil(() => browser.executeObsidian(rendererClick, ".modal button", label), {
+    ...WAIT.short,
+    describe: `the dialog button ${label}`,
+  });
+}
+
+/**
+ * The delete confirmation: its title, the first body paragraph, the destructive button first and
+ * Cancel second, and the recount line only while transcript analysis is on.
+ */
+export function checkDeleteDialog(read: DialogRead, analysisOn: boolean): string[] {
+  if (!read.open) return ["no dialog is open"];
+  const problems: string[] = [];
+  if (read.title !== SETTINGS_TEXT.dialogTitle) {
+    problems.push(`the dialog title reads "${read.title}", not "${SETTINGS_TEXT.dialogTitle}"`);
+  }
+  if (!read.paragraphs[0]?.startsWith(SETTINGS_TEXT.dialogBody)) {
+    problems.push("the dialog does not open with what the deletion removes");
+  }
+  const buttons = read.buttons.join("|");
+  if (buttons !== `${SETTINGS_TEXT.dialogConfirm}|${SETTINGS_TEXT.dialogCancel}`) {
+    problems.push(`the dialog buttons read "${read.buttons.join('", "')}"`);
+  }
+  const recount = read.paragraphs.some((paragraph) =>
+    paragraph.startsWith(SETTINGS_TEXT.dialogRecount),
+  );
+  if (recount !== analysisOn) {
+    problems.push(
+      analysisOn
+        ? "the recount line is missing while analysis is on"
+        : "the recount line is shown while analysis is off",
+    );
+  }
+  return problems;
+}
+
+/** The session the synthetic transcript belongs to (an invented id). */
+export const SYNTHETIC_TRANSCRIPT_SESSION = "dddddddd-0000-4000-8000-000000000008";
+/** The folder under `<claude config>/projects` the transcript sits in (an invented project slug). */
+export const SYNTHETIC_TRANSCRIPT_PROJECT = "settings-uat-project";
+
+/**
+ * One assistant record, as Claude Code writes it, with invented content and the four usage
+ * counters. It is written into the scratch Claude config folder so that switching analysis on has
+ * something to count, which is what makes "the usage tables are emptied" non-vacuous.
+ */
+export function syntheticTranscriptLine(messageId: string, timestamp: string): string {
+  return JSON.stringify({
+    parentUuid: "00000000-0000-4000-8000-00000000aaaa",
+    isSidechain: false,
+    userType: "external",
+    cwd: "/Users/USERNAME/code/synthetic-project",
+    sessionId: SYNTHETIC_TRANSCRIPT_SESSION,
+    version: "2.1.283",
+    gitBranch: "main",
+    message: {
+      id: messageId,
+      type: "message",
+      role: "assistant",
+      model: "claude-opus-4-8",
+      content: [{ type: "text", text: "synthetic words" }],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: 3,
+        cache_creation_input_tokens: 400,
+        cache_read_input_tokens: 20000,
+        cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 0 },
+        output_tokens: 120,
+        service_tier: "standard",
+        inference_geo: "not_available",
+      },
+    },
+    requestId: "req_settingsuat0001",
+    type: "assistant",
+    uuid: "00000000-0000-4000-8000-00000000bbbb",
+    timestamp,
+  });
+}
+
+/** The tables "Delete cached usage analytics" empties (USAGE-08). */
+export const USAGE_TABLES: readonly string[] = Object.freeze([
+  "usage_quarter_hourly",
+  "usage_seen_messages",
+  "coverage_days",
+  "transcript_cursors",
+  "capacity_snapshots",
+  "cost_snapshots",
+  "transcript_recognition",
+]);
+
+export const USAGE_COUNTS_SQL = `select ${USAGE_TABLES.map((table) => `(select count(*) from ${table}) as ${table}`).join(", ")};`;
+export const ANALYSIS_SETTING_SQL =
+  "select value from collector_settings where key = 'transcript_analysis_enabled';";
+export const PROPOSALS_SQL = "select proposal_id, state from proposals order by proposal_id;";
+
+export interface UsageStoreRead {
+  /** The service's stored transcript analysis setting (`true` or `false`), or null when absent. */
+  readonly analysis: string | null;
+  /** The row count of each usage table. */
+  readonly counts: Record<string, number>;
+}
+
+async function storeCopy(context: RunContext, folder: string): Promise<string> {
+  const destDir = join(context.paths.tmpDir, folder);
+  mkdirSync(destDir, { recursive: true, mode: 0o700 });
+  return copyStore({
+    runtimeDir: context.paths.runtimeDir,
+    destDir,
+    runRoot: context.runRoot,
+  }).copyPath;
+}
+
+/** The analysis setting and the usage table counts of the sandbox store, read from a copy. */
+export async function readUsageStore(context: RunContext): Promise<UsageStoreRead> {
+  const copyPath = await storeCopy(context, "settings-usage-copy");
+  const setting = await queryStore({
+    copyPath,
+    sql: ANALYSIS_SETTING_SQL,
+    runRoot: context.runRoot,
+  });
+  const counts = await queryStore({ copyPath, sql: USAGE_COUNTS_SQL, runRoot: context.runRoot });
+  const row = counts[0] ?? {};
+  return {
+    analysis: setting[0] === undefined ? null : str(setting[0]["value"]),
+    counts: Object.fromEntries(USAGE_TABLES.map((table) => [table, Number(row[table] ?? 0)])),
+  };
+}
+
+export function totalUsageRows(counts: Record<string, number>): number {
+  return USAGE_TABLES.reduce((sum, table) => sum + (counts[table] ?? 0), 0);
+}
+
+/** Every usage table is empty. */
+export function checkUsageEmptied(counts: Record<string, number>): string[] {
+  const problems: string[] = [];
+  for (const table of USAGE_TABLES) {
+    const rows = counts[table] ?? 0;
+    if (rows > 0) problems.push(`${table} still holds ${rows} row${rows === 1 ? "" : "s"}`);
+  }
+  return problems;
+}
+
+/**
+ * The service stores the transcript analysis setting (D-17, USAGE-07) and the plugin's data file
+ * never gains a key for it.
+ */
+export function checkAnalysisStored(
+  store: UsageStoreRead,
+  enabled: boolean,
+  data: Record<string, unknown>,
+): string[] {
+  const problems: string[] = [];
+  const wanted = enabled ? "true" : "false";
+  if (store.analysis === null) problems.push("the service holds no transcript analysis setting");
+  else if (store.analysis !== wanted) {
+    problems.push(
+      `the service stores the transcript analysis setting as ${store.analysis}, not ${wanted}`,
+    );
+  }
+  for (const key of Object.keys(data)) {
+    if (/transcript|analysis/i.test(key)) {
+      problems.push(`the plugin data file holds the key ${key}`);
+    }
+  }
+  return problems;
+}
+
+/** The Transcript analysis switch is in the expected state and not mid-save. */
+export function checkTranscriptSwitch(read: SettingsRead, expected: boolean): string[] {
+  const entry = read.rows.find((candidate) => candidate.name === SETTINGS_TEXT.rowTranscript);
+  if (entry === undefined) return [`the ${SETTINGS_TEXT.rowTranscript} row is missing`];
+  const problems: string[] = [];
+  if (entry.control.busy) problems.push(`the ${SETTINGS_TEXT.rowTranscript} switch is still busy`);
+  if (entry.control.checked !== expected) {
+    problems.push(
+      `the ${SETTINGS_TEXT.rowTranscript} switch is ${entry.control.checked ? "on" : "off"}, not ${expected ? "on" : "off"}`,
+    );
+  }
+  return problems;
+}
+
+/** Delete reported its outcome in the status line and under the row. */
+export function checkDeleted(read: SettingsRead): string[] {
+  const problems: string[] = [];
+  if (read.statusLine !== SETTINGS_TEXT.usageDeleted) {
+    problems.push(
+      `the status line reads "${read.statusLine}", not "${SETTINGS_TEXT.usageDeleted}"`,
+    );
+  }
+  const under = read.results.find((result) => result.key === "delete-usage");
+  if (under?.text !== SETTINGS_TEXT.usageDeleted) {
+    problems.push("the result is missing under the row");
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Item 21: approvals and tasks
+
+/** The Approval notifications switch is in the expected state and the data file holds the same. */
+export function checkNotifyApprovals(
+  read: SettingsRead,
+  expected: boolean,
+  saved: unknown,
+): string[] {
+  const entry = read.rows.find((candidate) => candidate.name === SETTINGS_TEXT.rowNotifyApprovals);
+  if (entry === undefined) return [`the ${SETTINGS_TEXT.rowNotifyApprovals} row is missing`];
+  const problems: string[] = [];
+  if (entry.control.checked !== expected) {
+    problems.push(
+      `the ${SETTINGS_TEXT.rowNotifyApprovals} switch is ${entry.control.checked ? "on" : "off"}, not ${expected ? "on" : "off"}`,
+    );
+  }
+  if (saved !== expected) {
+    problems.push(`the data file holds ${String(saved)} for notifyApprovals, not ${expected}`);
+  }
+  return problems;
+}
+
+const REBUILT_LINE = /^Task index rebuilt\. (\d+) tasks? found\./;
+
+/** Rebuild task index reported its result in the status line and again under the row. */
+export function checkRebuilt(read: SettingsRead, minTasks: number): string[] {
+  const problems: string[] = [];
+  const match = REBUILT_LINE.exec(read.statusLine);
+  if (match === null) {
+    problems.push(`the status line reads "${read.statusLine}", not a rebuilt result`);
+  } else if (Number(match[1]) < minTasks) {
+    problems.push(`the rebuild found ${match[1]} tasks, fewer than ${minTasks}`);
+  }
+  const under = read.results.find((result) => result.key === "rebuild");
+  if (under === undefined || under.text !== read.statusLine) {
+    problems.push("the result is missing under the row, or differs from the status line");
+  }
+  return problems;
+}
+
+export interface ProposalRow {
+  readonly id: string;
+  readonly state: string;
+}
+
+/** The sandbox store's approvals, from a read-only copy. */
+export async function readProposals(context: RunContext): Promise<ProposalRow[]> {
+  const copyPath = await storeCopy(context, "settings-approvals-copy");
+  const rows = await queryStore({ copyPath, sql: PROPOSALS_SQL, runRoot: context.runRoot });
+  return rows.map((row) => ({ id: str(row["proposal_id"]), state: str(row["state"]) }));
+}
+
+/** At least one approval is pending. */
+export function checkPending(rows: readonly ProposalRow[]): string[] {
+  if (rows.length === 0) return ["the store holds no pending approval"];
+  if (rows.some((row) => row.state === "pending")) return [];
+  return rows.map((row) => `${row.id} is not pending (${row.state})`);
 }
