@@ -99,7 +99,8 @@ describe("Test 1 (tracer): a fresh install", () => {
           partId: "codex-doctor",
           status: "setup-needed",
           reasonCode: "codex-doctor-not-run",
-          setupAction: { kind: "go-to-section", section: "integrations" },
+          // D-44: `Check Codex health` lives in the launchers section, so the service says so.
+          setupAction: { kind: "go-to-section", section: "launchers" },
         },
       ],
     });
@@ -435,15 +436,41 @@ describe("Test 5: the Codex parts", () => {
     });
   }
 
-  it("a degraded Codex part raises the row, and the doctor warning points at Integrations", async () => {
+  it("a degraded Codex part raises the row, and the doctor warning points at the launchers section (D-44)", async () => {
     const outcome = await probeCollectors(
       ports({}, codexStatus({ doctor: { overall: "warning", codexVersion: null, checks: [] } })),
       SIGNAL,
     );
     expect(outcome).toMatchObject({ status: "degraded", reasonCode: "codex-doctor-warning" });
     expect(byId(outcome, "codex-doctor")).toMatchObject({
-      setupAction: { kind: "go-to-section", section: "integrations" },
+      setupAction: { kind: "go-to-section", section: "launchers" },
     });
+  });
+
+  it("every codex-doctor reason that offers an action sends go-to-section launchers, and nothing else does", async () => {
+    const overalls = ["warning", "fail"] as const;
+    for (const overall of overalls) {
+      const outcome = await probeCollectors(
+        ports({}, codexStatus({ doctor: { overall, codexVersion: null, checks: [] } })),
+        SIGNAL,
+      );
+      expect(byId(outcome, "codex-doctor")).toMatchObject({
+        setupAction: { kind: "go-to-section", section: "launchers" },
+      });
+    }
+    const notRun = await probeCollectors(ports({}, codexStatus({ doctor: null })), SIGNAL);
+    expect(byId(notRun, "codex-doctor")).toMatchObject({
+      reasonCode: "codex-doctor-not-run",
+      setupAction: { kind: "go-to-section", section: "launchers" },
+    });
+    const ok = await probeCollectors(
+      ports({}, codexStatus({ doctor: { overall: "ok", codexVersion: null, checks: [] } })),
+      SIGNAL,
+    );
+    expect(byId(ok, "codex-doctor")).not.toHaveProperty("setupAction");
+    // No integrations-section action is sent for a doctor reason any more.
+    const text = JSON.stringify([notRun, ok]);
+    expect(text).not.toContain('"section":"integrations"');
   });
 
   it("reads only status(): the fake Codex port throws on any other member", async () => {

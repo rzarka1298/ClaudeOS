@@ -165,10 +165,7 @@ export function freshCollectorsParts(): FixturePart[] {
       "codex-bridge-not-installed",
       { setupAction: { kind: "copy-command", command: "codex-bridge-install" } },
     ],
-    "codex-doctor": [
-      "codex-doctor-not-run",
-      { setupAction: { kind: "go-to-section", section: "integrations" } },
-    ],
+    "codex-doctor": ["codex-doctor-not-run", { setupAction: GO_LAUNCHERS }],
   });
 }
 

@@ -63,7 +63,9 @@ export interface CollectorsProbePorts {
 const TABLE = COLLECTORS_REASON_STATUS;
 const CLAUDE_INSTALL: SetupAction = { kind: "copy-command", command: "claude-hooks-install" };
 const GO_SECURITY: SetupAction = { kind: "go-to-section", section: "security" };
-const GO_INTEGRATIONS: SetupAction = { kind: "go-to-section", section: "integrations" };
+// `Check Codex health` lives in the launchers section (D-44), so the doctor reasons send the owner
+// there; the plugin shows the action as sent (FIX3A MINOR-7).
+const GO_LAUNCHERS: SetupAction = { kind: "go-to-section", section: "launchers" };
 
 function telemetryPart(status: ClaudeIntegrationStatus, minimum: string): Part {
   switch (status.telemetry.kind) {
@@ -168,13 +170,13 @@ function codexParts(codex: CodexIntegrationStatus): Part[] {
   } as const;
   const doctor =
     codex.doctor === null
-      ? partOf(TABLE, "codex-doctor", "codex-doctor-not-run", { setupAction: GO_INTEGRATIONS })
+      ? partOf(TABLE, "codex-doctor", "codex-doctor-not-run", { setupAction: GO_LAUNCHERS })
       : partOf(
           TABLE,
           "codex-doctor",
           doctorReason[codex.doctor.overall],
           codex.doctor.overall === "warning" || codex.doctor.overall === "fail"
-            ? { setupAction: GO_INTEGRATIONS }
+            ? { setupAction: GO_LAUNCHERS }
             : {},
         );
 

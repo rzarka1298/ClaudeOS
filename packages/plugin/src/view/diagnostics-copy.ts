@@ -521,23 +521,17 @@ export const NOT_IN_VERSION_SENTENCE =
 const RESEARCH_KEY_SETUP_COMMAND = "node scripts/research-key-setup.mjs";
 
 /**
- * The action a row or part actually offers. One plugin-side adjustment to what the service sends
- * (UI-SPEC adjustment, plan 08-13, D-44): the Codex doctor reasons point at the integrations
- * section in the UI-SPEC table, but `Check Codex health` lives today in the launchers section
- * (`codex-launcher-panel.tsx`) and each control stays in exactly one section, so the button goes
- * there. The service still only ever sends a closed action kind; the plugin owns where it lands.
+ * The action a row or part actually offers: exactly the one the service sent (FIX3A MINOR-7).
+ * The plugin used to redirect the Codex doctor reasons from the integrations section to the
+ * launchers section (D-44: `Check Codex health` lives in `codex-launcher-panel.tsx`, and each
+ * control stays in exactly one section). The collectors probe now sends `go-to-section launchers`
+ * for those reasons itself, so there is a single source of truth and nothing to adjust here. The
+ * function stays as the one seam the row components call; `reasonCode` is kept for them.
  */
 export function displayedAction(
-  reasonCode: AnyReason,
+  _reasonCode: AnyReason,
   action: SetupAction | undefined,
 ): SetupAction | undefined {
-  if (
-    action?.kind === "go-to-section" &&
-    action.section === "integrations" &&
-    reasonCode.startsWith("codex-doctor-")
-  ) {
-    return { kind: "go-to-section", section: "launchers" };
-  }
   return action;
 }
 

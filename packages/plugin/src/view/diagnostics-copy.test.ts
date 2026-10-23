@@ -378,19 +378,18 @@ describe("sentence case (R-F1)", () => {
   });
 });
 
-describe("displayedAction (UI-SPEC adjustment, D-44)", () => {
+describe("displayedAction (FIX3A MINOR-7: the service sends the launchers section, the plugin shows it as sent)", () => {
   const INTEGRATIONS: SetupAction = { kind: "go-to-section", section: "integrations" };
+  const LAUNCHERS: SetupAction = { kind: "go-to-section", section: "launchers" };
 
-  it("sends the Codex doctor reasons to the launchers section, where Check Codex health lives", () => {
+  it("no longer redirects: the Codex doctor reasons keep exactly the action the service sent", () => {
     for (const code of [
       "codex-doctor-not-run",
       "codex-doctor-warning",
       "codex-doctor-failed",
     ] as const) {
-      expect(displayedAction(code, INTEGRATIONS)).toEqual({
-        kind: "go-to-section",
-        section: "launchers",
-      });
+      expect(displayedAction(code, LAUNCHERS)).toBe(LAUNCHERS);
+      expect(displayedAction(code, INTEGRATIONS)).toBe(INTEGRATIONS);
     }
   });
 
@@ -399,5 +398,9 @@ describe("displayedAction (UI-SPEC adjustment, D-44)", () => {
     const copy: SetupAction = { kind: "copy-command", command: "codex-bridge-install" };
     expect(displayedAction("codex-bridge-outdated", copy)).toBe(copy);
     expect(displayedAction("codex-doctor-ok", undefined)).toBeUndefined();
+  });
+
+  it("the label for the launchers section still names it", () => {
+    expect(setupActionLabel(LAUNCHERS)).toBe("Go to the launchers section");
   });
 });
