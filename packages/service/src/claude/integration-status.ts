@@ -8,6 +8,7 @@ import type {
   IntegrationInstallState,
   TelemetryStatus,
 } from "@ccc/domain";
+import { type SingleFlight, singleFlightFor } from "../single-flight.js";
 import {
   type BoundedRead,
   readBoundedRegularFileAsync,
@@ -301,14 +302,31 @@ export interface IntegrationInputs {
 
 export const nodePathExists = (path: string): boolean => existsSync(path);
 
-/** Whether a path exists, asynchronously (FIX2A F1): a stalled mount holds a pool thread, not the loop. */
-export async function nodePathExistsAsync(path: string): Promise<boolean> {
-  try {
-    await access(path, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
+/** The one file-system call the async existence check makes; injected by tests. */
+export interface PathExistsFs {
+  access(path: string, mode: number): Promise<void>;
+}
+
+const REAL_PATH_FS: PathExistsFs = { access: (path, mode) => access(path, mode) };
+const existenceFlights = new WeakMap<object, SingleFlight>();
+
+/**
+ * Whether a path exists, asynchronously (FIX2A F1): a stalled mount holds a pool thread, not the
+ * loop. At most one `access` per path is outstanding (FIX6A Codex-1): a call that is stuck on a
+ * stalled mount cannot be cancelled, so a later check shares it instead of holding another thread.
+ */
+export function nodePathExistsAsync(
+  path: string,
+  fs: PathExistsFs = REAL_PATH_FS,
+): Promise<boolean> {
+  return singleFlightFor(existenceFlights, fs).run(path, async () => {
+    try {
+      await fs.access(path, constants.F_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**

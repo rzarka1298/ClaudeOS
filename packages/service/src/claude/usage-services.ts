@@ -527,7 +527,10 @@ export function startUsageServices(deps: UsageServicesDeps): UsageServices {
       // finished, and not at all if the signal fired: an abandoned read must not record `unknown`.
       const settings = await readClaudeSettingsFactsAsync(settingsPath, runtimeDir, signal);
       const record = await readInstallRecordAsync(runtimeDir, signal);
-      const drops = await deps.poller.dropFacts();
+      // An unreadable drop file (FIX6A Codex-2) must not fail the whole settings read: the count
+      // only feeds the integration status, and the collectors probe reads the spool part from
+      // `spoolFacts` itself, where the failure reads unknown.
+      const drops = await deps.poller.dropFacts().catch(() => ({ count: 0 }));
       const nodePath = record?.nodePath ?? settings.hookNodePath;
       const runtimePresent =
         settings.hooks === "installed" && nodePath !== null

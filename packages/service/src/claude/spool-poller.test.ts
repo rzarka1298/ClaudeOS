@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClaudePipeline, IngestOutcome } from "./pipeline.js";
 import { type SpoolPoller, startSpoolPoller } from "./spool-poller.js";
 
@@ -327,5 +327,70 @@ describe("write-ahead durability (wave 3 review)", () => {
     await expect(p.drainNow()).resolves.toBe(2);
     expect(numbers()).toEqual([1, 2]);
     expect(spoolFiles()).toEqual([]);
+  });
+});
+
+describe("FIX6A Codex-2 and Codex-1: the drop facts tell a missing file from an unreadable one, and share one stat", () => {
+  const errno = (code: string): Error =>
+    Object.assign(new Error(`${code}: /Users/username/x`), { code });
+
+  it("only ENOENT is an empty spool; EACCES, EIO and any other error reject (the spool part then reads unknown, never clean)", async () => {
+    for (const code of ["EACCES", "EIO", "ENOTDIR", "ELOOP", "ETIMEDOUT"]) {
+      const stat = vi.fn(() => Promise.reject(errno(code)));
+      const p = start(60_000, { fs: { stat } as never });
+      await expect(p.dropFacts(), code).rejects.toThrow();
+      await p.stop();
+      poller = undefined;
+    }
+    const p = start(60_000, { fs: { stat: () => Promise.reject(errno("ENOENT")) } as never });
+    expect(await p.dropFacts()).toEqual({ count: 0, lastDropAt: null });
+  });
+
+  it("the rejection names no path", async () => {
+    const p = start(60_000, { fs: { stat: () => Promise.reject(errno("EACCES")) } as never });
+    const error = await p.dropFacts().then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(error?.message ?? "").not.toContain("username");
+  });
+
+  it("through the collectors probe an EACCES stat reads probe-error on the spool part, not spool-clean", async () => {
+    const { probeCollectors } = await import("../diagnostics/collectors-probe.js");
+    const { codexStatus, claudeStatus } = await import(
+      "../test-support/diagnostics-probe-fixtures.js"
+    );
+    const p = start(60_000, { fs: { stat: () => Promise.reject(errno("EACCES")) } as never });
+    const outcome = await probeCollectors(
+      {
+        integration: () => Promise.resolve(claudeStatus()),
+        spoolFacts: () => p.dropFacts(),
+        codexStatus: { status: () => codexStatus() },
+        minimumClaudeVersion: "2.0.0",
+        now: () => new Date("2026-10-22T09:00:00.000Z"),
+      },
+      new AbortController().signal,
+    );
+    const parts = (outcome as { parts?: Array<{ partId: string; reasonCode: string }> }).parts;
+    expect(parts?.find((part) => part.partId === "spool")?.reasonCode).toBe("probe-error");
+  });
+
+  it("N checks over a never-settling stat start exactly one stat; once it settles the next starts a fresh one", async () => {
+    let release: (info: { size: number; mtimeMs: number }) => void = () => undefined;
+    const stat = vi.fn(
+      () =>
+        new Promise<{ size: number; mtimeMs: number }>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const p = start(60_000, { fs: { stat } as never });
+    const checks = Array.from({ length: 5 }, () => p.dropFacts());
+    expect(stat).toHaveBeenCalledTimes(1);
+    release({ size: 0, mtimeMs: 0 });
+    for (const facts of await Promise.all(checks))
+      expect(facts).toEqual({ count: 0, lastDropAt: null });
+    stat.mockImplementation(() => Promise.resolve({ size: 0, mtimeMs: 0 }));
+    await p.dropFacts();
+    expect(stat).toHaveBeenCalledTimes(2);
   });
 });

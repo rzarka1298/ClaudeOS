@@ -2,13 +2,14 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   readBoundedRegularFile,
   readBoundedRegularFileAsync,
   readBoundedRegularFileDetailed,
 } from "./bounded-read.js";
 import {
+  nodePathExistsAsync,
   readClaudeSettingsFacts,
   readClaudeSettingsFactsAsync,
   readInstallRecord,
@@ -216,3 +217,107 @@ describe("FIX2A F5: missing is distinguished from unreadable", () => {
 function runtimeDirOf(): string {
   return join(dir, "runtime");
 }
+
+describe("FIX6A Codex-1: at most one open per path and cap in flight", () => {
+  /** A handle for a regular, empty file: the read ends at once. */
+  const emptyFile = () => ({
+    stat: () => Promise.resolve({ isFile: () => true, size: 0 }),
+    read: () => Promise.resolve({ bytesRead: 0 }),
+    close: vi.fn(() => Promise.resolve()),
+  });
+
+  it("N checks over a never-settling open start exactly one open, and each caller still times out on its own signal", async () => {
+    const open = vi.fn(() => new Promise<never>(() => undefined));
+    const fs = { open } as never;
+    const controllers = Array.from({ length: 6 }, () => new AbortController());
+    const reads = controllers.map((c) =>
+      readBoundedRegularFileAsync("/Users/username/.claude/settings.json", 1024, c.signal, fs),
+    );
+    await Promise.resolve();
+    for (const c of controllers) c.abort();
+    for (const read of reads) expect(await read).toEqual({ kind: "unreadable" });
+    expect(open).toHaveBeenCalledTimes(1);
+    // A later check, while the first open is still stuck, joins it: still one open.
+    const later = new AbortController();
+    const laterRead = readBoundedRegularFileAsync(
+      "/Users/username/.claude/settings.json",
+      1024,
+      later.signal,
+      fs,
+    );
+    later.abort();
+    expect(await laterRead).toEqual({ kind: "unreadable" });
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("once the open settles, the next check starts a fresh one", async () => {
+    let release: (handle: ReturnType<typeof emptyFile>) => void = () => undefined;
+    const open = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof emptyFile>>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const fs = { open } as never;
+    const path = "/Users/username/.claude/settings.json";
+    const first = new AbortController();
+    const stuck = readBoundedRegularFileAsync(path, 1024, first.signal, fs);
+    first.abort();
+    expect(await stuck).toEqual({ kind: "unreadable" });
+    const handle = emptyFile();
+    release(handle);
+    // Let the abandoned shared read finish and close its handle.
+    await vi.waitFor(() => expect(handle.close).toHaveBeenCalledTimes(1));
+    open.mockImplementation(() => Promise.resolve(emptyFile()));
+    expect(await readBoundedRegularFileAsync(path, 1024, undefined, fs)).toEqual({
+      kind: "text",
+      text: "",
+    });
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("different paths do not share a flight", async () => {
+    const open = vi.fn(() => new Promise<never>(() => undefined));
+    const fs = { open } as never;
+    const c = new AbortController();
+    const a = readBoundedRegularFileAsync("/Users/username/a", 1024, c.signal, fs);
+    const b = readBoundedRegularFileAsync("/Users/username/b", 1024, c.signal, fs);
+    await Promise.resolve();
+    c.abort();
+    await Promise.all([a, b]);
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("a caller whose signal never fires still gets the shared answer", async () => {
+    const open = vi.fn(() => Promise.resolve(emptyFile()));
+    const fs = { open } as never;
+    const [a, b] = await Promise.all([
+      readBoundedRegularFileAsync("/Users/username/x", 1024, undefined, fs),
+      readBoundedRegularFileAsync("/Users/username/x", 1024, undefined, fs),
+    ]);
+    expect(a).toEqual({ kind: "text", text: "" });
+    expect(b).toEqual(a);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("FIX6A Codex-1: the node path access check is single-flight per path", () => {
+  it("N checks over a never-settling access start exactly one access; once it settles the next starts fresh", async () => {
+    let release: () => void = () => undefined;
+    const access = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const fs = { access };
+    const path = "/Users/username/.nvm/node";
+    const checks = Array.from({ length: 5 }, () => nodePathExistsAsync(path, fs));
+    expect(access).toHaveBeenCalledTimes(1);
+    release();
+    expect(await Promise.all(checks)).toEqual([true, true, true, true, true]);
+    access.mockImplementation(() => Promise.reject(new Error("ENOENT")));
+    expect(await nodePathExistsAsync(path, fs)).toBe(false);
+    expect(access).toHaveBeenCalledTimes(2);
+  });
+});
