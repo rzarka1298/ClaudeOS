@@ -152,6 +152,13 @@ export function DiagnosticBundleBlock({
   const response = healthResponse.value;
   const phase = healthPhase.value;
   const vaultCheck = healthVaultCheck.value;
+  // The other inputs the bundle is built from are read here too, so a change to any of them while
+  // the preview is open re-renders the block and rebuilds the string (FIX4B m6).
+  const projects = projectsSnapshot.value;
+  const pluginDiagnostics = diagnostics.value;
+  const integration = claudeIntegration.value;
+  const { reducedMotion, notifyApprovals } = host.settings;
+  const { pluginVersion, obsidianVersion, vaultName, userName } = host.display;
   const loading = live && response === null && phase !== "error";
 
   const [open, setOpen] = useState(false);
@@ -211,12 +218,27 @@ export function DiagnosticBundleBlock({
     );
   }
 
-  // A new answer, a failed check or a connection change while the preview is open rebuilds it, so
-  // the preview never shows an older answer than the one the section holds. The string is replaced
+  // A new answer, a failed check, a connection change or a change to any other input (projects,
+  // plugin records, the Claude integration, the host's flags) while the preview is open rebuilds it,
+  // so the preview never shows an older answer than the one the plugin holds. The string is replaced
   // as a whole: the preview, Copy and Save move together.
   useEffect(() => {
     if (openRef.current) setOutcome(build());
-  }, [response, phase, kind, vaultCheck]);
+  }, [
+    response,
+    phase,
+    kind,
+    vaultCheck,
+    projects,
+    pluginDiagnostics,
+    integration,
+    reducedMotion,
+    notifyApprovals,
+    pluginVersion,
+    obsidianVersion,
+    vaultName,
+    userName,
+  ]);
 
   // Focus moves to the refusal heading when a refusal appears, not on every later rebuild.
   const shownKind = useRef<string | undefined>(undefined);
@@ -276,7 +298,9 @@ export function DiagnosticBundleBlock({
     checkGate.end();
     if (!mountedRef.current) return;
     if (result.kind === "ok") notify(checkedLine(result.timedOut));
-    else if (result.kind === "error") notify(ERROR_HEADING);
+    // An error, or a check the service going away cancelled with no newer fetch to take its place:
+    // either way it did not finish, and the line must not stay on `Checking…`.
+    else notify(ERROR_HEADING);
   }
 
   function onPreviewKeyDown(event: KeyboardEvent): void {

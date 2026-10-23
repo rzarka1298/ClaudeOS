@@ -11,7 +11,7 @@ import {
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ConnectionState } from "../connection-state.js";
-import { clearDiagnostics } from "../diagnostics.js";
+import { clearDiagnostics, recordDiagnostic } from "../diagnostics.js";
 import { configureHealth } from "../health/api.js";
 import {
   assembleBundleInput,
@@ -22,6 +22,7 @@ import {
 import { saveBundle, saveDialogAvailable } from "../health/export.js";
 import { configureBundleExport } from "../health/export-port.js";
 import {
+  clearHealth,
   healthPhase,
   healthResponse as healthSignal,
   healthVaultCheck,
@@ -44,6 +45,8 @@ import { requestSettingsSection, takeSettingsSectionRequest } from "./settings-s
  * these tests pin that the preview, Copy and Save use one verified string and that the bundle
  * never leaves except by the owner's own gesture.
  */
+
+const HEALTH_NOW_ISO = new Date(HEALTH_NOW).toISOString();
 
 const INTRO =
   "A bundle lists versions, the status of each subsystem with its reason code, counts and setting flags. It never contains file paths, names of projects, sessions, tasks or reports, log lines, email addresses or tokens. Read the preview before you share it.";
@@ -822,6 +825,118 @@ describe("Task 3, Test 4: a preview built from checks older than five minutes sa
     );
     expect(screen.getByText("Built from checks older than 5 minutes")).toBeTruthy();
     expect(get).not.toHaveBeenCalled();
+  });
+});
+
+describe("FIX4B m2: a check the service going away cancels does not leave Checking… on the status line", () => {
+  const STALE_NOW = Date.parse("2026-10-22T09:06:00.000Z");
+
+  it("Run checks again posts the error line when its check was superseded", async () => {
+    answered();
+    let release!: () => void;
+    configureHealth({
+      api: {
+        get: () =>
+          new Promise((resolve) => {
+            release = () => resolve(allOkHealth());
+          }),
+      },
+    });
+    const f = fixture();
+    renderBlock(f, { kind: "live" }, STALE_NOW);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run checks again" }));
+    expect(f.notify).toHaveBeenLastCalledWith("Checking…");
+    // The service goes away mid-check: the fetch in flight is dropped, no newer one replaces it.
+    await act(async () => {
+      clearHealth();
+    });
+    release();
+    await flush();
+    expect(f.notify).toHaveBeenLastCalledWith("Couldn't run the checks.");
+  });
+});
+
+describe("FIX4B m6: the open preview rebuilds when any input it is built from changes", () => {
+  function preview(): string {
+    return screen.getByRole("region", { name: "Diagnostic bundle preview" }).textContent ?? "";
+  }
+
+  function open(f: Fixture) {
+    answered();
+    const view = renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    return view;
+  }
+
+  it("a changed transcript-analysis flag rebuilds the preview", async () => {
+    const f = fixture();
+    open(f);
+    const before = preview();
+    expect(before).toBe(expectedText(f));
+    await act(async () => {
+      claudeIntegration.value = {
+        hooks: "not-installed",
+        hookRuntimeMissing: false,
+        disableAllHooks: null,
+        lastEventAt: null,
+        telemetry: { kind: "ok" },
+        detectedClaudeVersion: null,
+        statusLine: "not-installed",
+        statusLineReported: false,
+        transcriptAnalysis: { enabled: true },
+        spoolDropCount: 0,
+        unknownEventCount: 0,
+        cleanupPeriodDays: 30,
+      };
+    });
+    expect(preview()).not.toBe(before);
+    expect(preview()).toBe(expectedText(f, { transcriptAnalysis: true }));
+  });
+
+  it("a changed launcher summary in the projects snapshot rebuilds the preview", async () => {
+    const f = fixture();
+    open(f);
+    const before = preview();
+    const launchers = {
+      ...EMPTY_PROJECTS_SNAPSHOT.launchers,
+      antigravity: "ready" as const,
+    };
+    await act(async () => {
+      projectsSnapshot.value = { projects: [], launchers };
+    });
+    expect(preview()).not.toBe(before);
+    expect(preview()).toBe(expectedText(f, { launchers }));
+  });
+
+  it("a new plugin diagnostic record rebuilds the preview", async () => {
+    const f = fixture();
+    open(f);
+    const before = preview();
+    const record = { source: "layout", code: "unknown-widget", message: "x", at: HEALTH_NOW_ISO };
+    await act(async () => {
+      recordDiagnostic(record);
+    });
+    expect(preview()).not.toBe(before);
+    expect(preview()).toBe(expectedText(f, { diagnostics: [record] }));
+  });
+
+  it("a changed host setting (a feature flag) rebuilds the preview on the next render", () => {
+    const f = fixture();
+    const { rerender } = open(f);
+    const before = preview();
+    (f.host.settings as { notifyApprovals: boolean }).notifyApprovals = false;
+    rerender(
+      <DiagnosticBundleBlock
+        host={f.host}
+        connection={{ kind: "live" }}
+        now={HEALTH_NOW}
+        notify={f.notify}
+      />,
+    );
+    expect(preview()).not.toBe(before);
+    expect(preview()).toBe(expectedText(f));
+    expect(JSON.parse(preview()).features.notifyApprovals).toBe(false);
   });
 });
 
