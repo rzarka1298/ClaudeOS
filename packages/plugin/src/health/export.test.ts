@@ -1,23 +1,33 @@
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { remote, type SaveDialogOptions } from "../test-support/electron-stub.js";
+import { basename, join } from "node:path";
+import { BUNDLE_MAX_BYTES } from "@ccc/domain/diagnostic-bundle.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  copyBundle,
+  remote,
+  type SaveDialogOptions,
+  type StubWindow,
+  saveDialogOptionsOf,
+  saveDialogWindowOf,
+} from "../test-support/electron-stub.js";
+import {
   defaultBundleFileName,
+  type ExportFileSystem,
   isInsideVault,
+  nodeExportFileSystem,
   pickSavePath,
   saveBundle,
   saveDialogAvailable,
@@ -27,7 +37,8 @@ import {
 /**
  * The export seam (plan 08-16 Task 2; D-12, T-08-41, T-08-42): a typed save dialog, and a write
  * that goes only to an absolute `.json` path outside the open vault, atomically, with mode 0600,
- * never following a symlink, and that never reports the path it wrote.
+ * never following a symlink, never replacing an existing file (FIX4B m9, D-12a), and that never
+ * reports the path it wrote.
  */
 
 const NOW = Date.parse("2026-10-22T10:00:00.000Z");
@@ -47,6 +58,11 @@ function choose(path: string | undefined, canceled = false): void {
 
 function files(dir: string): string[] {
   return readdirSync(dir).sort();
+}
+
+/** The real file system with some operations replaced: the seam the race tests use. */
+function fsWith(patch: Partial<ExportFileSystem>): ExportFileSystem {
+  return { ...nodeExportFileSystem, ...patch };
 }
 
 beforeEach(() => {
@@ -78,10 +94,10 @@ describe("defaultBundleFileName", () => {
 });
 
 describe("pickSavePath", () => {
-  it("opens the dialog with a bare default name, a JSON filter and overwrite confirmation", async () => {
+  it("opens the dialog with a bare default name and a JSON filter, and asks for no overwrite confirmation", async () => {
     let seen: SaveDialogOptions | undefined;
-    dialog().showSaveDialog = (options) => {
-      seen = options;
+    dialog().showSaveDialog = (...args) => {
+      seen = saveDialogOptionsOf(...args);
       return Promise.resolve({ canceled: false, filePath: join(outside, "b.json") });
     };
     const pick = await pickSavePath({ defaultName: defaultBundleFileName(NOW) });
@@ -89,7 +105,49 @@ describe("pickSavePath", () => {
     expect(seen?.defaultPath).toBe("claude-command-center-diagnostics-2026-10-22.json");
     expect(seen?.defaultPath).not.toContain("/");
     expect(seen?.filters).toEqual([{ name: "JSON", extensions: ["json"] }]);
-    expect(seen?.properties).toContain("showOverwriteConfirmation");
+    // The save never replaces a file, so the dialog does not offer to (FIX4B m9, D-12a).
+    expect(seen?.properties ?? []).not.toContain("showOverwriteConfirmation");
+  });
+
+  it("FIX4B m8: passes the current window as the parent when the renderer has one", async () => {
+    const win: StubWindow = { stubWindow: true };
+    let seenWindow: StubWindow | undefined;
+    let seenOptions: SaveDialogOptions | undefined;
+    remote.getCurrentWindow = () => win;
+    dialog().showSaveDialog = (...args) => {
+      seenWindow = saveDialogWindowOf(...args);
+      seenOptions = saveDialogOptionsOf(...args);
+      return Promise.resolve({ canceled: false, filePath: join(outside, "b.json") });
+    };
+    try {
+      expect(await pickSavePath({ defaultName: "x.json" })).toEqual({
+        kind: "picked",
+        path: join(outside, "b.json"),
+      });
+    } finally {
+      remote.getCurrentWindow = undefined;
+    }
+    expect(seenWindow).toBe(win);
+    expect(seenOptions?.defaultPath).toBe("x.json");
+  });
+
+  it("FIX4B m8: falls back to the options alone when there is no window, or asking for it throws", async () => {
+    const calls: number[] = [];
+    dialog().showSaveDialog = (...args) => {
+      calls.push(args.length);
+      return Promise.resolve({ canceled: true });
+    };
+    remote.getCurrentWindow = undefined;
+    expect(await pickSavePath({ defaultName: "x.json" })).toEqual({ kind: "cancelled" });
+    remote.getCurrentWindow = () => {
+      throw new Error("no window");
+    };
+    try {
+      expect(await pickSavePath({ defaultName: "x.json" })).toEqual({ kind: "cancelled" });
+    } finally {
+      remote.getCurrentWindow = undefined;
+    }
+    expect(calls).toEqual([1, 1]);
   });
 
   it("is cancelled for a dismissed dialog and for a result with no path", async () => {
@@ -129,14 +187,57 @@ describe("Task 2, Test 1: a save writes the text byte for byte with mode 0600 an
     expect(JSON.stringify(result)).not.toContain(root);
   });
 
-  it("replaces an existing regular file atomically and keeps mode 0600", async () => {
+  it("FIX4B m9: never overwrites an existing file: it says exists and leaves the file byte-identical", async () => {
     const target = join(outside, "b.json");
     writeFileSync(target, "old contents", { mode: 0o644 });
     choose(target);
-    expect(await saveBundle(TEXT, vault, NOW)).toEqual({ kind: "saved" });
-    expect(readFileSync(target, "utf8")).toBe(TEXT);
-    expect(statSync(target).mode & 0o777).toBe(0o600);
+    expect(await saveBundle(TEXT, vault, NOW)).toEqual({ kind: "exists" });
+    expect(readFileSync(target, "utf8")).toBe("old contents");
+    expect(statSync(target).mode & 0o777).toBe(0o644);
+    // No temporary file is left behind either.
     expect(files(outside)).toEqual(["b.json"]);
+  });
+
+  it("FIX4B m9: exists is checked at the moment of landing, so a file that appears after the check is kept", async () => {
+    const target = join(outside, "b.json");
+    const fs = fsWith({
+      link: (existing, created) => {
+        writeFileSync(created, "arrived late");
+        return nodeExportFileSystem.link(existing, created);
+      },
+    });
+    expect(await writeBundleFile(TEXT, target, vault, fs)).toEqual({ kind: "exists" });
+    expect(readFileSync(target, "utf8")).toBe("arrived late");
+    expect(files(outside)).toEqual(["b.json"]);
+  });
+
+  it("FIX4B m9: a directory at the target is exists, not replaced", async () => {
+    mkdirSync(join(outside, "dir.json"));
+    expect(await writeBundleFile(TEXT, join(outside, "dir.json"), vault)).toEqual({
+      kind: "exists",
+    });
+    expect(files(outside)).toEqual(["dir.json"]);
+  });
+
+  it("the file is mode 0600 even under a hostile umask that removes the owner's bits", async () => {
+    // With `mode: 0600` alone, umask 0277 would leave 0400: only the explicit chmod restores 0600.
+    const previous = process.umask(0o277);
+    try {
+      const target = join(outside, "umask.json");
+      expect(await writeBundleFile(TEXT, target, vault)).toEqual({ kind: "saved" });
+      expect(statSync(target).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(previous);
+    }
+    // And a permissive umask cannot widen it: the create mode is 0600 to begin with.
+    const wide = process.umask(0o000);
+    try {
+      const target = join(outside, "wide.json");
+      expect(await writeBundleFile(TEXT, target, vault)).toEqual({ kind: "saved" });
+      expect(statSync(target).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(wide);
+    }
   });
 
   it("an upper-case .JSON extension is still a JSON file", async () => {
@@ -231,30 +332,186 @@ describe("Task 2, Test 3: refusals write nothing", () => {
   });
 
   it("a write that cannot complete is failed, throws nothing and leaves no temporary file", async () => {
-    // The target is an existing directory: the final rename cannot replace it.
-    mkdirSync(join(outside, "dir.json"));
-    expect(await writeBundleFile(TEXT, join(outside, "dir.json"), vault)).toEqual({
-      kind: "failed",
-    });
-    expect(files(outside)).toEqual(["dir.json"]);
     // The parent folder does not exist.
     expect(await writeBundleFile(TEXT, join(outside, "nope", "b.json"), vault)).toEqual({
       kind: "failed",
     });
+    // The write fails after the temporary file exists: the temporary file is removed.
+    const fs = fsWith({
+      open: async (...args) => {
+        const handle = await nodeExportFileSystem.open(...args);
+        return {
+          writeFile: (text, encoding) => handle.writeFile(text, encoding),
+          chmod: () => Promise.reject(new Error("disk full")),
+          sync: () => handle.sync(),
+          stat: (options) => handle.stat(options),
+          close: () => handle.close(),
+        };
+      },
+    });
+    expect(await writeBundleFile(TEXT, join(outside, "b.json"), vault, fs)).toEqual({
+      kind: "failed",
+    });
+    expect(files(outside)).toEqual([]);
   });
 });
 
-describe("a symlink at the target is replaced, never followed", () => {
-  it("leaves the file the link pointed at untouched and puts a real file where the link was", async () => {
+describe("FIX4B m7: text over the size cap is refused by the writer and the port on their own", () => {
+  const atCap = "x".repeat(BUNDLE_MAX_BYTES);
+
+  it("writes a string of exactly the cap, and refuses one byte more", async () => {
+    expect(await writeBundleFile(atCap, join(outside, "cap.json"), vault)).toEqual({
+      kind: "saved",
+    });
+    expect(statSync(join(outside, "cap.json")).size).toBe(BUNDLE_MAX_BYTES);
+    expect(await writeBundleFile(`${atCap}x`, join(outside, "over.json"), vault)).toEqual({
+      kind: "failed",
+    });
+    expect(files(outside)).toEqual(["cap.json"]);
+  });
+
+  it("counts utf-8 bytes, not characters", async () => {
+    const wide = "é".repeat(BUNDLE_MAX_BYTES / 2 + 1);
+    expect(wide.length).toBeLessThan(BUNDLE_MAX_BYTES);
+    expect(await writeBundleFile(wide, join(outside, "wide.json"), vault)).toEqual({
+      kind: "failed",
+    });
+    expect(files(outside)).toEqual([]);
+  });
+
+  it("the port refuses before it even opens the dialog", async () => {
+    let opened = 0;
+    dialog().showSaveDialog = () => {
+      opened += 1;
+      return Promise.resolve({ canceled: false, filePath: join(outside, "b.json") });
+    };
+    expect(await saveBundle(`${atCap}x`, vault, NOW)).toEqual({ kind: "failed" });
+    expect(opened).toBe(0);
+    expect(files(outside)).toEqual([]);
+  });
+});
+
+describe("FIX4B M1: containment is judged by identity, so a firmlink spelling of the vault is still the vault", () => {
+  const FIRMLINK_ROOT = "/System/Volumes/Data";
+
+  it("refuses the same folder reached through /System/Volumes/Data, and writes nothing into the vault", async () => {
+    const alias = `${FIRMLINK_ROOT}${realpathSync(vault)}`;
+    if (!existsSync(alias)) return; // Not macOS (or no firmlink for this folder): nothing to prove.
+    // The firmlink spelling passes a text comparison, which is the point of the identity check.
+    expect(isInsideVault(join(alias, "x.json"), vault)).toBe(false);
+    expect(isInsideVault(join(alias, "x.json"), realpathSync(vault))).toBe(false);
+    expect(await writeBundleFile(TEXT, join(alias, "x.json"), vault)).toEqual({
+      kind: "inside-vault",
+    });
+    expect(files(vault)).toEqual([]);
+  });
+
+  it("refuses a nested folder under the vault reached through the firmlink", async () => {
+    mkdirSync(join(vault, "sub"));
+    const alias = `${FIRMLINK_ROOT}${realpathSync(join(vault, "sub"))}`;
+    if (!existsSync(alias)) return;
+    expect(await writeBundleFile(TEXT, join(alias, "x.json"), vault)).toEqual({
+      kind: "inside-vault",
+    });
+    expect(files(join(vault, "sub"))).toEqual([]);
+  });
+
+  it("refuses a symlink to a folder nested under the vault", async () => {
+    // The link resolves to a folder inside the vault.
+    const nested = join(vault, "deep", "er");
+    mkdirSync(nested, { recursive: true });
+    const viaLink = join(root, "alias-to-deeper");
+    symlinkSync(nested, viaLink);
+    expect(await writeBundleFile(TEXT, join(viaLink, "x.json"), vault)).toEqual({
+      kind: "inside-vault",
+    });
+    expect(files(nested)).toEqual([]);
+  });
+
+  it("an outside folder that merely shares ancestors with the vault is still allowed", async () => {
+    expect(await writeBundleFile(TEXT, join(outside, "ok.json"), vault)).toEqual({
+      kind: "saved",
+    });
+  });
+});
+
+describe("FIX4B m1: the parent folder swapped between the check and the write", () => {
+  /** Moves the real folder away and leaves a link into the vault where it was. */
+  function swapParentForVaultLink(): string {
+    const moved = join(root, "out-moved");
+    renameSync(outside, moved);
+    symlinkSync(vault, outside);
+    return moved;
+  }
+
+  it("a swap before the file is created lands nothing in the vault", async () => {
+    let moved = "";
+    let links = 0;
+    const fs = fsWith({
+      open: (...args) => {
+        if (moved === "") moved = swapParentForVaultLink();
+        return nodeExportFileSystem.open(...args);
+      },
+      link: (existing, created) => {
+        links += 1;
+        return nodeExportFileSystem.link(existing, created);
+      },
+    });
+    expect(await writeBundleFile(TEXT, join(outside, "b.json"), vault, fs)).toEqual({
+      kind: "failed",
+    });
+    expect(moved).not.toBe("");
+    // The check before landing caught it: the file never even got its final name.
+    expect(links).toBe(0);
+    expect(files(vault)).toEqual([]);
+    expect(files(moved)).toEqual([]);
+  });
+
+  it("a swap at the moment of landing is undone: the landed file and the temporary are removed", async () => {
+    let moved = "";
+    const fs = fsWith({
+      link: (existing, created) => {
+        if (moved === "") {
+          moved = swapParentForVaultLink();
+          // The attacker also puts a copy of the temporary file where the link will land.
+          linkSync(join(moved, basename(existing)), existing);
+        }
+        return nodeExportFileSystem.link(existing, created);
+      },
+    });
+    expect(await writeBundleFile(TEXT, join(outside, "b.json"), vault, fs)).toEqual({
+      kind: "failed",
+    });
+    expect(moved).not.toBe("");
+    expect(files(vault)).toEqual([]);
+  });
+
+  it("an unchanged parent is saved as usual (the check does not misfire)", async () => {
+    expect(await writeBundleFile(TEXT, join(outside, "b.json"), vault)).toEqual({ kind: "saved" });
+    expect(files(outside)).toEqual(["b.json"]);
+  });
+});
+
+describe("FIX4B m9: a symlink at the target is refused, never followed or replaced", () => {
+  it("says exists and leaves the pointee and the link untouched", async () => {
     const precious = join(vault, "precious.json");
     writeFileSync(precious, "PRECIOUS");
     const link = join(outside, "b.json");
     symlinkSync(precious, link);
-    expect(await writeBundleFile(TEXT, link, vault)).toEqual({ kind: "saved" });
+    expect(await writeBundleFile(TEXT, link, vault)).toEqual({ kind: "exists" });
     expect(readFileSync(precious, "utf8")).toBe("PRECIOUS");
-    expect(readFileSync(link, "utf8")).toBe(TEXT);
-    expect(realpathSync(link)).toBe(join(realpathSync(outside), "b.json"));
+    // Still a symlink to the same file; nothing was written through it.
+    expect(realpathSync(link)).toBe(realpathSync(precious));
     expect(files(vault)).toEqual(["precious.json"]);
+    expect(files(outside)).toEqual(["b.json"]);
+  });
+
+  it("a dangling symlink is refused too, and its missing pointee is not created", async () => {
+    const missing = join(outside, "not-there.json");
+    const link = join(outside, "b.json");
+    symlinkSync(missing, link);
+    expect(await writeBundleFile(TEXT, link, vault)).toEqual({ kind: "exists" });
+    expect(existsSync(missing)).toBe(false);
   });
 });
 
@@ -274,17 +531,5 @@ describe("isInsideVault compares what the file system compares", () => {
     expect(isInsideVault("/a/Vault-old/b.json", "/a/Vault")).toBe(false);
     expect(isInsideVault("/a/out/b.json", "/a/Vault")).toBe(false);
     expect(isInsideVault("/a", "/a/Vault")).toBe(false);
-  });
-});
-
-describe("copyBundle", () => {
-  it("passes exactly the text to the clipboard port", async () => {
-    const copyText = vi.fn(() => Promise.resolve());
-    expect(await copyBundle(TEXT, copyText)).toBe("copied");
-    expect(copyText).toHaveBeenCalledWith(TEXT);
-  });
-
-  it("reports failed for a refused write, without throwing", async () => {
-    expect(await copyBundle(TEXT, () => Promise.reject(new Error("blocked")))).toBe("failed");
   });
 });

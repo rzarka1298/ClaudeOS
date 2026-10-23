@@ -130,12 +130,19 @@ describe("the Diagnostics files make no network call and import no client (DIAG-
   });
 
   it("export.ts is the only scanned file that writes: no other file names a write call", () => {
-    const WRITE = /\b(writeFile|appendFile|createWriteStream|rename|unlink|mkdir|rm|copyFile)\s*\(/;
+    const WRITE =
+      /\b(writeFile|appendFile|createWriteStream|rename|link|symlink|unlink|mkdir|rm|copyFile)\s*\(/;
     for (const [name, source] of SOURCES) {
       if (name === EXPORT_FILE) continue;
       expect(source, `${name} writes a file`).not.toMatch(WRITE);
     }
-    expect(sourceOf(EXPORT_FILE)).toMatch(/\brename\s*\(/);
+    // It lands the file with `link`, which cannot replace anything, and never with `rename`,
+    // which would (FIX4B m9, D-12a).
+    expect(sourceOf(EXPORT_FILE)).toMatch(/\blink\s*\(/);
+    expect(sourceOf(EXPORT_FILE)).not.toMatch(/\brename\s*\(/);
+    expect(sourceOf(EXPORT_FILE)).not.toMatch(
+      /\b(writeFile|createWriteStream)\s*\([^)]*\b(landing|target)\b/,
+    );
   });
 
   it("the client function is injected: wiring.ts takes it as a dependency and imports nothing of it", () => {
@@ -143,6 +150,19 @@ describe("the Diagnostics files make no network call and import no client (DIAG-
     expect(wiring).toContain("readonly getHealth");
     expect(wiring).not.toContain("getDiagnosticsHealth");
   });
+});
+
+describe("the bundle is serialised in one place only (plan 08-16, D-12; FIX4B)", () => {
+  it.each(["health/bundle-input.ts", "view/diagnostics-bundle.tsx"])(
+    "%s neither stringifies nor serialises the bundle itself: the verifier's string is the only one",
+    (name) => {
+      const source = sourceOf(name);
+      expect(source).not.toMatch(/JSON\.stringify/);
+      expect(source).not.toMatch(/\bserialiseBundle\b/);
+      // The one door is the domain's verifier.
+      if (name === "health/bundle-input.ts") expect(source).toMatch(/\bverifyAndSerialise\b/);
+    },
+  );
 });
 
 describe("no health fetch runs on a timer (D-05)", () => {

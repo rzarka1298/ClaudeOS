@@ -37,9 +37,9 @@ export const DEFAULT_SETTINGS: CommandCenterSettings = {
 /**
  * The settings object a plugin-data file resolves to: whatever is on disk
  * merged over {@link DEFAULT_SETTINGS}, so a file written before a key existed
- * resolves it to its default without upgrade code. `notifyApprovals` is the
- * one key coerced: a persisted non-boolean falls back to the default rather
- * than turning a notification off by accident.
+ * resolves it to its default without upgrade code. Every key is type-checked on its own:
+ * a persisted value of the wrong type falls back to that key's default (a non-boolean
+ * `notifyApprovals` never turns a notification off by accident).
  */
 export function mergeSettings(loaded: unknown): CommandCenterSettings {
   const onDisk =
@@ -47,15 +47,28 @@ export function mergeSettings(loaded: unknown): CommandCenterSettings {
       ? (loaded as Record<string, unknown>)
       : {};
   // Only the known keys are read from disk (FIX2B, D-16): a hand-edited data file with an extra
-  // key loads without it, so every save writes exactly the keys of DEFAULT_SETTINGS.
-  const merged: CommandCenterSettings = { ...DEFAULT_SETTINGS };
-  const writable = merged as unknown as Record<string, unknown>;
-  for (const key of Object.keys(DEFAULT_SETTINGS)) {
-    if (Object.hasOwn(onDisk, key)) writable[key] = onDisk[key];
-  }
-  const notifyApprovals: unknown = merged.notifyApprovals;
+  // key loads without it, so every save writes exactly the keys of DEFAULT_SETTINGS. Each key is
+  // then checked against its own type and falls back to its default alone (FIX4B m10): one bad
+  // value never discards, nor changes, the others.
+  const read = (key: keyof CommandCenterSettings): unknown =>
+    Object.hasOwn(onDisk, key) ? onDisk[key] : undefined;
+  const socketPathOverride = read("socketPathOverride");
+  const lastOpenedDestination = read("lastOpenedDestination");
+  const reducedMotion = read("reducedMotion");
+  const notifyApprovals = read("notifyApprovals");
   return {
-    ...merged,
+    socketPathOverride:
+      typeof socketPathOverride === "string" || socketPathOverride === null
+        ? socketPathOverride
+        : DEFAULT_SETTINGS.socketPathOverride,
+    lastOpenedDestination:
+      typeof lastOpenedDestination === "string"
+        ? lastOpenedDestination
+        : DEFAULT_SETTINGS.lastOpenedDestination,
+    reducedMotion:
+      reducedMotion === "auto" || reducedMotion === "reduced"
+        ? reducedMotion
+        : DEFAULT_SETTINGS.reducedMotion,
     notifyApprovals:
       typeof notifyApprovals === "boolean" ? notifyApprovals : DEFAULT_SETTINGS.notifyApprovals,
   };

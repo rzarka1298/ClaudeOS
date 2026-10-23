@@ -43,16 +43,41 @@ export interface SaveDialogResult {
   readonly filePath?: string | undefined;
 }
 
+/** A stand-in for Electron's `BrowserWindow`: opaque, only its identity matters. */
+export interface StubWindow {
+  readonly stubWindow: true;
+}
+
+/**
+ * Electron's `showSaveDialog` takes the options alone, or the parent window and then the options
+ * (FIX4B m8). A test double receives whichever the caller used.
+ */
+export type SaveDialogArgs =
+  | [options: SaveDialogOptions]
+  | [window: StubWindow, options: SaveDialogOptions];
+
+/** The options out of either call shape. */
+export function saveDialogOptionsOf(...args: SaveDialogArgs): SaveDialogOptions {
+  return args.length === 2 ? args[1] : args[0];
+}
+
+/** The parent window out of either call shape, or `undefined` when the call named none. */
+export function saveDialogWindowOf(...args: SaveDialogArgs): StubWindow | undefined {
+  return args.length === 2 ? args[0] : undefined;
+}
+
 export const remote: {
   dialog: {
     showOpenDialog: (options: OpenDialogOptions) => Promise<OpenDialogResult>;
-    showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
+    showSaveDialog: (...args: SaveDialogArgs) => Promise<SaveDialogResult>;
   };
+  /** Replaceable like the dialog; absent by default, as in a window that does not expose it. */
+  getCurrentWindow?: (() => StubWindow) | undefined;
 } = {
   dialog: {
     showOpenDialog: (_options: OpenDialogOptions): Promise<OpenDialogResult> =>
       Promise.resolve({ canceled: true, filePaths: [] }),
-    showSaveDialog: (_options: SaveDialogOptions): Promise<SaveDialogResult> =>
+    showSaveDialog: (..._args: SaveDialogArgs): Promise<SaveDialogResult> =>
       Promise.resolve({ canceled: true }),
   },
 };

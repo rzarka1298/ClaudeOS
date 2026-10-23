@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EMPTY_PROJECTS_SNAPSHOT, type ProjectView } from "@ccc/domain";
@@ -11,7 +19,7 @@ import {
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ConnectionState } from "../connection-state.js";
-import { clearDiagnostics } from "../diagnostics.js";
+import { clearDiagnostics, recordDiagnostic } from "../diagnostics.js";
 import { configureHealth } from "../health/api.js";
 import {
   assembleBundleInput,
@@ -20,17 +28,24 @@ import {
   type VerifyAndSerialise,
 } from "../health/bundle-input.js";
 import { saveBundle, saveDialogAvailable } from "../health/export.js";
-import { configureBundleExport } from "../health/export-port.js";
+import { bundleExport, configureBundleExport } from "../health/export-port.js";
 import {
+  clearHealth,
   healthPhase,
   healthResponse as healthSignal,
   healthVaultCheck,
   resetHealthState,
 } from "../health/state.js";
+import ClaudeCommandCenterPlugin from "../main.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { assertNoPrivatePathValues } from "../settings.js";
-import { remote } from "../test-support/electron-stub.js";
+import {
+  remote,
+  type SaveDialogOptions,
+  saveDialogOptionsOf,
+} from "../test-support/electron-stub.js";
 import { allOkHealth, HEALTH_NOW } from "../test-support/health-fixtures.js";
+import type { Plugin as StubObsidianPlugin } from "../test-support/obsidian-stub.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
 import { DiagnosticBundleBlock } from "./diagnostics-bundle.js";
 import { createLaunchersSession } from "./launchers-settings.js";
@@ -44,6 +59,8 @@ import { requestSettingsSection, takeSettingsSectionRequest } from "./settings-s
  * these tests pin that the preview, Copy and Save use one verified string and that the bundle
  * never leaves except by the owner's own gesture.
  */
+
+const HEALTH_NOW_ISO = new Date(HEALTH_NOW).toISOString();
 
 const INTRO =
   "A bundle lists versions, the status of each subsystem with its reason code, counts and setting flags. It never contains file paths, names of projects, sessions, tasks or reports, log lines, email addresses or tokens. Read the preview before you share it.";
@@ -389,10 +406,10 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     expect(readFileSync(target, "utf8")).toBe(preview);
   });
 
-  it("Test 2: the dialog gets the bare default name for the UTC date, a JSON filter and overwrite confirmation", async () => {
-    let seen: Parameters<typeof remote.dialog.showSaveDialog>[0] | undefined;
-    remote.dialog.showSaveDialog = (options) => {
-      seen = options;
+  it("Test 2: the dialog gets the bare default name for the UTC date and a JSON filter, and no overwrite confirmation", async () => {
+    let seen: SaveDialogOptions | undefined;
+    remote.dialog.showSaveDialog = (...args) => {
+      seen = saveDialogOptionsOf(...args);
       return Promise.resolve({ canceled: true });
     };
     const f = vaultFixture();
@@ -400,7 +417,22 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     await pressSave(f);
     expect(seen?.defaultPath).toBe("claude-command-center-diagnostics-2026-10-22.json");
     expect(seen?.filters).toEqual([{ name: "JSON", extensions: ["json"] }]);
-    expect(seen?.properties).toContain("showOverwriteConfirmation");
+    expect(seen?.properties ?? []).not.toContain("showOverwriteConfirmation");
+  });
+
+  it("FIX4B m9 (D-12a): an existing file is never replaced: the status line says so and the file is byte-identical", async () => {
+    const target = join(outside, "taken.json");
+    writeFileSync(target, "KEEP ME");
+    choose(target);
+    const f = vaultFixture();
+    openPreview(f);
+    await pressSave(f);
+    expect(f.notify).toHaveBeenLastCalledWith(
+      "A file with that name already exists. Choose a new name. Nothing was written.",
+    );
+    expect(readFileSync(target, "utf8")).toBe("KEEP ME");
+    expect(readdirSync(outside)).toEqual(["taken.json"]);
+    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
   });
 
   it("Test 3: a path inside the vault is refused with the fixed sentence and nothing is written", async () => {
@@ -422,11 +454,19 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     await pressSave(f);
     expect(f.notify).toHaveBeenLastCalledWith("Save cancelled. Nothing was written.");
 
+    // A folder already has that name: the save never replaces anything (D-12a).
     mkdirSync(join(outside, "dir.json"));
     choose(join(outside, "dir.json"));
     await pressSave(f);
-    expect(f.notify).toHaveBeenLastCalledWith("Couldn't save the bundle.");
+    expect(f.notify).toHaveBeenLastCalledWith(
+      "A file with that name already exists. Choose a new name. Nothing was written.",
+    );
     expect(readdirSync(outside)).toEqual(["dir.json"]);
+
+    // A write that cannot happen (the folder is missing) is the generic failure.
+    choose(join(outside, "nope", "b.json"));
+    await pressSave(f);
+    expect(f.notify).toHaveBeenLastCalledWith("Couldn't save the bundle.");
 
     choose(join(outside, "not-json.txt"));
     await pressSave(f);
@@ -825,6 +865,119 @@ describe("Task 3, Test 4: a preview built from checks older than five minutes sa
   });
 });
 
+describe("FIX4B m2: a check the service going away cancels does not leave Checking… on the status line", () => {
+  const STALE_NOW = Date.parse("2026-10-22T09:06:00.000Z");
+
+  it("Run checks again posts the error line when its check was superseded", async () => {
+    answered();
+    let release!: () => void;
+    configureHealth({
+      api: {
+        get: () =>
+          new Promise((resolve) => {
+            release = () => resolve(allOkHealth());
+          }),
+      },
+    });
+    const f = fixture();
+    renderBlock(f, { kind: "live" }, STALE_NOW);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run checks again" }));
+    expect(f.notify).toHaveBeenLastCalledWith("Checking…");
+    // The service goes away mid-check: the fetch in flight is dropped, no newer one replaces it.
+    await act(async () => {
+      clearHealth();
+    });
+    release();
+    await flush();
+    expect(f.notify).toHaveBeenLastCalledWith("Couldn't run the checks.");
+  });
+});
+
+describe("FIX4B m6: the open preview rebuilds when any input it is built from changes", () => {
+  function preview(): string {
+    return screen.getByRole("region", { name: "Diagnostic bundle preview" }).textContent ?? "";
+  }
+
+  function open(f: Fixture) {
+    answered();
+    const view = renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    return view;
+  }
+
+  it("a changed transcript-analysis flag rebuilds the preview", async () => {
+    const f = fixture();
+    open(f);
+    const before = preview();
+    expect(before).toBe(expectedText(f));
+    await act(async () => {
+      claudeIntegration.value = {
+        hooks: "not-installed",
+        hookRuntimeMissing: false,
+        disableAllHooks: null,
+        lastEventAt: null,
+        telemetry: { kind: "ok" },
+        detectedClaudeVersion: null,
+        statusLine: "not-installed",
+        statusLineReported: false,
+        transcriptAnalysis: { enabled: true },
+        spoolDropCount: 0,
+        unknownEventCount: 0,
+        cleanupPeriodDays: 30,
+      };
+    });
+    expect(preview()).not.toBe(before);
+    expect(preview()).toBe(expectedText(f, { transcriptAnalysis: true }));
+  });
+
+  it("a changed launcher summary in the projects snapshot rebuilds the preview", async () => {
+    const f = fixture();
+    open(f);
+    const before = preview();
+    const launchers = {
+      ...EMPTY_PROJECTS_SNAPSHOT.launchers,
+      antigravity: "set-up" as const,
+    };
+    await act(async () => {
+      projectsSnapshot.value = { projects: [], launchers };
+    });
+    expect(preview()).not.toBe(before);
+    expect(preview()).toBe(expectedText(f, { launchers }));
+  });
+
+  it("a new plugin diagnostic record rebuilds the preview", async () => {
+    const f = fixture();
+    open(f);
+    const before = preview();
+    const record = { source: "layout", code: "unknown-widget", message: "x", at: HEALTH_NOW_ISO };
+    await act(async () => {
+      recordDiagnostic(record);
+    });
+    expect(preview()).not.toBe(before);
+    expect(preview()).toBe(expectedText(f, { diagnostics: [record] }));
+  });
+
+  it("a changed host setting (a feature flag) rebuilds the preview on the next render", () => {
+    const f = fixture();
+    const { rerender } = open(f);
+    const before = preview();
+    (f.host.settings as { notifyApprovals: boolean }).notifyApprovals = false;
+    rerender(
+      <DiagnosticBundleBlock
+        host={f.host}
+        connection={{ kind: "live" }}
+        now={HEALTH_NOW}
+        notify={f.notify}
+      />,
+    );
+    expect(preview()).not.toBe(before);
+    expect(preview()).toBe(expectedText(f));
+    const parsed = JSON.parse(preview()) as { features: { notifyApprovals: boolean } };
+    expect(parsed.features.notifyApprovals).toBe(false);
+  });
+});
+
 describe("Task 3: loading and unavailable states", () => {
   it("while the first answer is awaited the preview is skeleton lines and the buttons wait", () => {
     healthPhase.value = "loading";
@@ -874,25 +1027,44 @@ describe("Task 3: loading and unavailable states", () => {
 });
 
 describe("Task 3, Test 5: the bundle is held in memory only", () => {
-  it("after Copy and Save nothing was persisted: no settings save, only the four allowed keys, no web storage", async () => {
+  it("after Copy and Save the real plugin made no saveData call and its real settings are unchanged", async () => {
     const root = mkdtempSync(join(tmpdir(), "ccc-bundle-mem-"));
+    // The REAL plugin (FIX2B m8 technique): its settings object, its `saveData` and its host are
+    // the ones production uses, so a stray write path would show up in `plugin.saved`.
+    const plugin = new ClaudeCommandCenterPlugin(
+      undefined as never,
+      { id: "claude-command-center", version: "9.9.9" } as never,
+    ) as ClaudeCommandCenterPlugin & StubObsidianPlugin;
+    plugin.stored = null;
     try {
       const vault = join(root, "Vault");
       const outside = join(root, "out");
       mkdirSync(vault);
       mkdirSync(outside);
-      configureBundleExport({ saveDialogAvailable, save: saveBundle });
+      await plugin.onload();
+      const pluginHost = plugin.settingsHost as SettingsHost;
+      expect(pluginHost.settings).toBe(plugin.settings);
+      const savesBefore = plugin.saved.length;
+      const settingsBefore = JSON.stringify(plugin.settings);
+      const keysBefore = Object.keys(plugin.settings).sort();
+
+      // `onload` wired the real export port; the display inputs are the only things replaced.
+      expect(bundleExport().saveDialogAvailable()).toBe(true);
       remote.dialog.showSaveDialog = () =>
         Promise.resolve({ canceled: false, filePath: join(outside, "b.json") });
       answered();
       const base = fixture();
-      const saveSettings = vi.fn(() => Promise.resolve());
       const f: Fixture = {
         ...base,
         host: {
-          ...base.host,
-          saveSettings,
-          display: { ...base.host.display, vaultBasePath: vault },
+          ...pluginHost,
+          copyText: base.copyText,
+          display: {
+            ...pluginHost.display,
+            vaultBasePath: vault,
+            pluginVersion: "0.1.0",
+            obsidianVersion: "1.13.1",
+          },
         },
       };
       renderBlock(f);
@@ -902,21 +1074,28 @@ describe("Task 3, Test 5: the bundle is held in memory only", () => {
       const before = f.notify.mock.calls.length;
       fireEvent.click(screen.getByRole("button", { name: "Save bundle" }));
       await waitFor(() => expect(f.notify.mock.calls.length).toBeGreaterThan(before));
+      expect(f.notify).toHaveBeenLastCalledWith("Bundle saved.");
 
-      expect(saveSettings).not.toHaveBeenCalled();
-      expect(Object.keys(f.host.settings).sort()).toEqual([
+      // Nothing was handed to the plugin's data storage, and its settings object is untouched.
+      expect(plugin.saved).toHaveLength(savesBefore);
+      expect(JSON.stringify(plugin.settings)).toBe(settingsBefore);
+      expect(Object.keys(plugin.settings).sort()).toEqual(keysBefore);
+      expect(Object.keys(plugin.settings).sort()).toEqual([
         "lastOpenedDestination",
         "notifyApprovals",
         "reducedMotion",
         "socketPathOverride",
       ]);
-      expect(() => assertNoPrivatePathValues(f.host.settings)).not.toThrow();
+      expect(() => assertNoPrivatePathValues(plugin.settings)).not.toThrow();
+      expect(JSON.stringify(plugin.saved)).not.toContain("bundleVersion");
       expect(window.localStorage.length).toBe(0);
       expect(window.sessionStorage.length).toBe(0);
       // The vault received nothing; the only file is the one the owner picked.
       expect(readdirSync(vault)).toEqual([]);
       expect(readdirSync(outside)).toEqual(["b.json"]);
     } finally {
+      cleanup();
+      plugin.onunload();
       configureBundleExport(null);
       remote.dialog.showSaveDialog = () => Promise.resolve({ canceled: true });
       rmSync(root, { recursive: true, force: true });

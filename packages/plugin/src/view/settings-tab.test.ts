@@ -223,19 +223,41 @@ describe("Task 3, Test 1: the tab holds exactly two items", () => {
   });
 });
 
+/**
+ * Every name the old native tab (`git show 0a69e4dc:packages/plugin/src/view/settings-tab.ts` plus
+ * `codex-settings.ts` `buildCodexGroup`) offered to Obsidian's settings search, other than Reduced
+ * motion which stays on the tab. A fixed list on purpose: it is the contract with the owner's
+ * muscle memory, so it must not be derived from the code under test (FIX4B m3).
+ */
+const OLD_TAB_SEARCHABLE_NAMES = [
+  // Claude Code group
+  "Claude Code hooks",
+  "Copy install command",
+  "Copy uninstall command",
+  "Status-line wrapper",
+  "Transcript analysis",
+  "Delete cached usage analytics",
+  // Approvals and tasks groups
+  "Approval notifications",
+  "Send a test approval",
+  "Rebuild task index",
+  // Codex group
+  "Codex hooks",
+  "Copy install step",
+  "Copy uninstall step",
+  "Antigravity terminal bridge",
+  "Copy bridge install step",
+  "Launcher",
+  "Codex notify setting",
+  // The Launcher row's own alias
+  "Open launcher settings",
+];
+
 describe("Task 3, Test 2: the pointer row keeps every migrated setting findable", () => {
   it("carries an alias for each migrated setting name", () => {
     const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
     const aliases = tab.getSettingDefinitions()[1]?.aliases ?? [];
-    for (const name of [
-      "Transcript analysis",
-      "Delete cached usage analytics",
-      "Approval notifications",
-      "Send a test approval",
-      "Rebuild task index",
-      "Codex hooks",
-      "Claude Code hooks",
-    ]) {
+    for (const name of OLD_TAB_SEARCHABLE_NAMES) {
       expect(aliases, name).toContain(name);
     }
     expect(aliases).toEqual(POINTER_ALIASES);
