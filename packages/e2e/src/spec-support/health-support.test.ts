@@ -1195,9 +1195,9 @@ describe("classifyReopenTiming and reopenCachedWithRetry (FIX8, item 30)", () =>
    * A browser whose clock `t` moves by `step` for every look at it, whose reopen shows what
    * `reopens` says in turn, and which counts the Run checks again presses.
    */
-  function timed(reopens: HealthRead[], step: number) {
+  function timed(reopens: HealthRead[], step: number, perLook = false) {
     /** The reopening shows the checked time of the answer it follows (the cache keeps it). */
-    const state = { t: 100_000, presses: 0, reopened: 0, answered: 0 };
+    const state = { t: 100_000, presses: 0, reopened: 0, answered: 0, looks: 0 };
     const answers = [1, 2, 3, 4].map(
       (n) =>
         ({
@@ -1209,7 +1209,10 @@ describe("classifyReopenTiming and reopenCachedWithRetry (FIX8, item 30)", () =>
       executeObsidianCommand: async () => undefined,
       executeObsidian: async (_fn: unknown, ...args: unknown[]) => {
         if (args[1] === "Run checks again") state.presses += 1;
-        if (args[1] === "Diagnostics") state.reopened += 1;
+        if (args[1] === "Diagnostics") {
+          state.reopened += 1;
+          state.looks = 0;
+        }
         return true;
       },
       execute: async () => {
@@ -1218,7 +1221,9 @@ describe("classifyReopenTiming and reopenCachedWithRetry (FIX8, item 30)", () =>
           return answers[state.answered - 1];
         }
         if (state.reopened > 0) {
-          const read = reopens[Math.min(state.reopened - 1, reopens.length - 1)] as HealthRead;
+          const at = perLook ? state.looks : state.reopened - 1;
+          state.looks += 1;
+          const read = reopens[Math.min(at, reopens.length - 1)] as HealthRead;
           const shown = answers[Math.max(0, state.answered - 1)];
           return state.answered > 0 && read !== liveRead
             ? ({ ...read, toolbarGeneratedAt: shown?.toolbarGeneratedAt } as HealthRead)
@@ -1238,7 +1243,11 @@ describe("classifyReopenTiming and reopenCachedWithRetry (FIX8, item 30)", () =>
   it("passes at once when the reopening is cached, with no further press", async () => {
     const { browser, state, now } = timed([cachedRead], 10);
     const clock = { lastPressAt: 100_000, answerNotSeenAt: 99_990 };
-    const result = await reopenCachedWithRetry(browser, clock, fresh, { now, reopenWait: wait });
+    const result = await reopenCachedWithRetry(browser, clock, fresh, {
+      now,
+      reopenWait: wait,
+      settleWait: { timeoutMs: 20, intervalMs: 1 },
+    });
     expect(result.problems).toEqual([]);
     expect(result.attempts).toBe(1);
     expect(state.presses).toBe(0);
@@ -1247,18 +1256,54 @@ describe("classifyReopenTiming and reopenCachedWithRetry (FIX8, item 30)", () =>
   it("never loosens the assertion: a Live reopening inside the window fails at once, with no retry", async () => {
     const { browser, state, now } = timed([liveRead], 10);
     const clock = { lastPressAt: 100_000, answerNotSeenAt: 99_990 };
-    const result = await reopenCachedWithRetry(browser, clock, fresh, { now, reopenWait: wait });
+    const result = await reopenCachedWithRetry(browser, clock, fresh, {
+      now,
+      reopenWait: wait,
+      settleWait: { timeoutMs: 20, intervalMs: 1 },
+    });
     expect(result.attempts).toBe(1);
     expect(state.presses).toBe(0);
     expect(result.problems.join(" ")).toContain("Cached");
     expect(result.problems.join(" ")).toMatch(/inside the answer cache window/);
   });
 
+  it("the first look after a reopening may still show the held, older answer as Live: it waits for the refetch to land and does not retry", async () => {
+    // Run 4 of the FIX8 trials: the reopening settled 24 ms after the answer and its first look
+    // showed the plugin's held answer (same checked time, rows Live) before the Cached refetch
+    // arrived. The first look is not the verdict; the page a moment later is.
+    const { browser, state, now } = timed([liveRead, liveRead, cachedRead], 10, true);
+    const clock = { lastPressAt: 100_000, answerNotSeenAt: 99_990 };
+    const result = await reopenCachedWithRetry(browser, clock, fresh, {
+      now,
+      reopenWait: wait,
+      settleWait: { timeoutMs: 2_000, intervalMs: 1 },
+    });
+    expect(result.problems).toEqual([]);
+    expect(result.attempts).toBe(1);
+    expect(state.presses).toBe(0);
+  });
+
+  it("still fails when the page keeps showing Live rows inside the window after the wait (the assertion is not loosened)", async () => {
+    const { browser, state, now } = timed([liveRead], 10);
+    const clock = { lastPressAt: 100_000, answerNotSeenAt: 99_990 };
+    const result = await reopenCachedWithRetry(browser, clock, fresh, {
+      now,
+      reopenWait: wait,
+      settleWait: { timeoutMs: 30, intervalMs: 1 },
+    });
+    expect(result.problems.join(" ")).toMatch(/inside the answer cache window/);
+    expect(state.presses).toBe(0);
+  });
+
   it("retries the press-then-reopen sequence when the reopening was too slow to be in the window", async () => {
     // Every look at the clock costs 1.2 s, so the first reopening settles after the window.
     const { browser, state, now } = timed([liveRead, cachedRead], 1_200);
     const clock = { lastPressAt: 100_000, answerNotSeenAt: 99_000 };
-    const result = await reopenCachedWithRetry(browser, clock, fresh, { now, reopenWait: wait });
+    const result = await reopenCachedWithRetry(browser, clock, fresh, {
+      now,
+      reopenWait: wait,
+      settleWait: { timeoutMs: 20, intervalMs: 1 },
+    });
     expect(state.presses).toBe(1);
     expect(result.attempts).toBe(2);
   });
@@ -1269,6 +1314,7 @@ describe("classifyReopenTiming and reopenCachedWithRetry (FIX8, item 30)", () =>
     const result = await reopenCachedWithRetry(browser, clock, fresh, {
       now,
       reopenWait: wait,
+      settleWait: { timeoutMs: 20, intervalMs: 1 },
       maxAttempts: 3,
     });
     expect(result.attempts).toBe(3);

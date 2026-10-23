@@ -1152,6 +1152,34 @@ export function classifyReopenTiming(timing: {
     : "window-may-be-missed";
 }
 
+/**
+ * The first settled look after a reopening can still show the plugin's HELD answer (same checked
+ * time, rows Live) for a few milliseconds before the refetch lands and replaces it with the cached
+ * one; the section is not busy in between. This gives the page a moment to show the refetched
+ * answer and returns the first look that is cached, or the last look when none is (FIX8).
+ */
+async function settleReopening(
+  browser: HealthBrowser,
+  answer: HealthRead,
+  firstLook: HealthRead,
+  wait: WaitOptions = { timeoutMs: 2_500, intervalMs: 50 },
+): Promise<HealthRead> {
+  if (checkCachedReopen(answer, firstLook).length === 0) return firstLook;
+  let last = firstLook;
+  try {
+    return await pollUntil(
+      async () => {
+        last = await readHealth(browser);
+        return checkCachedReopen(answer, last).length === 0 ? last : null;
+      },
+      { ...wait, describe: "the reopened Diagnostics to show the cached answer" },
+    );
+  } catch (error) {
+    if (isSessionLostError(error)) throw error;
+    return last;
+  }
+}
+
 export interface CachedReopenResult {
   /** Empty when a reopening within the window read Cached; otherwise what was wrong. */
   readonly problems: string[];
@@ -1176,6 +1204,8 @@ export async function reopenCachedWithRetry(
     now?: () => number;
     reopenWait?: WaitOptions;
     recheckWait?: WaitOptions;
+    /** How long the page gets after the first settled look to replace a held answer with the refetched one. */
+    settleWait?: WaitOptions;
   } = {},
 ): Promise<CachedReopenResult> {
   const maxAttempts = options.maxAttempts ?? 3;
@@ -1184,9 +1214,12 @@ export async function reopenCachedWithRetry(
   let answer = first;
   for (let attempt = 1; ; attempt += 1) {
     const notSeenAt = clock.answerNotSeenAt ?? clock.lastPressAt;
-    const second = await reopenDiagnostics(browser, options.reopenWait);
+    const firstLook = await reopenDiagnostics(browser, options.reopenWait);
+    // The verdict on the window uses the first settled look: the refetch cannot have reached the
+    // service later than the page showing anything for the reopening.
     const settledAt = now();
     const span = settledAt - notSeenAt;
+    const second = await settleReopening(browser, answer, firstLook, options.settleWait);
     spansMs.push(span);
     const problems = checkCachedReopen(answer, second);
     if (problems.length === 0) return { problems, attempts: attempt, spansMs };
