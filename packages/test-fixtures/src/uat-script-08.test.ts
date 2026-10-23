@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { REPO_ROOT } from "./gate-repo.js";
+import { recordedStateProblems } from "./uat-script-state.js";
 
 /**
  * Plan 08-23 Task 1 (T-08-55, D-26, D-46): keeps the Phase 8 live-Obsidian script honest. It reads
@@ -97,15 +98,24 @@ describe("guard (Test 1)", () => {
 run("front matter and results (Test 2)", () => {
   const tests = parseTests(text);
   const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
+  // Agents ship the script with every result pending (status: testing). The merge gate adds the
+  // runner's auto-result lines and the ratified passes; only the owner's sitting, recorded by the
+  // orchestrator, moves it to complete (uat-script-state.ts holds the rules).
+  const complete = /^status: complete$/m.test(front);
+  const untouched = !complete && !/^auto-result:/m.test(text);
 
   it("has the GSD front matter, the phase name and a Current Test block", () => {
-    expect(front).toMatch(/^status: testing$/m);
+    expect(front).toMatch(/^status: (testing|complete)$/m);
     expect(front).toMatch(/^phase: 08-slice-proof-settings-health$/m);
     expect(front).toMatch(/^started: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
     expect(front).toMatch(/^updated: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
     const current = section(text, "Current Test");
-    expect(current).toMatch(/number: 1\b/);
-    expect(current).toMatch(/awaiting: user response/);
+    if (complete) {
+      expect(current).toMatch(/\[testing complete\]/);
+    } else {
+      expect(current).toMatch(/number: 1\b/);
+      expect(current).toMatch(/awaiting: user response/);
+    }
   });
 
   it("lists the 08-NN summaries it is built from, and each one exists", () => {
@@ -125,7 +135,7 @@ run("front matter and results (Test 2)", () => {
     }
   });
 
-  it("numbers 39 tests consecutively, each with an expected block and exactly one pending result", () => {
+  it("numbers 39 tests consecutively, each with an expected block and exactly one result", () => {
     expect(tests.map((test) => test.number)).toEqual(
       Array.from({ length: TOTAL }, (_, i) => i + 1),
     );
@@ -134,17 +144,24 @@ run("front matter and results (Test 2)", () => {
       expect(test.body, `test ${test.number}`).toMatch(/^expected: /m);
       expect(test.expected.trim().length, `test ${test.number} expected`).toBeGreaterThan(40);
       const results = test.body.match(/^result: .*$/gm) ?? [];
-      expect(results, `test ${test.number}`).toEqual(["result: [pending]"]);
+      expect(results.length, `test ${test.number}`).toBe(1);
+      if (untouched) expect(results[0], `test ${test.number}`).toBe("result: [pending]");
     }
   });
 
   it("holds no result value but pending, no automated result and no owner note (D-46)", () => {
     const results = text.match(/^\s*result:.*$/gm) ?? [];
     expect(results.length).toBe(TOTAL);
-    for (const line of results) expect(line.trim()).toBe("result: [pending]");
-    // The runner writes auto-result lines at the merge gate; an agent never does.
-    expect(text).not.toMatch(/^auto-result:/m);
-    expect(text).not.toMatch(/^(reported|severity|reason|blocked_by):/m);
+    // The script as agents ship it: nothing recorded at all. Once the runner has written its
+    // auto-result lines, the next test takes over.
+    if (untouched) {
+      for (const line of results) expect(line.trim()).toBe("result: [pending]");
+      expect(text).not.toMatch(/^(reported|severity|reason|blocked_by):/m);
+    }
+  });
+
+  it("records only what the merge gate may record: the runner's lines, ratified passes, then the owner's results (D-46)", () => {
+    expect(recordedStateProblems(text, { total: TOTAL, ownerItems: OWNER })).toEqual([]);
   });
 
   it("keeps the Summary counts consistent with the results (the audit reads total:)", () => {
@@ -154,14 +171,17 @@ run("front matter and results (Test 2)", () => {
     const keys = ["passed", "issues", "pending", "skipped", "blocked"];
     for (const key of keys) expect(Number.isInteger(count(key)), key).toBe(true);
     expect(keys.reduce((sum, key) => sum + count(key), 0)).toBe(TOTAL);
-    expect(count("pending")).toBe(TOTAL);
-    expect(count("auto-passed")).toBe(0);
-    expect(count("auto-failed")).toBe(0);
-    expect(count("owner-pending")).toBe(OWNER.length);
+    if (untouched) {
+      expect(count("pending")).toBe(TOTAL);
+      expect(count("auto-passed")).toBe(0);
+      expect(count("auto-failed")).toBe(0);
+      expect(count("owner-pending")).toBe(OWNER.length);
+    }
   });
 
   it("has a Gaps block that records nothing the owner has not said", () => {
-    expect(section(text, "Gaps")).toMatch(/None recorded yet\./);
+    expect(section(text, "Gaps")).toMatch(/\S/);
+    if (untouched) expect(section(text, "Gaps")).toMatch(/None recorded yet\./);
   });
 });
 
