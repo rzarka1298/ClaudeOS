@@ -102,7 +102,7 @@ describe("pickSavePath", () => {
   });
 
   it("never throws: no dialog function is unavailable, a throwing dialog is failed", async () => {
-    dialog().showSaveDialog = () => Promise.reject(new Error("/Users/someone/secret"));
+    dialog().showSaveDialog = () => Promise.reject(new Error("/Users/username/secret"));
     expect(await pickSavePath({ defaultName: "x.json" })).toEqual({ kind: "failed" });
     // @ts-expect-error test double: simulate a renderer with no showSaveDialog
     dialog().showSaveDialog = undefined;

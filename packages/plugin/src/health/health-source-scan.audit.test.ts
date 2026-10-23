@@ -18,14 +18,31 @@ import { describe, expect, it } from "vitest";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VIEW_DIR = join(HERE, "..", "view");
 
-const HEALTH_FILES = ["api.ts", "state.ts", "wiring.ts"] as const;
+const HEALTH_FILES = [
+  "api.ts",
+  "state.ts",
+  "wiring.ts",
+  // Plan 08-16: the bundle's input assembly, its export seam and the one file that writes.
+  "bundle-input.ts",
+  "export-port.ts",
+  "export.ts",
+] as const;
 const VIEW_FILES = [
   "diagnostics-section.tsx",
   "diagnostics-row.tsx",
   "diagnostics-copy.ts",
   // Plan 08-15: the Security section reads the same health answer and fetches it once on open.
   "settings-security.tsx",
+  // Plan 08-16: the bundle block; its `Run checks again` is the third owner action.
+  "diagnostics-bundle.tsx",
 ] as const;
+
+/**
+ * The only file that may touch Electron or the file system (plan 08-16): it is the export seam's
+ * implementation. Everything else, the views above all, reaches it through `export-port.ts`.
+ */
+const EXPORT_FILE = "health/export.ts";
+const FILE_SYSTEM_IMPORT = /^(electron|node:fs|node:fs\/promises|node:path)$/;
 
 /** The component files (the a11y floor below applies to every one of them). */
 const COMPONENT_FILES = VIEW_FILES.filter((file) => file.endsWith(".tsx"));
@@ -60,7 +77,7 @@ const NETWORK = new RegExp(
 );
 
 const ALLOWED_IMPORT =
-  /^(@ccc\/domain\/(diagnostics|auth)\.js|@ccc\/domain|preact|preact\/hooks|@preact\/signals|\.\/[\w-]+\.js|\.\.\/connection-state\.js|\.\.\/host-registry\.js|\.\.\/health\/(api|state)\.js|\.\.\/widgets\/(footer|relative-time|session-signals)\.js)$/;
+  /^(@ccc\/domain\/(diagnostics|diagnostic-bundle|auth)\.js|@ccc\/domain|preact|preact\/hooks|@preact\/signals|\.\/[\w-]+\.js|\.\.\/connection-state\.js|\.\.\/diagnostics\.js|\.\.\/motion\.js|\.\.\/host-registry\.js|\.\.\/health\/(api|state|bundle-input|export-port)\.js|\.\.\/projects\/projects-state\.js|\.\.\/widgets\/(footer|relative-time|session-signals)\.js)$/;
 
 function importSpecifiers(source: string): string[] {
   return [...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+["']([^"']+)["']/gms)].map(
@@ -80,14 +97,44 @@ describe("the Diagnostics files make no network call and import no client (DIAG-
 
   it.each(SOURCES)(
     "%s imports only the domain, preact, signals and its siblings",
-    (_name, source) => {
+    (name, source) => {
       for (const specifier of importSpecifiers(source)) {
-        expect(specifier, `unexpected import ${specifier}`).toMatch(ALLOWED_IMPORT);
+        // The export seam's implementation alone may also name Electron and the file system.
+        const allowed =
+          name === EXPORT_FILE ? [ALLOWED_IMPORT, FILE_SYSTEM_IMPORT] : [ALLOWED_IMPORT];
+        expect(
+          allowed.some((pattern) => pattern.test(specifier)),
+          `unexpected import ${specifier} in ${name}`,
+        ).toBe(true);
       }
       expect(source).not.toContain("service-api-client");
       expect(source).not.toMatch(/from ["']obsidian["']/);
     },
   );
+
+  it("only export.ts imports node:fs/promises, node:fs, node:path or electron (plan 08-16, T-08-41, T-08-43)", () => {
+    const importers = SOURCES.filter(([, source]) =>
+      importSpecifiers(source).some((specifier) => FILE_SYSTEM_IMPORT.test(specifier)),
+    ).map(([name]) => name);
+    expect(importers).toEqual([EXPORT_FILE]);
+    expect(importSpecifiers(sourceOf(EXPORT_FILE))).toContain("node:fs/promises");
+  });
+
+  it("no view reaches the export implementation: only wiring.ts imports export.js, so the harness bundle never sees Electron or the file system", () => {
+    const importers = SOURCES.filter(([, source]) =>
+      importSpecifiers(source).some((specifier) => /(^|\/)export\.js$/.test(specifier)),
+    ).map(([name]) => name);
+    expect(importers).toEqual(["health/wiring.ts"]);
+  });
+
+  it("export.ts is the only scanned file that writes: no other file names a write call", () => {
+    const WRITE = /\b(writeFile|appendFile|createWriteStream|rename|unlink|mkdir|rm|copyFile)\s*\(/;
+    for (const [name, source] of SOURCES) {
+      if (name === EXPORT_FILE) continue;
+      expect(source, `${name} writes a file`).not.toMatch(WRITE);
+    }
+    expect(sourceOf(EXPORT_FILE)).toMatch(/\brename\s*\(/);
+  });
 
   it("the client function is injected: wiring.ts takes it as a dependency and imports nothing of it", () => {
     const wiring = sourceOf("health/wiring.ts");
@@ -110,6 +157,8 @@ describe("no health fetch runs on a timer (D-05)", () => {
     );
     expect(callers.sort()).toEqual([
       "health/state.ts:reconnect",
+      // The bundle block's `Run checks again` (stale line and refusal panel): a press, one call site.
+      "view/diagnostics-bundle.tsx:gesture",
       "view/diagnostics-section.tsx:gesture",
       "view/diagnostics-section.tsx:gesture",
       // Opening Security is an owner action: the one fetch, from its mount effect.
@@ -122,6 +171,7 @@ describe("no health fetch runs on a timer (D-05)", () => {
       const count = (source.match(/["']gesture["']/g) ?? []).length;
       if (name === "view/diagnostics-section.tsx") expect(count).toBe(2);
       else if (name === "view/settings-security.tsx") expect(count).toBe(1);
+      else if (name === "view/diagnostics-bundle.tsx") expect(count).toBe(1);
       else if (name === "health/api.ts") expect(count).toBe(2);
       else expect(count, `${name} names the gesture trigger`).toBe(0);
     }

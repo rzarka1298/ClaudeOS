@@ -291,7 +291,7 @@ describe("Task 1, Test 2: the live signal wins, the seam is the fallback, the se
     claudeIntegration.value = CLAUDE_NOT_INSTALLED;
     codexIntegration.value = CODEX_STATUS;
     const f = fixture();
-    renderSection(f, { kind: "disconnected", reason: "ECONNREFUSED /Users/someone/x" });
+    renderSection(f, { kind: "disconnected", reason: "ECONNREFUSED /Users/username/x" });
     await flush();
     for (const name of [
       "Claude Code hooks",

@@ -284,7 +284,7 @@ describe("Task 2, Test 2: the keychain chips", () => {
     rerender(
       <SecuritySection
         host={f.host}
-        connection={{ kind: "disconnected", reason: "ECONNREFUSED /Users/someone/x.sock" }}
+        connection={{ kind: "disconnected", reason: "ECONNREFUSED /Users/username/x.sock" }}
         now={HEALTH_NOW}
         notify={f.notify}
       />,

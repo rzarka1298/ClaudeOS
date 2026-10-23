@@ -1,7 +1,13 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildDiagnosticBundle, serialiseBundle } from "@ccc/domain/diagnostic-bundle.js";
+import { EMPTY_PROJECTS_SNAPSHOT, type ProjectView } from "@ccc/domain";
+import {
+  type BundleRefusalCode,
+  buildDiagnosticBundle,
+  serialiseBundle,
+  verifyAndSerialise,
+} from "@ccc/domain/diagnostic-bundle.js";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ConnectionState } from "../connection-state.js";
@@ -11,6 +17,7 @@ import {
   assembleBundleInput,
   type BundleSources,
   currentRuntimeFacts,
+  type VerifyAndSerialise,
 } from "../health/bundle-input.js";
 import { saveBundle, saveDialogAvailable } from "../health/export.js";
 import { configureBundleExport } from "../health/export-port.js";
@@ -20,7 +27,8 @@ import {
   healthVaultCheck,
   resetHealthState,
 } from "../health/state.js";
-import { resetProjectsState } from "../projects/projects-state.js";
+import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
+import { assertNoPrivatePathValues } from "../settings.js";
 import { remote } from "../test-support/electron-stub.js";
 import { allOkHealth, HEALTH_NOW } from "../test-support/health-fixtures.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
@@ -62,6 +70,11 @@ function fixture(copy?: () => Promise<void>): Fixture {
     },
   };
   return { host, notify: vi.fn<(message: string) => void>(), copyText };
+}
+
+/** The fixture with some display inputs replaced (the host's `display` is read-only). */
+function withDisplay(f: Fixture, patch: Partial<SettingsHost["display"]>): Fixture {
+  return { ...f, host: { ...f.host, display: { ...f.host.display, ...patch } } };
 }
 
 /** The sources the block builds from, as the test knows them (live connection, all-ok answer). */
@@ -476,5 +489,446 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     answered();
     renderBlock(vaultFixture());
     expect(screen.queryByRole("button", { name: "Save bundle" })).toBeNull();
+  });
+});
+
+const REFUSAL_LABELS = {
+  "home-path": "a home folder path",
+  "tilde-path": "a path starting with ~/",
+  email: "an email address",
+  "token-shaped": "a token-shaped string",
+  "denylist-project": "a project name",
+  "denylist-folder": "a folder name",
+  "denylist-github": "a GitHub owner or repository name",
+  "denylist-vault": "the vault name",
+  "denylist-user": "your macOS user name",
+  "schema-invalid": "the bundle format",
+  "too-large": "the size limit",
+} as const satisfies Record<BundleRefusalCode, string>;
+
+/** A project the owner would not want in a public bug report (invented, harmless). */
+function projectView(overrides: Partial<ProjectView> = {}): ProjectView {
+  return {
+    projectId: "project-1",
+    displayName: "Plumcellar Ledger",
+    displayPath: "~/code/plumcellar-ledger",
+    pinned: false,
+    lastOpenedAt: null,
+    observedAt: null,
+    gitReadFailed: false,
+    git: { kind: "pending" },
+    github: { kind: "github", label: "github.com/quillowner/quillrepo", source: "remote" },
+    ...overrides,
+  } as ProjectView;
+}
+
+function holdProjects(projects: ProjectView[]): void {
+  projectsSnapshot.value = { projects, launchers: EMPTY_PROJECTS_SNAPSHOT.launchers };
+}
+
+function refuseWith(rule: BundleRefusalCode): VerifyAndSerialise {
+  return () => ({ ok: false, rule });
+}
+
+function describedBy(element: HTMLElement): string[] {
+  return (element.getAttribute("aria-describedby") ?? "")
+    .split(" ")
+    .map((id) => document.getElementById(id)?.textContent ?? "");
+}
+
+describe("Task 3, Test 1: a refused bundle is never rendered and names the rule, never the value", () => {
+  it.each(Object.entries(REFUSAL_LABELS))(
+    "%s: the panel names the rule by its closed label and the preview is not rendered",
+    (rule, label) => {
+      answered();
+      holdProjects([projectView()]);
+      const f = fixture();
+      const { container } = render(
+        <DiagnosticBundleBlock
+          host={f.host}
+          connection={{ kind: "live" }}
+          now={HEALTH_NOW}
+          notify={f.notify}
+          verify={refuseWith(rule as BundleRefusalCode)}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+
+      const heading = screen.getByRole("heading", { level: 5, name: "Bundle not offered" });
+      expect(heading.className).toBe("ccc-settings-item-title");
+      expect(heading.getAttribute("tabindex")).toBe("-1");
+      expect(document.activeElement).toBe(heading);
+      expect(
+        screen.getByText(
+          `The bundle failed a privacy check (${label}), so it can't be copied or saved. Nothing was exported. Run the checks again to rebuild it.`,
+        ),
+      ).toBeTruthy();
+      // No preview, no JSON, and nothing the matched value could have been.
+      expect(screen.queryByRole("region", { name: "Diagnostic bundle preview" })).toBeNull();
+      expect(container.textContent).not.toContain("bundleVersion");
+      for (const private_ of [
+        "Plumcellar",
+        "plumcellar",
+        "quillowner",
+        "quillrepo",
+        "Marrowvault",
+        "zinnia",
+      ]) {
+        expect(container.textContent, private_).not.toContain(private_);
+      }
+    },
+  );
+
+  it("Copy and Save stay present but aria-disabled with the visible reason, and a press does nothing", async () => {
+    answered();
+    const f = fixture();
+    render(
+      <DiagnosticBundleBlock
+        host={f.host}
+        connection={{ kind: "live" }}
+        now={HEALTH_NOW}
+        notify={f.notify}
+        verify={refuseWith("denylist-project")}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    for (const name of ["Copy bundle", "Save bundle"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(describedBy(button)).toContain("The bundle was refused by a privacy check.");
+      fireEvent.click(button);
+    }
+    await flush();
+    expect(f.copyText).not.toHaveBeenCalled();
+    expect(f.notify).not.toHaveBeenCalled();
+  });
+
+  it("offers Run checks again, which re-runs the read-only checks as a press and rebuilds", async () => {
+    answered();
+    const get = vi.fn((_trigger: string) => Promise.resolve(allOkHealth()));
+    configureHealth({ api: { get } });
+    const f = fixture();
+    let refuse = true;
+    const verify: VerifyAndSerialise = (bundle, denylist) =>
+      refuse ? { ok: false, rule: "email" } : verifyAndSerialise(bundle, denylist);
+    render(
+      <DiagnosticBundleBlock
+        host={f.host}
+        connection={{ kind: "live" }}
+        now={HEALTH_NOW}
+        notify={f.notify}
+        verify={verify}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    refuse = false;
+    fireEvent.click(screen.getByRole("button", { name: "Run checks again" }));
+    await waitFor(() =>
+      expect(screen.getByRole("region", { name: "Diagnostic bundle preview" })).toBeTruthy(),
+    );
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith("gesture");
+    expect(f.notify).toHaveBeenCalledWith("Checked just now.");
+    expect(screen.queryByRole("heading", { name: "Bundle not offered" })).toBeNull();
+  });
+});
+
+describe("Task 3, Test 2: a hostile registry still yields a verified bundle that contains none of it", () => {
+  const HOSTILE_NAMES = [
+    // A real-looking home path, assembled at run time so no literal one sits in a tracked file.
+    `${"/Use"}rs/alice-example/code/secret`,
+    "owner@example.org",
+    "Plumcellar Ledger",
+    "ünïcödé  Project",
+    "a.b(c)[d]*",
+    "UPPER lower 日本語",
+  ];
+
+  it("offers the bundle, and neither the names, the vault name nor the user name appear in it", () => {
+    answered();
+    holdProjects([
+      ...HOSTILE_NAMES.map((name, index) =>
+        projectView({
+          projectId: `project-${index}` as ProjectView["projectId"],
+          displayName: name.slice(0, 64),
+          displayPath: `~/work/${name.replace(/\//g, "-")}`,
+          github: {
+            kind: "github",
+            label: `github.com/owner${index}-x/repo${index}-y`,
+            source: "remote",
+          },
+        }),
+      ),
+      // Names that look like the bundle's own words or numbers must never block export.
+      projectView({
+        projectId: "project-w1" as ProjectView["projectId"],
+        displayName: "setup",
+        displayPath: "~/live",
+        github: { kind: "none" },
+      }),
+      projectView({
+        projectId: "project-w2" as ProjectView["projectId"],
+        displayName: "2026",
+        displayPath: "~/1.13",
+        github: { kind: "none" },
+      }),
+    ]);
+    const f = withDisplay(fixture(), { vaultName: "Marrow Vault ☃", userName: "zinnia.example" });
+    const { container } = renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    const preview = screen.getByRole("region", { name: "Diagnostic bundle preview" });
+    expect(screen.queryByRole("heading", { name: "Bundle not offered" })).toBeNull();
+    const text = (preview.textContent ?? "").toLowerCase();
+    const squashed = text.replace(/[^\p{L}\p{N}]/gu, "");
+    for (const name of [...HOSTILE_NAMES, "Marrow Vault ☃", "zinnia.example"]) {
+      expect(text, name).not.toContain(name.toLowerCase());
+      const flat = name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+      expect(squashed, name).not.toContain(flat);
+    }
+    expect(container.textContent).not.toContain("alice-example");
+  });
+
+  it("a bundle that really contains a project name is refused by the real verifier, naming the rule only", () => {
+    // The builder cannot carry a name into the bundle, so this wraps the real verifier and hands it
+    // a bundle with the project's name planted in a version field: the second check must catch it.
+    answered();
+    holdProjects([projectView({ displayName: "ccc-layout-widget" })]);
+    const f = fixture();
+    const verify: VerifyAndSerialise = (bundle, denylist) => {
+      const tainted = {
+        ...(bundle as object),
+        versions: {
+          plugin: "0.1.0",
+          service: null,
+          obsidian: "ccc-layout-widget",
+          electron: null,
+          node: null,
+          storeSchema: null,
+        },
+      };
+      return verifyAndSerialise(tainted, denylist);
+    };
+    render(
+      <DiagnosticBundleBlock
+        host={f.host}
+        connection={{ kind: "live" }}
+        now={HEALTH_NOW}
+        notify={f.notify}
+        verify={verify}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    expect(screen.getByRole("heading", { level: 5, name: "Bundle not offered" })).toBeTruthy();
+    expect(document.body.textContent).not.toContain("ccc-layout-widget");
+  });
+});
+
+describe("Task 3, Test 3: with the service away the bundle is still offered from plugin-local data", () => {
+  it("shows the explanatory line and null counts, with the service row failing and the rest unknown", () => {
+    const f = fixture();
+    renderBlock(f, { kind: "disconnected", reason: "ECONNREFUSED /Users/username/x" });
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    const preview = screen.getByRole("region", { name: "Diagnostic bundle preview" });
+    expect(
+      screen.getByText(
+        "The companion service isn't running, so service versions and counts are left out.",
+      ),
+    ).toBeTruthy();
+    const parsed = JSON.parse(preview.textContent ?? "{}") as {
+      counts: Record<string, number | null>;
+      versions: Record<string, string | null>;
+      subsystems: { id: string; status: string }[];
+    };
+    expect(parsed.counts.projects).toBeNull();
+    expect(parsed.counts.scanFolders).toBeNull();
+    expect(parsed.counts.openTasks).toBeNull();
+    expect(parsed.counts.reports).toBeNull();
+    expect(parsed.versions.service).toBeNull();
+    expect(parsed.subsystems.find((row) => row.id === "service")?.status).toBe("failing");
+    expect(
+      parsed.subsystems
+        .filter((row) => row.id !== "service")
+        .every((row) => row.status === "unknown"),
+    ).toBe(true);
+    expect(preview.textContent).not.toContain("ECONNREFUSED");
+    expect(
+      screen.getByRole("button", { name: "Copy bundle" }).getAttribute("aria-disabled"),
+    ).toBeNull();
+  });
+
+  it("a held answer from before the disconnect is not used", () => {
+    answered();
+    const f = fixture();
+    renderBlock(f, { kind: "disconnected", reason: "x" });
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    expect(screen.getByRole("region", { name: "Diagnostic bundle preview" }).textContent).toBe(
+      expectedText(f, { connection: "disconnected", health: null }),
+    );
+  });
+
+  it("a failed check with the service up says the checks couldn't run and still offers the bundle", () => {
+    healthPhase.value = "error";
+    const f = fixture();
+    renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    expect(
+      screen.getByText("The checks couldn't run, so service versions and counts are left out."),
+    ).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Diagnostic bundle preview" })).toBeTruthy();
+  });
+});
+
+describe("Task 3, Test 4: a preview built from checks older than five minutes says so", () => {
+  const STALE_NOW = Date.parse("2026-10-22T09:06:00.000Z");
+
+  it("adds the stale line and a Run checks again action that re-checks as a press", async () => {
+    answered();
+    const get = vi.fn((_trigger: string) => Promise.resolve(allOkHealth()));
+    configureHealth({ api: { get } });
+    const f = fixture();
+    renderBlock(f, { kind: "live" }, STALE_NOW);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    expect(screen.getByText("Built from checks older than 5 minutes")).toBeTruthy();
+    expect(get).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Run checks again" }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    expect(get).toHaveBeenCalledWith("gesture");
+  });
+
+  it("a fresh answer has neither the line nor the action", () => {
+    answered();
+    const f = fixture();
+    renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    expect(screen.queryByText("Built from checks older than 5 minutes")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run checks again" })).toBeNull();
+  });
+
+  it("the stale line appears when the clock moves on while the preview is open, without a fetch", () => {
+    answered();
+    const get = vi.fn((_trigger: string) => Promise.resolve(allOkHealth()));
+    configureHealth({ api: { get } });
+    const f = fixture();
+    const { rerender } = renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    rerender(
+      <DiagnosticBundleBlock
+        host={f.host}
+        connection={{ kind: "live" }}
+        now={STALE_NOW}
+        notify={f.notify}
+      />,
+    );
+    expect(screen.getByText("Built from checks older than 5 minutes")).toBeTruthy();
+    expect(get).not.toHaveBeenCalled();
+  });
+});
+
+describe("Task 3: loading and unavailable states", () => {
+  it("while the first answer is awaited the preview is skeleton lines and the buttons wait", () => {
+    healthPhase.value = "loading";
+    const f = fixture();
+    const { container } = renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    expect(screen.queryByRole("region", { name: "Diagnostic bundle preview" })).toBeNull();
+    expect(container.textContent).not.toContain("bundleVersion");
+    expect(container.querySelectorAll(".ccc-skeleton-line").length).toBeGreaterThan(0);
+    for (const name of ["Copy bundle", "Save bundle"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(describedBy(button)).toContain("Waiting for the checks.");
+    }
+  });
+
+  it("builds the preview when the first answer lands", async () => {
+    healthPhase.value = "loading";
+    const f = fixture();
+    renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    await act(async () => {
+      healthSignal.value = allOkHealth();
+      healthPhase.value = "ready";
+      healthVaultCheck.value = "match";
+    });
+    expect(screen.getByRole("region", { name: "Diagnostic bundle preview" }).textContent).toBe(
+      expectedText(f),
+    );
+    expect(
+      screen.getByRole("button", { name: "Copy bundle" }).getAttribute("aria-disabled"),
+    ).toBeNull();
+  });
+
+  it("an unknown or malformed plugin version makes the export unavailable, never an invented version", () => {
+    answered();
+    const f = withDisplay(fixture(), { pluginVersion: "0.1.0-Plumcellar" });
+    renderBlock(f);
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    expect(screen.queryByRole("region", { name: "Diagnostic bundle preview" })).toBeNull();
+    expect(screen.getByText("The bundle couldn't be built.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("Plumcellar");
+    for (const name of ["Copy bundle", "Save bundle"]) {
+      expect(screen.getByRole("button", { name }).getAttribute("aria-disabled")).toBe("true");
+    }
+  });
+});
+
+describe("Task 3, Test 5: the bundle is held in memory only", () => {
+  it("after Copy and Save nothing was persisted: no settings save, only the four allowed keys, no web storage", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ccc-bundle-mem-"));
+    try {
+      const vault = join(root, "Vault");
+      const outside = join(root, "out");
+      mkdirSync(vault);
+      mkdirSync(outside);
+      configureBundleExport({ saveDialogAvailable, save: saveBundle });
+      remote.dialog.showSaveDialog = () =>
+        Promise.resolve({ canceled: false, filePath: join(outside, "b.json") });
+      answered();
+      const base = fixture();
+      const saveSettings = vi.fn(() => Promise.resolve());
+      const f: Fixture = {
+        ...base,
+        host: {
+          ...base.host,
+          saveSettings,
+          display: { ...base.host.display, vaultBasePath: vault },
+        },
+      };
+      renderBlock(f);
+      fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+      fireEvent.click(screen.getByRole("button", { name: "Copy bundle" }));
+      await flush();
+      const before = f.notify.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Save bundle" }));
+      await waitFor(() => expect(f.notify.mock.calls.length).toBeGreaterThan(before));
+
+      expect(saveSettings).not.toHaveBeenCalled();
+      expect(Object.keys(f.host.settings).sort()).toEqual([
+        "lastOpenedDestination",
+        "notifyApprovals",
+        "reducedMotion",
+        "socketPathOverride",
+      ]);
+      expect(() => assertNoPrivatePathValues(f.host.settings)).not.toThrow();
+      expect(window.localStorage.length).toBe(0);
+      expect(window.sessionStorage.length).toBe(0);
+      // The vault received nothing; the only file is the one the owner picked.
+      expect(readdirSync(vault)).toEqual([]);
+      expect(readdirSync(outside)).toEqual(["b.json"]);
+    } finally {
+      configureBundleExport(null);
+      remote.dialog.showSaveDialog = () => Promise.resolve({ canceled: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("hiding the preview drops the string from the page", () => {
+    answered();
+    const { container } = renderBlock(fixture());
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    expect(container.textContent).toContain("bundleVersion");
+    fireEvent.click(screen.getByRole("button", { name: "Hide bundle preview" }));
+    expect(container.textContent).not.toContain("bundleVersion");
   });
 });
