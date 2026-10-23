@@ -973,7 +973,8 @@ describe("FIX4B m6: the open preview rebuilds when any input it is built from ch
     );
     expect(preview()).not.toBe(before);
     expect(preview()).toBe(expectedText(f));
-    expect(JSON.parse(preview()).features.notifyApprovals).toBe(false);
+    const parsed = JSON.parse(preview()) as { features: { notifyApprovals: boolean } };
+    expect(parsed.features.notifyApprovals).toBe(false);
   });
 });
 
