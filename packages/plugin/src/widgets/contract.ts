@@ -191,13 +191,15 @@ export type WidgetState<T> =
  */
 /**
  * What a navigation can select once it arrives: a Run (Phase 5), an approval
- * request (D-23) or a task (D-23). A task selection only navigates until the
- * Tasks destination handles it.
+ * request (D-23), a task (D-23) or a research report (plan 08-17, D-19). A
+ * report selection is the report's note id: the shell selects it in the
+ * Research reader before it selects the Research destination.
  */
 export type NavigationSelection =
   | { readonly runId: string }
   | { readonly proposalId: string }
-  | { readonly taskId: string };
+  | { readonly taskId: string }
+  | { readonly noteId: string };
 
 export interface WidgetBodyProps<T> {
   readonly data: T;

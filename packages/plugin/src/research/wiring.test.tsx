@@ -243,27 +243,49 @@ describe("Test 2 (lifecycle): load, unload and reload leave one handler and no l
 });
 
 describe("Test 3 (Overview untouched): no research state reaches the Overview", () => {
-  // Plan 08-14: Today is service-fed from the Overview feeds, not from the
-  // research wiring; it is `loading` before anything is fetched. Wiring the
-  // research code changes neither it nor the still-constant tech-intel.
-  it("the Today widget stays loading and tech-intel stays unavailable, wired or not", () => {
+  // Plan 08-14 and 08-17: Today and Technology are service-fed from the Overview feeds
+  // (`overview/overview-feeds.ts`), not from the research wiring; each is `loading` before
+  // anything is fetched. Wiring the research code changes neither card.
+  it("the Today and Technology widgets stay loading, wired or not", () => {
     const before = [widgetStateFor("today").value, widgetStateFor("tech-intel").value];
     const { registry } = setup();
     const after = [widgetStateFor("today").value, widgetStateFor("tech-intel").value];
     expect(after).toEqual(before);
     expect(after[0]).toEqual({ kind: "loading" });
-    expect(after[1]).toEqual({ kind: "unavailable" });
+    expect(after[1]).toEqual({ kind: "loading" });
     registry.disposeAll();
   });
 
-  it("widget-data.ts and panels.tsx import nothing from the research code", () => {
+  // The intent is unchanged: widget code reaches no research VIEW code, no research state, no
+  // client and no holder. Two imports are allowed because they carry no state and no transport:
+  // the domain's pure research rules and types (`@ccc/domain/research*`, e.g. the 36-hour stale
+  // constant) and the view's pure formatters (`view/research-format.js`, the plural-safe counts).
+  const PURE_RESEARCH_IMPORT = /@ccc\/domain\/research|view\/research-format\.js/;
+
+  it("widget-data.ts and panels.tsx import no research view, state, client or holder", () => {
     for (const file of ["../widgets/widget-data.ts", "../widgets/panels.tsx"]) {
       const source = readFileSync(join(SRC_DIR, file), "utf8");
       const imports = source.split("\n").filter((line) => /^\s*import\b|from "/.test(line));
       expect(
-        imports.filter((line) => /research/i.test(line)),
+        imports.filter((line) => /research/i.test(line) && !PURE_RESEARCH_IMPORT.test(line)),
         file,
       ).toEqual([]);
+    }
+  });
+
+  // The feeds module is the one place the Overview reads research data, through the holder
+  // (`research/api.js`) and the epoch signal (`research/events.js`) and nothing else: not the
+  // Research view's state (reset when its last view unmounts), not the client, not the wiring.
+  it("the Overview feeds read research data only through the API holder and the event epoch", () => {
+    const source = readFileSync(join(SRC_DIR, "../overview/overview-feeds.ts"), "utf8");
+    const imports = source.split("\n").filter((line) => /^\s*import\b|from "/.test(line));
+    const research = imports.filter((line) => /research/i.test(line));
+    expect(research.some((line) => line.includes('"../research/api.js"'))).toBe(true);
+    expect(research.some((line) => line.includes('"../research/events.js"'))).toBe(true);
+    for (const line of research) {
+      expect(line, line).not.toMatch(
+        /research\/(state|reader-state|client-api|wiring)\.js|service-api-client|view\/research\.js/,
+      );
     }
   });
 });

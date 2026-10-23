@@ -181,9 +181,9 @@ describe("honest panel states (D-17, ADR-0023 Panel state assignment)", () => {
   });
 
   // The intent of every pinned truth above is "no fixture data reaches a card":
-  // the constant table now lists exactly the two cards that still have no route.
-  it("records exactly github-discoveries and tech-intel as constant-state widgets (08-17 empties tech-intel)", () => {
-    expect([...CONSTANT_STATE_WIDGET_IDS].sort()).toEqual(["github-discoveries", "tech-intel"]);
+  // the constant table now lists exactly the one card that still has no route.
+  it("records exactly github-discoveries as a constant-state widget (08-17 made tech-intel service-fed)", () => {
+    expect([...CONSTANT_STATE_WIDGET_IDS].sort()).toEqual(["github-discoveries"]);
   });
 
   it("declares Today's four data keys, Calendar and Gmail as not part of this version", () => {
@@ -204,8 +204,14 @@ describe("honest panel states (D-17, ADR-0023 Panel state assignment)", () => {
     });
   });
 
-  it.each(["claude-usage", "tech-intel"])("%s has no source yet", (id) => {
-    expect(widgetStateFor(id as WidgetId).value.kind).toBe("unavailable");
+  it("claude-usage has no source yet", () => {
+    expect(widgetStateFor("claude-usage").value.kind).toBe("unavailable");
+  });
+
+  // Plan 08-17 (D-19): Technology is service-fed from the report list. Before anything
+  // is fetched it is `loading`, never a constant and never a fixture.
+  it("tech-intel is service-fed: loading before anything is fetched", () => {
+    expect(widgetStateFor("tech-intel").value.kind).toBe("loading");
   });
 
   // 05-06 / 05-12: `active-sessions` and `claude-usage` are wired to the real

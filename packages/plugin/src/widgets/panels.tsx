@@ -5,11 +5,13 @@ import type {
   ProjectId,
   SizeHint,
 } from "@ccc/domain";
+import { REPORT_STALE_AFTER_MS } from "@ccc/domain/research.js";
 import type { VNode } from "preact";
 import { useContext } from "preact/hooks";
 import { launchStatus, launchStatusKey } from "../projects/launch-status.js";
 import { UntrustedText } from "../view/approval-text.js";
 import type { DestinationId } from "../view/destinations.js";
+import { countOf, itemsText, sourcesText } from "../view/research-format.js";
 import { launchersNeedSetup, SetupCallout } from "../view/setup-callout.js";
 import type { QuickActionDescriptor, WidgetBodyProps, WidgetDefinition } from "./contract.js";
 import { LaunchStatusLine, LaunchToolbar, PROJECT_LAUNCH_ACTIONS } from "./launch-toolbar.js";
@@ -20,23 +22,25 @@ import { WidgetHostContext } from "./widget-host.js";
 /**
  * The seven PRD §7.1 panels, in the PRD's own desktop ordering.
  *
- * Most are backed by data by now. Today is service-fed from the Overview feeds
- * (`overview/overview-feeds.ts`, plan 08-14) and always partial: Calendar and
- * Gmail are not part of this version and are named as such, never read as zero.
- * Active sessions, Project shortcuts, Claude usage, Codex and Quick actions read
- * live signals. GitHub discoveries renders `permission-required` and Technology
- * and market intelligence renders `unavailable` (ADR-0023 "Panel state
- * assignment"); their states are CONSTANTS in `widget-data.ts`, recorded in
- * `CONSTANT_STATE_WIDGET_IDS`, so there is no code path through which fixture
- * data could reach a plugin card at all. A card that looks real must be real
- * (`D-17`); fixtures live in the harness and the prototypes only.
+ * Most are backed by data by now. Today and Technology and market intelligence are
+ * service-fed from the Overview feeds (`overview/overview-feeds.ts`, plans 08-14 and
+ * 08-17): Today is always partial (Calendar and Gmail are not part of this version and
+ * are named as such, never read as zero), and Technology shows the latest cited report
+ * with `cached` or `stale` freshness, never `live`. Active sessions, Project shortcuts,
+ * Claude usage, Codex and Quick actions read live signals. GitHub discoveries is the one
+ * panel left behind a capability gate: it renders `permission-required` (ADR-0023
+ * "Panel state assignment" and its Phase 8 amendment); its state is a CONSTANT in
+ * `widget-data.ts`, recorded in `CONSTANT_STATE_WIDGET_IDS`, so there is no code path
+ * through which fixture data could reach a plugin card at all. A card that looks real
+ * must be real (`D-17`, `D-22`); fixtures live in the harness and the prototypes only.
  *
  * What each definition carries is the full UI-04 contract: the data keys the
  * card resolves, the refresh policy it honours, the size the grid will lay it
  * out at, and a body typed to a data shape read off PRD §7.1's listed contents.
  * A phase that gives a card a route swaps one constant in `widget-data.ts` for a
  * client-fed signal and the card lights up; it does not touch the frame, the
- * contract or the registry.
+ * contract or the registry (the one frame change in plan 08-17 is that a card
+ * owning its empty copy is handed its data and navigation).
  *
  * Nothing here imports `obsidian`, and nothing here imports a fixture.
  */
@@ -506,44 +510,123 @@ export const projectShortcutsWidget: WidgetDefinition<ProjectShortcutsData> = {
 export { type ClaudeUsageData, claudeUsageWidget } from "./claude-usage.js";
 
 // ---------------------------------------------------------------------------
-// 5. Technology and market intelligence (PRD §7.1.5) — unavailable, Phase 7
+// 5. Technology and market intelligence (PRD §7.1.5) — service-fed (plan 08-17, D-19)
 // ---------------------------------------------------------------------------
 
-export interface IntelStory {
-  readonly id: string;
-  readonly headline: string;
-  readonly category: string;
-  readonly summary: string;
-  /**
-   * Counted by the research pipeline from the sources it actually collected
-   * for this story, so it is always known — a story with no sources is not
-   * emitted. Deliberately NOT a {@link MaybeCount}.
-   */
+/**
+ * The newest readable research report, as the card shows it. Built by
+ * `overview/overview-feeds.ts` from the first readable row of the report
+ * list, so this body formats no date and decides no freshness: `stale` is the
+ * shared 36-hour rule (`reportFreshness`) already applied. The counts come
+ * from the report's own header, so they are always known; a missing count is
+ * never invented as zero.
+ */
+export interface TechIntelReport {
+  /** The report's note id: the only thing `Open report` hands to the shell. */
+  readonly noteId: string;
+  /** The report's title: model- and source-derived text, rendered as text only. */
+  readonly title: string;
+  readonly generatedAt: string;
+  readonly partial: boolean;
+  /** Sources that contributed. */
   readonly sourceCount: number;
+  /** Sources the run tried. */
+  readonly sourceTotal: number;
+  readonly itemCount: number;
+  /** Sources that did not respond (zero for a complete report). */
+  readonly unavailableCount: number;
+  /** True at or past the shared stale threshold. */
+  readonly stale: boolean;
 }
 
+/**
+ * `report` is the newest readable report, or `null` when the list has none.
+ * `unreadableCount` is how many rows of the newest page could not be read, so
+ * the empty state can tell "no reports yet" from "no readable reports".
+ */
 export interface TechIntelData {
-  readonly stories: readonly IntelStory[];
-  readonly marketSummary: string | null;
+  readonly report: TechIntelReport | null;
+  readonly unreadableCount: number;
 }
 
-function TechIntelBody({ data, size, onNavigate }: WidgetBodyProps<TechIntelData>): VNode {
+/** The stale threshold in whole hours, from the one shared constant. */
+const STALE_HOURS = REPORT_STALE_AFTER_MS / 3_600_000;
+
+function sourcesAndItems(report: TechIntelReport): string {
+  const sources =
+    report.partial && report.sourceTotal !== report.sourceCount
+      ? `${report.sourceCount} of ${report.sourceTotal} sources`
+      : sourcesText(report.sourceCount);
+  return `${sources} · ${itemsText(report.itemCount)}`;
+}
+
+/** `◈ Partial: 1 of 6 sources were unavailable.` The glyph is decorative: the word carries the meaning. */
+function partialLine(report: TechIntelReport): string {
+  return report.unavailableCount > 0
+    ? `◈ Partial: ${report.unavailableCount} of ${report.sourceTotal} sources were unavailable.`
+    : "◈ Partial: some sources were unavailable.";
+}
+
+function TechIntelBody({ data, onNavigate }: WidgetBodyProps<TechIntelData>): VNode | null {
+  const report = data.report;
+  if (report === null) return null;
+  return (
+    <div className="ccc-intel-latest">
+      <p className="ccc-clamp-2" title={report.title}>
+        <UntrustedText text={report.title} />
+      </p>
+      <p className="ccc-list-meta">{sourcesAndItems(report)}</p>
+      {report.partial ? <p className="ccc-state-body">{partialLine(report)}</p> : null}
+      <p className="ccc-list-meta">AI-generated summary. Not verified by a person.</p>
+      {report.stale ? (
+        <>
+          <p className="ccc-state-body">
+            {`This report is more than ${STALE_HOURS} hours old. Press Run now in the research view for a fresh one.`}
+          </p>
+          <button type="button" className="ccc-list-more" onClick={() => onNavigate?.("research")}>
+            Open the research view
+          </button>
+        </>
+      ) : null}
+      <button
+        type="button"
+        className="ccc-connect-button"
+        aria-label={`Open report: ${report.title}`}
+        onClick={() => onNavigate?.("research", { noteId: report.noteId })}
+      >
+        Open report
+      </button>
+    </div>
+  );
+}
+
+/**
+ * No report to show (UI-SPEC S7): either the list is empty (`No reports yet`, with the next
+ * step) or its newest page held only reports that could not be read (`No readable reports`).
+ * The card supplies all its own copy (`ownsEmptyCopy`), so the generic list wording never
+ * appears, and the link is a button that navigates, never an anchor.
+ */
+function TechIntelEmpty({
+  data,
+  onNavigate,
+}: {
+  readonly data?: TechIntelData | undefined;
+  readonly onNavigate?: ((destination: DestinationId) => void) | undefined;
+}): VNode {
+  const unreadable = data?.unreadableCount ?? 0;
   return (
     <>
-      <ListBody<IntelStory>
-        rows={data.stories}
-        size={size}
-        onMore={onNavigate}
-        keyOf={(story) => story.id}
-        renderPrimary={(story) => story.headline}
-        renderMeta={(story) =>
-          `${story.category} · ${count(story.sourceCount, "source", "sources")}`
-        }
-        moreDestination="research"
-      />
-      {data.marketSummary === null ? null : (
-        <p className="ccc-state-body ccc-clamp-2">{data.marketSummary}</p>
-      )}
+      <p className="ccc-state-heading">
+        {unreadable > 0 ? "No readable reports" : "No reports yet"}
+      </p>
+      <p className="ccc-state-body">
+        {unreadable > 0
+          ? `${countOf(unreadable, "report", "reports")} couldn't be read. Open the research view to check them.`
+          : "Press Run now in the research view to write the first cited report."}
+      </p>
+      <button type="button" className="ccc-list-more" onClick={() => onNavigate?.("research")}>
+        Open the research view
+      </button>
     </>
   );
 }
@@ -551,15 +634,19 @@ function TechIntelBody({ data, size, onNavigate }: WidgetBodyProps<TechIntelData
 export const techIntelWidget: WidgetDefinition<TechIntelData> = {
   id: "tech-intel",
   title: "Technology and market intelligence",
-  description: "Top daily stories and a broad market summary. Filled in by phase 7.",
-  dataKeys: [{ key: "intel.daily", transport: "service", sourceLabel: "Research pipeline" }],
-  refresh: { kind: "manual" },
+  description: "The latest cited research report. Open it to read the findings and sources.",
+  dataKeys: [
+    { key: "research.latest-report", transport: "service", sourceLabel: "Research reports" },
+    { key: "research.sources", transport: "service", sourceLabel: "Research sources" },
+  ],
+  refresh: { kind: "interval", everyMs: 60_000 },
   minSize: "medium",
   preferredSize: "tall",
   featureFlag: "widget.tech-intel",
   quickActions: [],
   renderBody: TechIntelBody,
-  renderEmpty: () => <p className="ccc-state-body">No stories have been collected yet.</p>,
+  ownsEmptyCopy: true,
+  renderEmpty: TechIntelEmpty,
 };
 
 // ---------------------------------------------------------------------------

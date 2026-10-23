@@ -6,6 +6,14 @@ import { connectionState } from "../connection-state.js";
 import { configureResearch, type ResearchApi } from "../research/api.js";
 import { configureTasksApi, type TasksApi } from "../tasks/api.js";
 import { resetTasksGeneration, tasksGeneration } from "../tasks/events.js";
+import { fakeResearchApi } from "../test-support/research-api-fake.js";
+import {
+  iso,
+  listOf,
+  RESEARCH_NOW_MS,
+  reportRow,
+  unreadableRow,
+} from "../test-support/research-view-fixtures.js";
 import { fakeTasksApi } from "../test-support/tasks-api-fake.js";
 import { nowTick } from "../widgets/clock.js";
 import { CONSTANT_STATE_WIDGET_IDS, widgetStateFor } from "../widgets/widget-data.js";
@@ -14,13 +22,17 @@ import {
   configureOverviewZone,
   dueTodayFeed,
   type FeedSnapshot,
+  type LatestReportAnswer,
   LIVE_WINDOW_MS,
+  latestReportFeed,
   refreshAutomation,
   refreshDueToday,
+  refreshLatestReport,
   refreshOnTick,
   resetOverviewFeeds,
   startOverviewFeeds,
   TICK_REFRESH_MIN_GAP_MS,
+  techIntelStateFor,
   todayStateFor,
 } from "./overview-feeds.js";
 
@@ -745,5 +757,282 @@ describe("Task 3: Today's partiality says what is not part of this version", () 
   it("is plain and slash-free (PRIV-04)", () => {
     const state = ready(empty, autoFeed(NO_RUNS, { failed: true }));
     expect(state.partiality.summary).not.toMatch(/[\\/]/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 08-17, Task 1 (tracer): the latest cited report and the Technology state
+// ---------------------------------------------------------------------------
+
+describe("08-17 Task 1: the latest-report feed and the Technology state", () => {
+  const T_NOW = RESEARCH_NOW_MS;
+
+  function answer(overrides: Partial<LatestReportAnswer> = {}): LatestReportAnswer {
+    return {
+      latest: reportRow(0, {
+        generatedAt: iso(-180),
+        sourceCount: 5,
+        sourceTotal: 5,
+        itemCount: 12,
+      }),
+      unreadableCount: 0,
+      ...overrides,
+    };
+  }
+
+  function reportFeed(
+    value: LatestReportAnswer | null,
+    extra: Partial<FeedSnapshot<LatestReportAnswer>> = {},
+  ): FeedSnapshot<LatestReportAnswer> {
+    return {
+      settled: true,
+      value,
+      fetchedAt: value === null ? null : T_NOW - 1000,
+      failed: false,
+      ...extra,
+    };
+  }
+
+  function readyTech(feedValue: FeedSnapshot<LatestReportAnswer>, connection = LIVE) {
+    const state = techIntelStateFor(feedValue, connection, T_NOW);
+    if (state.kind !== "ready") throw new Error(`expected ready, got ${state.kind}`);
+    return state;
+  }
+
+  it("Test 2: tech-intel is not in CONSTANT_STATE_WIDGET_IDS", () => {
+    expect(CONSTANT_STATE_WIDGET_IDS.has("tech-intel")).toBe(false);
+  });
+
+  it("refreshLatestReport asks for the first page and keeps the first readable row and the unreadable count", async () => {
+    const newest = reportRow(0, { title: "Newest" });
+    const list = vi.fn(() =>
+      Promise.resolve(listOf([unreadableRow("a.md"), newest, reportRow(1), unreadableRow("b.md")])),
+    );
+    configureResearch({
+      api: fakeResearchApi({ list }),
+      notify: () => undefined,
+      openNote: () => false,
+      copyText: () => false,
+      requestRunNow: () => undefined,
+    });
+    await refreshLatestReport();
+    expect(list).toHaveBeenCalledExactlyOnceWith(undefined);
+    const snapshot = latestReportFeed.value;
+    expect(snapshot.settled).toBe(true);
+    expect(snapshot.failed).toBe(false);
+    expect(snapshot.value?.latest?.title).toBe("Newest");
+    expect(snapshot.value?.unreadableCount).toBe(2);
+  });
+
+  it("a rejected refresh with nothing before it is failed with no value", async () => {
+    await refreshLatestReport();
+    expect(latestReportFeed.value).toMatchObject({ settled: true, value: null, failed: true });
+  });
+
+  it("is loading before the first answer while connecting, unavailable while disconnected", () => {
+    const unsettled: FeedSnapshot<LatestReportAnswer> = {
+      settled: false,
+      value: null,
+      fetchedAt: null,
+      failed: false,
+    };
+    expect(techIntelStateFor(unsettled, { kind: "connecting" }, T_NOW)).toEqual({
+      kind: "loading",
+    });
+    expect(techIntelStateFor(unsettled, { kind: "disconnected", reason: "x" }, T_NOW)).toEqual({
+      kind: "unavailable",
+    });
+  });
+
+  it("Test 1: a report from three hours ago is ready, cached, dated by its own generation time", () => {
+    const state = readyTech(reportFeed(answer()));
+    expect(state.freshness).toBe("cached");
+    expect(state.observedAt).toBe(iso(-180));
+    expect(state.isEmpty).toBe(false);
+    expect(state.partiality).toEqual({ partial: false });
+    expect(state.data.report).toMatchObject({
+      noteId: reportRow(0).noteId,
+      sourceCount: 5,
+      sourceTotal: 5,
+      itemCount: 12,
+      partial: false,
+      stale: false,
+    });
+  });
+
+  it("Test 3: a report 37 hours old is stale and flagged stale, still readable", () => {
+    const old = answer({
+      latest: reportRow(0, { generatedAt: new Date(T_NOW - 37 * 3_600_000).toISOString() }),
+    });
+    const state = readyTech(reportFeed(old));
+    expect(state.freshness).toBe("stale");
+    expect(state.data.report?.stale).toBe(true);
+    expect(state.isEmpty).toBe(false);
+  });
+
+  it("is cached just under 36 hours and stale at 36 hours", () => {
+    const at = (hours: number, extra = 0) =>
+      readyTech(
+        reportFeed(
+          answer({
+            latest: reportRow(0, {
+              generatedAt: new Date(T_NOW - hours * 3_600_000 + extra).toISOString(),
+            }),
+          }),
+        ),
+      ).freshness;
+    expect(at(36, 1)).toBe("cached");
+    expect(at(36)).toBe("stale");
+  });
+
+  it("never reports live, whatever the age or the connection", () => {
+    for (const hours of [0, 1, 35, 36, 200]) {
+      for (const connection of [LIVE, { kind: "connecting" } as ConnectionState]) {
+        const latest = reportRow(0, {
+          generatedAt: new Date(T_NOW - hours * 3_600_000).toISOString(),
+        });
+        const state = readyTech(reportFeed(answer({ latest })), connection);
+        expect(state.freshness).not.toBe("live");
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 08-17, Task 2: partial, empty, unreadable, failed refresh, hostile titles
+// ---------------------------------------------------------------------------
+
+describe("08-17 Task 2: the Technology state in every case", () => {
+  const T_NOW = RESEARCH_NOW_MS;
+
+  function reportFeed(
+    value: LatestReportAnswer | null,
+    extra: Partial<FeedSnapshot<LatestReportAnswer>> = {},
+  ): FeedSnapshot<LatestReportAnswer> {
+    return {
+      settled: true,
+      value,
+      fetchedAt: value === null ? null : T_NOW - 1000,
+      failed: false,
+      ...extra,
+    };
+  }
+
+  function readyTech(feedValue: FeedSnapshot<LatestReportAnswer>, connection = LIVE) {
+    const state = techIntelStateFor(feedValue, connection, T_NOW);
+    if (state.kind !== "ready") throw new Error(`expected ready, got ${state.kind}`);
+    return state;
+  }
+
+  const COMPLETE: LatestReportAnswer = {
+    latest: reportRow(0, { generatedAt: iso(-180) }),
+    unreadableCount: 0,
+  };
+
+  it("Test 1: an empty list is a ready, empty card with no unreadable rows", () => {
+    const state = readyTech(reportFeed({ latest: null, unreadableCount: 0 }));
+    expect(state.isEmpty).toBe(true);
+    expect(state.data).toEqual({ report: null, unreadableCount: 0 });
+    expect(state.freshness).not.toBe("live");
+    expect(state.observedAt).toBe(new Date(T_NOW - 1000).toISOString());
+  });
+
+  it("Test 1: only unreadable rows is an empty card carrying the count", () => {
+    const state = readyTech(reportFeed({ latest: null, unreadableCount: 3 }));
+    expect(state.isEmpty).toBe(true);
+    expect(state.data).toEqual({ report: null, unreadableCount: 3 });
+  });
+
+  it("Test 2: a partial report is partial, names Research sources, and summarises {u} of {m}", () => {
+    const partial = reportRow(0, {
+      generatedAt: iso(-60),
+      partial: true,
+      sourceCount: 5,
+      sourceTotal: 6,
+      unavailableCount: 1,
+    });
+    const state = readyTech(reportFeed({ latest: partial, unreadableCount: 0 }));
+    expect(state.partiality).toEqual({
+      partial: true,
+      missingSources: ["Research sources"],
+      summary: "1 of 6 research sources were unavailable",
+    });
+    expect(state.data.report?.partial).toBe(true);
+    expect(state.partiality.summary).not.toMatch(/[\\/]/);
+  });
+
+  it("Test 2: a partial row with no unavailable count falls back to total minus contributed", () => {
+    const partial = reportRow(0, {
+      partial: true,
+      sourceCount: 4,
+      sourceTotal: 6,
+      unavailableCount: 0,
+    });
+    const state = readyTech(reportFeed({ latest: partial, unreadableCount: 0 }));
+    expect(state.partiality.summary).toBe("2 of 6 research sources were unavailable");
+  });
+
+  it("Test 3: a rejected first load is the frame error while connected, unavailable while disconnected, loading while connecting", () => {
+    const failedFirst = reportFeed(null, { failed: true });
+    expect(techIntelStateFor(failedFirst, LIVE, T_NOW)).toEqual({
+      kind: "error",
+      message: "Couldn't load technology and market intelligence.",
+    });
+    expect(techIntelStateFor(failedFirst, { kind: "disconnected", reason: "x" }, T_NOW)).toEqual({
+      kind: "unavailable",
+    });
+    expect(techIntelStateFor(failedFirst, { kind: "connecting" }, T_NOW)).toEqual({
+      kind: "loading",
+    });
+  });
+
+  it("a failed refresh keeps the last report and names Research reports as not responding", () => {
+    const state = readyTech(reportFeed(COMPLETE, { failed: true }));
+    expect(state.data.report?.noteId).toBe(COMPLETE.latest?.noteId);
+    expect(state.partiality).toEqual({
+      partial: true,
+      missingSources: ["Research reports"],
+      summary: "Research reports didn't respond",
+    });
+    expect(state.freshness).not.toBe("live");
+  });
+
+  it("a failed refresh of a partial report names both", () => {
+    const partial = reportRow(0, {
+      partial: true,
+      sourceCount: 5,
+      sourceTotal: 6,
+      unavailableCount: 1,
+    });
+    const state = readyTech(reportFeed({ latest: partial, unreadableCount: 0 }, { failed: true }));
+    expect(state.partiality).toEqual({
+      partial: true,
+      missingSources: ["Research reports", "Research sources"],
+      summary: "Research reports didn't respond; 1 of 6 research sources were unavailable",
+    });
+  });
+
+  it("a failed refresh after an empty answer stays empty but is partial, not a clean empty", () => {
+    const state = readyTech(reportFeed({ latest: null, unreadableCount: 0 }, { failed: true }));
+    expect(state.isEmpty).toBe(true);
+    expect(state.partiality.partial).toBe(true);
+    expect(state.partiality.missingSources).toEqual(["Research reports"]);
+  });
+
+  it("Test 4: a hostile title is made safe before it reaches the card: bidi and control characters become visible tokens", () => {
+    const hostile = reportRow(0, {
+      title: "invoice‮gpj.exe [a](https://example.invalid) <img src=x>",
+    });
+    const state = readyTech(reportFeed({ latest: hostile, unreadableCount: 0 }));
+    const title = state.data.report?.title ?? "";
+    expect(title).not.toContain("‮");
+    expect(title).toContain("[U+202E]");
+    // Markup stays as literal text; the renderer, not the mapping, is what keeps it inert.
+    expect(title).toContain("[a](https://example.invalid)");
+  });
+
+  it("is plain data: no link, no href, no markup is built from a report", () => {
+    const state = readyTech(reportFeed(COMPLETE));
+    expect(JSON.stringify(state.data)).not.toMatch(/href|<a |<img/i);
   });
 });

@@ -3,6 +3,7 @@ import {
   type ResearchUpdatedPayload,
   ResearchUpdatedPayloadSchema,
 } from "@ccc/domain/research-routes.js";
+import { signal } from "@preact/signals";
 import { onResearchUpdated, researchViewOpen, settleOwnRunWhileClosed } from "./state.js";
 
 /**
@@ -16,6 +17,15 @@ import { onResearchUpdated, researchViewOpen, settleOwnRunWhileClosed } from "./
  * disposer from an earlier install cannot remove a later one. A handler that throws or rejects
  * never escapes into the event stream.
  */
+
+/**
+ * Counts the `research.updated` events that passed their schema (plan 08-17, research B
+ * 2.6). The Overview's Technology and Today cards refresh from it, so they stay current when
+ * no Research view is open: the epoch is bumped BEFORE the handler slot below runs, and it
+ * is bumped whether or not a handler is installed. It carries no payload and no row; like
+ * the event itself it only says "ask again".
+ */
+export const overviewResearchEpoch = signal(0);
 
 export type ResearchEventHandler = (payload: ResearchUpdatedPayload) => void | Promise<void>;
 
@@ -66,6 +76,7 @@ export function applyResearchUpdated(event: ServiceEvent): void {
   if (event.type !== "research.updated") return;
   const parsed = ResearchUpdatedPayloadSchema.safeParse(event.payload);
   if (!parsed.success) return;
+  overviewResearchEpoch.value = overviewResearchEpoch.peek() + 1;
   const handler = installed;
   if (handler === null) return;
   try {

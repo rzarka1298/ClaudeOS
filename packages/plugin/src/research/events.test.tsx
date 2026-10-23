@@ -2,6 +2,11 @@ import type { ServiceEvent } from "@ccc/domain";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState, lastEvent } from "../connection-state.js";
+import {
+  latestReportFeed,
+  resetOverviewFeeds,
+  startOverviewFeeds,
+} from "../overview/overview-feeds.js";
 import { attachEventClient } from "../service-connection.js";
 import { EVENT_HANDLERS, routeServiceEvent } from "../service-event-router.js";
 import { fakeResearchApi, fakeResearchPorts } from "../test-support/research-api-fake.js";
@@ -18,9 +23,16 @@ import {
   applyResearchUpdated,
   createResearchEventHandler,
   installResearchEventHandler,
+  overviewResearchEpoch,
   researchEventHandlerInstalled,
 } from "./events.js";
-import { pressRunNow, resetResearchState } from "./state.js";
+import {
+  pressRunNow,
+  reportRows,
+  reportsLoaded,
+  researchStatus,
+  resetResearchState,
+} from "./state.js";
 
 /**
  * Plan 07-15, task 2: `research.updated` drives the view, and a reconnect refetches once (D-25,
@@ -317,8 +329,13 @@ describe("wave 5 fix round (MAJOR-1): a run started here still ends with a Notic
       routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
       await waitFor(() => expect(harness.ports.notify).toHaveBeenCalledTimes(1));
       expect(harness.ports.notify).toHaveBeenCalledWith("Research report ready.");
-      // Status only: the list is not fetched for a view nobody is looking at.
-      expect(harness.api.list.mock.calls.length).toBe(harness.listAfterLeaving);
+      // Status only: the Research view's list is not fetched for a view nobody is looking at,
+      // and no list state is left behind for the next mount to mistake for fresh data. The
+      // Overview (the destination the owner is on) refreshes its own Technology feed once on
+      // the event (plan 08-17), which is why the call count moves by exactly one.
+      expect(reportRows.value).toEqual([]);
+      expect(reportsLoaded.value).toBe(false);
+      expect(harness.api.list.mock.calls.length).toBe(harness.listAfterLeaving + 1);
       // The run is accounted for: a repeated event posts nothing more.
       routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
       await settle();
@@ -364,7 +381,10 @@ describe("wave 5 fix round (MAJOR-1): a run started here still ends with a Notic
     try {
       routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
       await settle();
-      expect(api.status.mock.calls.length).toBe(statusBefore);
+      // The Research view fetched nothing and left no status behind; the Overview's own
+      // automation feed refreshed once on the event (plan 08-17).
+      expect(researchStatus.value).toBeNull();
+      expect(api.status.mock.calls.length).toBe(statusBefore + 1);
       expect(ports.notify).not.toHaveBeenCalled();
     } finally {
       dispose();
@@ -476,5 +496,76 @@ describe("hostile payloads (T-07-33)", () => {
     }
     expect(handler).not.toHaveBeenCalled();
     dispose();
+  });
+});
+
+describe("08-17 Task 2, Test 5: research.updated bumps the Overview epoch before the single handler slot", () => {
+  afterEach(() => {
+    resetOverviewFeeds();
+  });
+
+  it("the epoch has already advanced when the installed handler runs, and a bad payload advances nothing", () => {
+    const seen: number[] = [];
+    const dispose = installResearchEventHandler(() => {
+      seen.push(overviewResearchEpoch.value);
+    });
+    const before = overviewResearchEpoch.value;
+    applyResearchUpdated(updated({ runId: RUN, state: "running" }));
+    expect(seen).toEqual([before + 1]);
+    applyResearchUpdated(updated({ runId: "short", state: "running" }));
+    applyResearchUpdated(updated({ runId: RUN, state: "running" }, "service.heartbeat"));
+    expect(overviewResearchEpoch.value).toBe(before + 1);
+    dispose();
+  });
+
+  it("the epoch advances even when no handler is installed", () => {
+    expect(researchEventHandlerInstalled()).toBe(false);
+    const before = overviewResearchEpoch.value;
+    applyResearchUpdated(updated({ runId: RUN, state: "running" }));
+    expect(overviewResearchEpoch.value).toBe(before + 1);
+  });
+
+  it("with no Research view open the Overview feeds still refresh once, and only while live", async () => {
+    const row = reportRow(0);
+    const api = fakeResearchApi({
+      status: vi.fn(() => Promise.resolve(statusOf({ topicLabel: "Topic" }))),
+      list: vi.fn(() => Promise.resolve(listOf([row]))),
+    });
+    configureResearch({ api, ...fakeResearchPorts() });
+    const dispose = installResearchEventHandler(createResearchEventHandler());
+    const stop = startOverviewFeeds();
+    try {
+      await settle();
+      expect(api.status).toHaveBeenCalledTimes(1);
+      expect(api.list).toHaveBeenCalledTimes(1);
+
+      routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
+      await settle();
+      // One refresh of each Overview feed, and the closed Research view fetched nothing of its own.
+      expect(api.status).toHaveBeenCalledTimes(2);
+      expect(api.list).toHaveBeenCalledTimes(2);
+      expect(latestReportFeed.value.value?.latest?.noteId).toBe(row.noteId);
+
+      connectionState.value = { kind: "disconnected", reason: "x" };
+      routeServiceEvent(updated({ runId: RUN, state: "completed", outcome: "success" }));
+      await settle();
+      expect(api.status).toHaveBeenCalledTimes(2);
+      expect(api.list).toHaveBeenCalledTimes(2);
+    } finally {
+      stop();
+      dispose();
+    }
+  });
+
+  it("stops refreshing once the Overview feeds are stopped", async () => {
+    const api = fakeResearchApi();
+    configureResearch({ api, ...fakeResearchPorts() });
+    const stop = startOverviewFeeds();
+    await settle();
+    stop();
+    const calls = api.list.mock.calls.length;
+    applyResearchUpdated(updated({ runId: RUN, state: "completed", outcome: "success" }));
+    await settle();
+    expect(api.list.mock.calls.length).toBe(calls);
   });
 });

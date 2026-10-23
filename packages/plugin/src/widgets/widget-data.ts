@@ -1,5 +1,5 @@
 import { type ReadonlySignal, signal } from "@preact/signals";
-import { todayState } from "../overview/overview-feeds.js";
+import { techIntelState, todayState } from "../overview/overview-feeds.js";
 import { projectShortcutsState, quickActionsState } from "../projects/projects-state.js";
 import { codexState } from "./codex-signals.js";
 import type { WidgetState } from "./contract.js";
@@ -17,13 +17,15 @@ import { claudeUsageState } from "./usage-signals.js";
  * That is the same structural move Phase 1 made for PERF-01 — paint first,
  * attach the client after — applied one level down.
  *
- * Two of these signals still hold CONSTANTS (`github-discoveries`, and
- * `tech-intel` until plan 08-17), recorded in {@link CONSTANT_STATE_WIDGET_IDS}.
- * That is what makes `D-17` structural rather than a review rule: a panel says
- * `permission-required` or `unavailable` because there is nothing else it
- * could say, not because someone remembered not to fake it. The phase that
- * gives a panel a route replaces its constant here with a client-fed signal
- * and changes nothing else; `today` was the last to move (plan 08-14).
+ * One of these signals still holds a CONSTANT (`github-discoveries`), recorded in
+ * {@link CONSTANT_STATE_WIDGET_IDS}. That is what makes `D-17` structural rather
+ * than a review rule: a panel says `permission-required` or `unavailable` because
+ * there is nothing else it could say, not because someone remembered not to fake
+ * it. The phase that gives a panel a route replaces its constant here with a
+ * client-fed signal and changes nothing else; `today` moved in plan 08-14 and
+ * `tech-intel` in plan 08-17, so none of the five Overview slice widgets
+ * (project shortcuts, quick actions, active sessions, Today, Technology) is a
+ * constant, and `widget-data-slice.test.ts` fails if one ever is (`D-22`).
  */
 
 /** No route exists for this widget in this build (ADR-0023). */
@@ -75,12 +77,11 @@ const WIDGET_STATES: Readonly<Record<WidgetId, ReadonlySignal<WidgetState<unknow
   "active-sessions": activeSessionsState,
   "claude-usage": claudeUsageState,
   codex: codexState,
-  // `tech-intel` has no connector to click: `unavailable`, not a plausible lie
-  // that reads as "one click away" (ADR-0023 rejected alternative). Plan 08-17
-  // replaces it with a service-fed signal.
-  // Plan 04-07: a service-fed signal (D-35), replacing the constant above.
+  // Plan 04-07: a service-fed signal (D-35), replacing a constant.
   "project-shortcuts": projectShortcutsState,
-  "tech-intel": constantState("tech-intel", UNAVAILABLE_STATE),
+  // Plan 08-17: a computed over the report-list feed (`overview/overview-feeds.ts`),
+  // service-fed; freshness is `cached` or `stale`, never `live` (UI-SPEC R-14).
+  "tech-intel": techIntelState,
   "quick-actions": quickActionsState,
 };
 
