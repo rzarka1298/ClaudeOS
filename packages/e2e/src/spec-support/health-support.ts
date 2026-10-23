@@ -2,18 +2,18 @@ import { join } from "node:path";
 import {
   BUNDLE_MAX_BYTES,
   buildDenylist,
-  CORPUS_DENYLIST_INPUT,
   COLLECTORS_REASON_STATUS,
+  CORPUS_DENYLIST_INPUT,
   DiagnosticBundleSchema,
-  HOSTILE_SHAPE_SAMPLES,
-  verifyBundle,
   HOOKS_REASON_STATUS,
+  HOSTILE_SHAPE_SAMPLES,
   LAUNCHERS_REASON_STATUS,
   SCHEDULER_REASON_STATUS,
   SERVICE_REASON_STATUS,
   SUBSYSTEM_STATUS_DISPLAY,
   type SubsystemStatus,
   VAULT_REASON_STATUS,
+  verifyBundle,
 } from "@ccc/domain";
 import { type DriverBrowser, type PollOptions, pollUntil } from "../driver.js";
 import type { RunRootPaths } from "../run-root.js";
@@ -733,7 +733,10 @@ function closingParen(text: string, open: number): number {
  * The mutating calls in `source` that sit outside every `withRestore(...)` and `withMode(...)`
  * call, with their line numbers. A call in the restore argument counts as guarded.
  */
-export function findUnguardedMutations(source: string): { call: string; line: number }[] {
+export function findUnguardedMutations(
+  source: string,
+  names: readonly string[] = MUTATING_HELPERS,
+): { call: string; line: number }[] {
   const text = blankedSource(source);
   const extents: [number, number][] = [];
   for (const guard of GUARD_CALLS) {
@@ -743,7 +746,7 @@ export function findUnguardedMutations(source: string): { call: string; line: nu
     }
   }
   const found: { call: string; line: number; at: number }[] = [];
-  for (const name of MUTATING_HELPERS) {
+  for (const name of names) {
     for (const match of text.matchAll(new RegExp(`\\b${name}\\(`, "g"))) {
       const at = match.index as number;
       if (extents.some(([from, to]) => at > from && at < to)) continue;

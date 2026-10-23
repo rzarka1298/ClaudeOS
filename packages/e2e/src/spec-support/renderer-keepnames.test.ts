@@ -32,6 +32,8 @@ const SUPPORT_FILES = [
   "overview-support.ts",
   // The Settings > Diagnostics reader and the health drills (plan 08-20).
   "health-support.ts",
+  // The Settings destination reader and the nav focus helper (plan 08-22).
+  "settings-support.ts",
 ];
 
 /** Where a support file's renderer functions are declared when not in the file that calls them. */
@@ -199,6 +201,8 @@ describe("inline renderer functions in the specs and support modules", () => {
       "overview-slice",
       "health-drills",
       "bundle-export",
+      "settings-core",
+      "settings-integrations",
       "tasks-core",
       "tasks-scale",
       "tasks-views",
