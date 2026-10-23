@@ -249,11 +249,20 @@ export function startOverviewFeeds(): () => void {
   };
 }
 
-/** The tick trigger: refresh while live, at most once per shared 60-second tick. */
+/**
+ * The tick trigger: refresh while live, at most once per shared 60-second tick.
+ *
+ * The due-today and automation feeds ride the tick. The latest-report feed does NOT (FIX3A
+ * MAJOR-2): the service's report list does synchronous vault I/O (it opens report notes, which can
+ * force iCloud downloads), so it is fetched only on mount, on going live and on a
+ * `research.updated` epoch bump, never on a timer.
+ */
 export function refreshOnTick(): void {
   if (!isLive.peek()) return;
   if (Date.now() - lastRefreshAt < TICK_REFRESH_MIN_GAP_MS) return;
-  refreshNow();
+  lastRefreshAt = Date.now();
+  void refreshDueToday();
+  void refreshAutomation();
 }
 
 /**

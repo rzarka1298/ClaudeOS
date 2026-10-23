@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ResearchStatusResponse } from "@ccc/domain/research-routes.js";
 import type { TaskDueTodayResponse, TaskDueTodayRow } from "@ccc/domain/tasks.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionState } from "../connection-state.js";
 import { connectionState } from "../connection-state.js";
 import { configureResearch, type ResearchApi } from "../research/api.js";
+import { overviewResearchEpoch } from "../research/events.js";
 import { configureTasksApi, type TasksApi } from "../tasks/api.js";
 import { resetTasksGeneration, tasksGeneration } from "../tasks/events.js";
 import { fakeResearchApi } from "../test-support/research-api-fake.js";
@@ -767,6 +771,76 @@ describe("Task 2: the automation feed and the triggers (Test 6)", () => {
   it("an unconfigured research API leaves the automation feed failed and the card never ready alone", async () => {
     await refreshAutomation();
     expect(automationFeed.value).toMatchObject({ settled: true, value: null, failed: true });
+  });
+});
+
+describe("FIX3A MAJOR-2: the latest-report feed never refreshes on the tick (the service's list does sync vault I/O)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    nowTick.value = NOW;
+  });
+
+  function wire() {
+    const list = vi.fn(() => Promise.resolve(listOf([reportRow(0)])));
+    const status = vi.fn(() => Promise.resolve(NO_RUNS));
+    configureResearch({
+      api: fakeResearchApi({ list, status }),
+      notify: () => undefined,
+      openNote: () => false,
+      copyText: () => false,
+      requestRunNow: () => undefined,
+    });
+    const tasks = fakeTasksApi([], {
+      dueToday: vi.fn(() => Promise.resolve({ due: [], overdue: [] })),
+    });
+    configureTasksApi(tasks);
+    return { list, status, dueToday: tasks.dueToday };
+  }
+
+  it("mount while live and going live fetch the list once each; N ticks fetch it zero more times", () => {
+    const { list, status, dueToday } = wire();
+    connectionState.value = LIVE;
+    const stop = startOverviewFeeds();
+    expect(list).toHaveBeenCalledTimes(1);
+    for (let minute = 1; minute <= 10; minute += 1) {
+      vi.setSystemTime(NOW + minute * 60_000);
+      refreshOnTick();
+    }
+    expect(list).toHaveBeenCalledTimes(1);
+    // The other two feeds are still tick-refreshed (10 ticks plus the mount).
+    expect(status).toHaveBeenCalledTimes(11);
+    expect(dueToday).toHaveBeenCalledTimes(11);
+
+    connectionState.value = { kind: "disconnected", reason: "x" };
+    connectionState.value = LIVE;
+    expect(list).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it("a research.updated epoch bump while live fetches the list exactly once", () => {
+    const { list } = wire();
+    connectionState.value = LIVE;
+    const stop = startOverviewFeeds();
+    expect(list).toHaveBeenCalledTimes(1);
+    overviewResearchEpoch.value = overviewResearchEpoch.peek() + 1;
+    expect(list).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(NOW + 120_000);
+    refreshOnTick();
+    expect(list).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it("the source of refreshOnTick names no report refresh", () => {
+    const text = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "overview-feeds.ts"),
+      "utf8",
+    );
+    const start = text.indexOf("export function refreshOnTick");
+    const body = text.slice(start, text.indexOf("\n}\n", start));
+    expect(body).not.toContain("refreshLatestReport");
+    expect(body).not.toContain("refreshNow");
+    expect(body).not.toContain("refreshOverviewFeeds");
   });
 });
 
