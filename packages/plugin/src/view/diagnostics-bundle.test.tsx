@@ -20,7 +20,7 @@ import {
   type VerifyAndSerialise,
 } from "../health/bundle-input.js";
 import { saveBundle, saveDialogAvailable } from "../health/export.js";
-import { configureBundleExport } from "../health/export-port.js";
+import { bundleExport, configureBundleExport } from "../health/export-port.js";
 import {
   clearHealth,
   healthPhase,
@@ -28,10 +28,12 @@ import {
   healthVaultCheck,
   resetHealthState,
 } from "../health/state.js";
+import ClaudeCommandCenterPlugin from "../main.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
 import { assertNoPrivatePathValues } from "../settings.js";
 import { remote } from "../test-support/electron-stub.js";
 import { allOkHealth, HEALTH_NOW } from "../test-support/health-fixtures.js";
+import type { Plugin as StubObsidianPlugin } from "../test-support/obsidian-stub.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
 import { DiagnosticBundleBlock } from "./diagnostics-bundle.js";
 import { createLaunchersSession } from "./launchers-settings.js";
@@ -989,25 +991,44 @@ describe("Task 3: loading and unavailable states", () => {
 });
 
 describe("Task 3, Test 5: the bundle is held in memory only", () => {
-  it("after Copy and Save nothing was persisted: no settings save, only the four allowed keys, no web storage", async () => {
+  it("after Copy and Save the real plugin made no saveData call and its real settings are unchanged", async () => {
     const root = mkdtempSync(join(tmpdir(), "ccc-bundle-mem-"));
+    // The REAL plugin (FIX2B m8 technique): its settings object, its `saveData` and its host are
+    // the ones production uses, so a stray write path would show up in `plugin.saved`.
+    const plugin = new ClaudeCommandCenterPlugin(
+      undefined as never,
+      { id: "claude-command-center", version: "9.9.9" } as never,
+    ) as ClaudeCommandCenterPlugin & StubObsidianPlugin;
+    plugin.stored = null;
     try {
       const vault = join(root, "Vault");
       const outside = join(root, "out");
       mkdirSync(vault);
       mkdirSync(outside);
-      configureBundleExport({ saveDialogAvailable, save: saveBundle });
+      await plugin.onload();
+      const pluginHost = plugin.settingsHost as SettingsHost;
+      expect(pluginHost.settings).toBe(plugin.settings);
+      const savesBefore = plugin.saved.length;
+      const settingsBefore = JSON.stringify(plugin.settings);
+      const keysBefore = Object.keys(plugin.settings).sort();
+
+      // `onload` wired the real export port; the display inputs are the only things replaced.
+      expect(bundleExport().saveDialogAvailable()).toBe(true);
       remote.dialog.showSaveDialog = () =>
         Promise.resolve({ canceled: false, filePath: join(outside, "b.json") });
       answered();
       const base = fixture();
-      const saveSettings = vi.fn(() => Promise.resolve());
       const f: Fixture = {
         ...base,
         host: {
-          ...base.host,
-          saveSettings,
-          display: { ...base.host.display, vaultBasePath: vault },
+          ...pluginHost,
+          copyText: base.copyText,
+          display: {
+            ...pluginHost.display,
+            vaultBasePath: vault,
+            pluginVersion: "0.1.0",
+            obsidianVersion: "1.13.1",
+          },
         },
       };
       renderBlock(f);
@@ -1017,21 +1038,28 @@ describe("Task 3, Test 5: the bundle is held in memory only", () => {
       const before = f.notify.mock.calls.length;
       fireEvent.click(screen.getByRole("button", { name: "Save bundle" }));
       await waitFor(() => expect(f.notify.mock.calls.length).toBeGreaterThan(before));
+      expect(f.notify).toHaveBeenLastCalledWith("Bundle saved.");
 
-      expect(saveSettings).not.toHaveBeenCalled();
-      expect(Object.keys(f.host.settings).sort()).toEqual([
+      // Nothing was handed to the plugin's data storage, and its settings object is untouched.
+      expect(plugin.saved).toHaveLength(savesBefore);
+      expect(JSON.stringify(plugin.settings)).toBe(settingsBefore);
+      expect(Object.keys(plugin.settings).sort()).toEqual(keysBefore);
+      expect(Object.keys(plugin.settings).sort()).toEqual([
         "lastOpenedDestination",
         "notifyApprovals",
         "reducedMotion",
         "socketPathOverride",
       ]);
-      expect(() => assertNoPrivatePathValues(f.host.settings)).not.toThrow();
+      expect(() => assertNoPrivatePathValues(plugin.settings)).not.toThrow();
+      expect(JSON.stringify(plugin.saved)).not.toContain("bundleVersion");
       expect(window.localStorage.length).toBe(0);
       expect(window.sessionStorage.length).toBe(0);
       // The vault received nothing; the only file is the one the owner picked.
       expect(readdirSync(vault)).toEqual([]);
       expect(readdirSync(outside)).toEqual(["b.json"]);
     } finally {
+      cleanup();
+      plugin.onunload();
       configureBundleExport(null);
       remote.dialog.showSaveDialog = () => Promise.resolve({ canceled: true });
       rmSync(root, { recursive: true, force: true });

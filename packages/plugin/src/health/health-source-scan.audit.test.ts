@@ -145,6 +145,19 @@ describe("the Diagnostics files make no network call and import no client (DIAG-
   });
 });
 
+describe("the bundle is serialised in one place only (plan 08-16, D-12; FIX4B)", () => {
+  it.each(["health/bundle-input.ts", "view/diagnostics-bundle.tsx"])(
+    "%s neither stringifies nor serialises the bundle itself: the verifier's string is the only one",
+    (name) => {
+      const source = sourceOf(name);
+      expect(source).not.toMatch(/JSON\.stringify/);
+      expect(source).not.toMatch(/\bserialiseBundle\b/);
+      // The one door is the domain's verifier.
+      if (name === "health/bundle-input.ts") expect(source).toMatch(/\bverifyAndSerialise\b/);
+    },
+  );
+});
+
 describe("no health fetch runs on a timer (D-05)", () => {
   it.each(SOURCES)("%s starts no timer, interval or clock read", (_name, source) => {
     expect(source).not.toMatch(/\bset(?:Interval|Timeout)\s*\(/);
