@@ -824,6 +824,8 @@ export const DiagnosticsHealthResponseSchema = z.strictObject({
     socket: DisplayPathSchema,
   }),
   vaultFingerprint: VaultFingerprintSchema,
+  // `openTasks` follows the tasks list's actionable rule; `reports` counts RECORDED reports (the
+  // store's research report records), not readable notes: a vault walk is not health-path work.
   counts: z.strictObject({
     projects: CountSchema,
     scanFolders: CountSchema,

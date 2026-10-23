@@ -179,6 +179,7 @@ export {
   InvalidTaskIndexError,
   InvalidTaskQueryError,
   listDueToday,
+  OPEN_TASK_PREDICATE,
   queryTasks,
   rebuildTaskIndex,
   removeTaskByPath,

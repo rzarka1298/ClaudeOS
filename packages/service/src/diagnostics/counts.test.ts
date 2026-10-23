@@ -1,4 +1,13 @@
-import { applyMigrations, insertProject, insertScanRoot, openStore } from "@ccc/operational-store";
+import { readFileSync } from "node:fs";
+import { TASK_STATUSES } from "@ccc/domain";
+import {
+  applyMigrations,
+  countTasks,
+  insertProject,
+  insertScanRoot,
+  OPEN_TASK_PREDICATE,
+  openStore,
+} from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type CountDb, readHealthCounts } from "./counts.js";
 
@@ -119,5 +128,25 @@ describe("Test 3: readHealthCounts", () => {
       expect(sql).toMatch(/^SELECT COUNT\(\*\) AS n FROM [a-z_]+( WHERE [^;]+)?$/);
       expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|PRAGMA|ATTACH)\b/i);
     }
+  });
+});
+
+describe("FIX3A MINOR-6: openTasks is the tasks list's own open rule", () => {
+  it("agrees with the store's open total for every task status", () => {
+    for (const [index, status] of TASK_STATUSES.entries()) insertTask(`t${index}`, status);
+    const day = {
+      localDate: "2026-10-22",
+      startsAt: "2026-10-22T05:00:00.000Z",
+      endsAt: "2026-10-23T05:00:00.000Z",
+    };
+    const open = countTasks(store.db, { context: { scope: "all" }, day }).open;
+    expect(open).toBeGreaterThan(0);
+    expect(open).toBeLessThan(TASK_STATUSES.length);
+    expect(readHealthCounts(store.db).openTasks).toBe(open);
+  });
+
+  it("the SQL here is the store's exported predicate (column prefix aside), so the two cannot drift", () => {
+    const source = readFileSync(new URL("./counts.ts", import.meta.url), "utf8");
+    expect(source).toContain(OPEN_TASK_PREDICATE.replace("t.status", "status"));
   });
 });

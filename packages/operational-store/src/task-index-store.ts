@@ -439,8 +439,12 @@ export function upsertTask(db: Database.Database, record: TaskIndexRecord): void
 // ---------------------------------------------------------------------------
 // Reading: SQL fragments (all literal; callers' values are only ever bound)
 
-/** Actionable: not finished and not a suggestion waiting for a decision (D-33 refinement). */
-const OPEN = "t.status NOT IN ('done','cancelled','proposed')";
+/**
+ * Actionable: not finished and not a suggestion waiting for a decision (D-33 refinement). Exported
+ * so the health counts can be pinned to it (FIX3A MINOR-6); the alias is `t`, as in every list query.
+ */
+export const OPEN_TASK_PREDICATE = "t.status NOT IN ('done','cancelled','proposed')";
+const OPEN = OPEN_TASK_PREDICATE;
 const TODAY_PREDICATE = `${OPEN} AND (t.due_date = @today OR t.sched_date = @today OR (t.due_at >= @s AND t.due_at < @e) OR (t.sched_at >= @s AND t.sched_at < @e))`;
 const IS_OVERDUE = "(t.due_date < @today OR t.due_at < @s)";
 const UNMET_COUNT =

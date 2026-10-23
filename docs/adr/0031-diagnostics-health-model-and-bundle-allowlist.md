@@ -105,7 +105,8 @@ folder name cannot make the whole response fail.
 
 The bundle schema is strict at every level and admits versions, the platform, the connection **state** (never its reason),
 the six subsystem rows as status plus reason code plus times plus parts of id, status and reason, nullable integer counts
-(null, never zero, when unknown), feature flags, and the plugin's diagnostic records reduced to source, code and time, where
+(null, never zero, when unknown: projects, scan folders, open tasks by the tasks list's actionable rule, and recorded reports,
+the store's research report records and not a vault walk), feature flags, and the plugin's diagnostic records reduced to source, code and time, where
 the code is one of a closed list of six that the plugin writes (any other code is skipped by the builder and refused by
 the schema). A version is two to four numeric components with at most one `-alpha`, `-beta` or `-rc` suffix (and a counter);
 anything else, including `0.1.0-SomeName`, is null. It
