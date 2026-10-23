@@ -97,6 +97,32 @@ for (const fn of ["spawn", "execFile", "exec", "fork", "spawnSync", "execFileSyn
 `;
 }
 
+/** The absolute path of the Keychain tool, the only binary the presence lookup may use. */
+const SECURITY_BINARY = "/usr/bin/security";
+
+/**
+ * True for EVERY attribute-only Keychain presence lookup: the absolute `/usr/bin/security`, argv
+ * starting with `find-generic-password`, and no `-w` (the value read, which the service's own
+ * install-secret startup read uses and which stays allowed). It deliberately does NOT filter on
+ * the account: a wiring that asked about a literal or the wrong account must still be counted
+ * (FIX3A MAJOR-3; the old selector matched only the test account, so "zero spawns" was tautological).
+ */
+export function isKeychainPresenceSpawn(event: RecordedEvent): boolean {
+  return (
+    event.kind === "spawn" &&
+    event.file === SECURITY_BINARY &&
+    event.args[0] === "find-generic-password" &&
+    !event.args.includes("-w")
+  );
+}
+
+/** The account a presence lookup names (`-a <account>`), or null when argv has none. */
+export function presenceSpawnAccount(event: RecordedEvent): string | null {
+  if (event.kind !== "spawn") return null;
+  const at = event.args.indexOf("-a");
+  return at >= 0 ? (event.args[at + 1] ?? null) : null;
+}
+
 /** Parses the preload's log; a missing file is an empty log. */
 export function readRecordedEvents(logPath: string): RecordedEvent[] {
   let text: string;
@@ -198,8 +224,12 @@ export interface DrillContext {
   events(): RecordedEvent[];
   /** Non-loopback connections and lookups seen so far. */
   outbound(): RecordedEvent[];
-  /** Child processes started with `security` as the binary and the research account in argv. */
-  researchKeySpawns(): RecordedEvent[];
+  /**
+   * EVERY presence lookup the service started (`/usr/bin/security find-generic-password` without
+   * `-w`), whatever account it names. Callers assert the count and that each names
+   * {@link DrillContext.researchAccount}.
+   */
+  keychainPresenceSpawns(): RecordedEvent[];
   /** Adds a string (a path the test created) that no health body or diagnostics log line may hold. */
   forbid(value: string, label: string): void;
   /** Every raw health body this context has seen. */
@@ -294,13 +324,7 @@ export async function withDrillService<T>(
         events,
         outbound: () =>
           events().filter((event) => event.kind === "connect" || event.kind === "lookup"),
-        researchKeySpawns: () =>
-          events().filter(
-            (event) =>
-              event.kind === "spawn" &&
-              event.file.endsWith("/security") &&
-              event.args.includes(researchAccount),
-          ),
+        keychainPresenceSpawns: () => events().filter(isKeychainPresenceSpawn),
         forbid: (value, label) => {
           forbidden.set(value, label);
         },

@@ -13,7 +13,12 @@ import {
 import { createAuthenticatedClient, createSocketApiClient } from "@ccc/service-api-client";
 import { afterEach, describe, expect, it } from "vitest";
 import { authedRequest, handshake } from "./approval-int-support.js";
-import { type DrillContext, pollHealth, withDrillService } from "./diagnostics-drill-kit.js";
+import {
+  type DrillContext,
+  pollHealth,
+  presenceSpawnAccount,
+  withDrillService,
+} from "./diagnostics-drill-kit.js";
 
 /**
  * Plan 08-07 (D-02, D-04, D-05, D-36; DIAG-02): the REAL built service process answers the
@@ -57,7 +62,7 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
         reconnect.rows[3] as unknown as { parts: { partId: string; reasonCode: string }[] }
       ).parts.find((part) => part.partId === "research-key");
       expect(reconnectKey?.reasonCode).toBe("research-key-not-checked");
-      expect(context.researchKeySpawns()).toEqual([]);
+      expect(context.keychainPresenceSpawns()).toEqual([]);
 
       const health = await context.health("gesture");
 
@@ -120,7 +125,10 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
       // The gesture asked the Keychain about the nonexistent test account, exactly once per run of
       // the probes (the scheduler row and keychain.researchKey share one read), and made no
       // outbound connection.
-      expect(context.researchKeySpawns().length).toBeGreaterThanOrEqual(1);
+      expect(context.keychainPresenceSpawns()).toHaveLength(1);
+      for (const event of context.keychainPresenceSpawns()) {
+        expect(presenceSpawnAccount(event)).toBe(context.researchAccount);
+      }
       expect(context.outbound()).toEqual([]);
     });
   });
@@ -138,16 +146,19 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
         await pollHealth(context, () => true, { trigger: "reconnect" });
         await new Promise((resolve) => setTimeout(resolve, 2200)); // past the 2 s cache
       }
-      expect(context.researchKeySpawns()).toEqual([]);
+      expect(context.keychainPresenceSpawns()).toEqual([]);
 
       await context.health("gesture");
-      expect(context.researchKeySpawns()).toHaveLength(1);
+      expect(context.keychainPresenceSpawns()).toHaveLength(1);
+      for (const event of context.keychainPresenceSpawns()) {
+        expect(presenceSpawnAccount(event)).toBe(context.researchAccount);
+      }
 
       // A later reconnect reuses the gesture's answer: no new process, and the key reads absent.
       await new Promise((resolve) => setTimeout(resolve, 2200));
       const after = await context.health("reconnect");
       expect(after.keychain.researchKey).toBe("absent");
-      expect(context.researchKeySpawns()).toHaveLength(1);
+      expect(context.keychainPresenceSpawns()).toHaveLength(1);
       expect(context.outbound()).toEqual([]);
     });
   });

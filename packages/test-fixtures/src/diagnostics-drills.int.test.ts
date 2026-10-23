@@ -25,6 +25,7 @@ import {
   makeScratchDir,
   networkPreloadSource,
   pollHealth,
+  presenceSpawnAccount,
   readRecordedEvents,
   removeScratchDir,
   withDrillService,
@@ -322,7 +323,7 @@ describe("Test 4 (scheduler): a fresh service reads never-run and research-key-m
           status: "unknown",
           reasonCode: "research-key-not-checked",
         });
-        expect(context.researchKeySpawns()).toEqual([]);
+        expect(context.keychainPresenceSpawns()).toEqual([]);
 
         const fresh = await context.health("gesture");
         const scheduler = rowById(fresh, "scheduler");
@@ -337,12 +338,13 @@ describe("Test 4 (scheduler): a fresh service reads never-run and research-key-m
           setupAction: { kind: "copy-command", command: "research-key-setup" },
         });
         expect(fresh.keychain.researchKey).toBe("absent");
-        // Only the nonexistent test account was ever asked about.
-        const asked = context.researchKeySpawns();
-        expect(asked.length).toBeGreaterThanOrEqual(1);
+        // Exactly one presence lookup of ANY account (not filtered by account, FIX3A MAJOR-3), and
+        // it named the nonexistent test account, never the owner's.
+        const asked = context.keychainPresenceSpawns();
+        expect(asked).toHaveLength(1);
         for (const event of asked) {
+          expect(presenceSpawnAccount(event)).toBe(context.researchAccount);
           if (event.kind !== "spawn") throw new Error("unexpected event");
-          expect(event.args).toContain(context.researchAccount);
           expect(event.args).not.toContain("anthropic-api-key");
         }
         expectOffline(context);
