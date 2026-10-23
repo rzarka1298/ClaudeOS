@@ -365,7 +365,8 @@ const OWNER_OPTIONS: DialogOptions = {
   buttonLabel: "Save bundle",
   defaultPath: "claude-command-center-diagnostics-2026-10-23.json",
   filters: [{ name: "JSON", extensions: ["json"] }],
-  properties: ["createDirectory", "showOverwriteConfirmation"],
+  // FIX4B / D-12a: the plugin asks for no overwrite confirmation, a save never replaces a file.
+  properties: ["createDirectory"],
 };
 
 function makeDialogWindow(dialog: FakeDialog | undefined, withRequire = true) {
@@ -443,7 +444,26 @@ describe("installSaveDialogStub (Task 3 Test 2)", () => {
         defaultPath: "claude-command-center-diagnostics-2026-10-23.json",
         bareDefaultName: true,
         filters: [{ name: "JSON", extensions: ["json"] }],
-        properties: ["createDirectory", "showOverwriteConfirmation"],
+        properties: ["createDirectory"],
+      },
+    ]);
+  });
+
+  it("records the options when the dialog is asked with the parent window first (FIX4B m8)", async () => {
+    const { dialog, win } = setup();
+    inPage(installSaveDialogStub, win)({ kind: "picked", path: TARGET });
+    // Electron's signature is showSaveDialog([window,] options): the plugin names its own window.
+    const ask = dialog.showSaveDialog as unknown as (
+      ...args: unknown[]
+    ) => Promise<{ canceled: boolean; filePath?: string }>;
+    const answer = await ask({ id: 1, isDestroyed: () => false }, OWNER_OPTIONS);
+    expect(answer).toEqual({ canceled: false, filePath: TARGET });
+    expect(inPage(readSaveDialogCalls, win)()).toEqual([
+      {
+        defaultPath: "claude-command-center-diagnostics-2026-10-23.json",
+        bareDefaultName: true,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+        properties: ["createDirectory"],
       },
     ]);
   });

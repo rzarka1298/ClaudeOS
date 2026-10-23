@@ -301,8 +301,8 @@ describe("bundle export", function () {
         makeDirInRunRoot(paths, outDir);
         await offered();
         const saved = await saveWith({ kind: "picked", path: target }, HEALTH_TEXT.bundleSaved);
-        // The dialog was asked for a dated file name with no folder, a json filter and the
-        // overwrite confirmation, once.
+        // The dialog was asked for a dated file name with no folder and a json filter, once, and
+        // not for an overwrite confirmation: Save never replaces a file (D-12a).
         expect(saved.calls).toHaveLength(1);
         expect(checkSaveDialogCall(saved.calls[0])).toEqual([]);
         expect(checkSavedFile(saved.preview, readFileSync(target), statSync(target).mode)).toEqual(

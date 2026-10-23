@@ -1306,19 +1306,26 @@ describe("bundle verdicts (Task 3)", () => {
     expect(checkSavedFile(BUNDLE_JSON, bytes, 0o644).join(" ")).toContain("600");
   });
 
-  it("checkSaveDialogCall needs a bare default name, the json filter and the overwrite confirmation", () => {
+  it("checkSaveDialogCall needs a bare default name and the json filter, and no overwrite confirmation (D-12a)", () => {
     const call = {
       defaultPath: "claude-command-center-diagnostics-2026-10-23.json",
       bareDefaultName: true,
       filters: [{ name: "JSON", extensions: ["json"] }],
-      properties: ["createDirectory", "showOverwriteConfirmation"],
+      properties: ["createDirectory"],
     };
     expect(checkSaveDialogCall(call)).toEqual([]);
+    expect(checkSaveDialogCall({ ...call, properties: [] })).toEqual([]);
     expect(checkSaveDialogCall({ ...call, bareDefaultName: false }).join(" ")).toContain("bare");
     expect(checkSaveDialogCall({ ...call, defaultPath: "bundle.json" }).join(" ")).toContain(
       "name",
     );
-    expect(checkSaveDialogCall({ ...call, properties: [] }).join(" ")).toContain("overwrite");
+    // Save never replaces a file, so asking the sheet to confirm an overwrite would be wrong.
+    expect(
+      checkSaveDialogCall({
+        ...call,
+        properties: ["createDirectory", "showOverwriteConfirmation"],
+      }).join(" "),
+    ).toContain("overwrite");
     expect(checkSaveDialogCall({ ...call, filters: [] }).join(" ")).toContain("filter");
     expect(checkSaveDialogCall(undefined).join(" ")).toContain("no save dialog call");
   });
