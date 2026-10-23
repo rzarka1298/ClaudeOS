@@ -67,10 +67,15 @@ const PRESENTATIONS = [
 ] as const;
 
 // Combinations the production mapping can no longer produce, so a baseline of them would bless a
-// contract the product dropped (plan 08-21). The Today card used to ask for a Google Calendar and
-// Gmail grant; since plan 08-14 it is service-fed and always partial, and those two sources read
-// `not part of this version`, so `permission-required` is no longer a state it can be in.
-const NOT_PRODUCIBLE: ReadonlySet<string> = new Set(["today-permission-required"]);
+// contract the product dropped (plans 08-21 and FIX5B). The Today card used to ask for a Google
+// Calendar and Gmail grant; since plan 08-14 it is service-fed and always partial, and those two
+// sources read `not part of this version`, so `permission-required` is no longer a state it can be
+// in. The Technology card is service-fed since plan 08-17 (no capability grant), so it cannot be in
+// that state either.
+const NOT_PRODUCIBLE: ReadonlySet<string> = new Set([
+  "today-permission-required",
+  "tech-intel-permission-required",
+]);
 
 // 9 registered widgets x 8 presentations, less the combinations above. The ids come from the registry
 // itself, never a hand-typed list, so a widget a later phase registers joins

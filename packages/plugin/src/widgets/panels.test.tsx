@@ -646,7 +646,7 @@ describe("Project shortcuts: long-text names clamp with the full text in title a
 });
 
 describe("Project shortcuts: empty state (S1, RR-27)", () => {
-  it("with zero projects, renderEmpty shows the S1 copy and a Go to Projects button", () => {
+  it("with zero projects, renderEmpty shows the S1 copy and a Go to the projects view button", () => {
     const body = cardBody(
       "project-shortcuts",
       { projects: [], launchers: SET_UP_LAUNCHERS },
@@ -654,19 +654,19 @@ describe("Project shortcuts: empty state (S1, RR-27)", () => {
     );
     expect(body.textContent).toContain("Register a project in Projects to see it here.");
     const button = Array.from(body.querySelectorAll("button")).find(
-      (b) => b.textContent === "Go to Projects",
+      (b) => b.textContent === "Go to the projects view",
     );
     expect(button).toBeTruthy();
   });
 
-  it("spaces the Go to Projects button from the body copy with a spacing token (wave-3 visual)", () => {
+  it("spaces the Go to the projects view button from the body copy with a spacing token (wave-3 visual)", () => {
     const body = cardBody(
       "project-shortcuts",
       { projects: [], launchers: SET_UP_LAUNCHERS },
       { isEmpty: true },
     );
     const button = Array.from(body.querySelectorAll("button")).find(
-      (b) => b.textContent === "Go to Projects",
+      (b) => b.textContent === "Go to the projects view",
     );
     expect(button?.classList.contains("ccc-empty-action")).toBe(true);
     const css = readFileSync(
@@ -1094,6 +1094,49 @@ describe("Technology: empty, unreadable, partial, error, loading and hostile sta
       "Unavailable",
     );
     expect(card.textContent).not.toContain("Live");
+  });
+
+  it("FIX5B: disconnected, Open report is aria-disabled with a visible reason, stays focusable and does nothing", () => {
+    const { card, onNavigate } = techCard(techReady(techData(techReport())), {
+      kind: "disconnected",
+      reason: "gone",
+    });
+    const button = within(card as HTMLElement).getByRole("button", {
+      name: `Open report: ${REPORT_TITLE}`,
+    });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    // Never the native attribute: a disabled button leaves the tab order and hides its reason.
+    expect(button.hasAttribute("disabled")).toBe(false);
+    expect(button.getAttribute("tabindex")).not.toBe("-1");
+    const reasonId = button.getAttribute("aria-describedby");
+    expect(reasonId).toBeTruthy();
+    const reason = card.querySelector(`[id="${reasonId}"]`);
+    expect(reason?.textContent).toBe("The companion service isn't running.");
+    expect(reason?.classList.contains("ccc-visually-hidden")).toBe(false);
+    fireEvent.click(button);
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it("FIX5B: while the service is live Open report is enabled and carries no reason", () => {
+    const { card, onNavigate } = techCard(techReady(techData(techReport())));
+    const button = within(card as HTMLElement).getByRole("button", {
+      name: `Open report: ${REPORT_TITLE}`,
+    });
+    expect(button.getAttribute("aria-disabled")).toBeNull();
+    expect(button.getAttribute("aria-describedby")).toBeNull();
+    expect(card.textContent).not.toContain("The companion service isn't running.");
+    fireEvent.click(button);
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith("research", { noteId: REPORT_NOTE });
+  });
+
+  it("FIX5B: a stale report on a live service keeps Open report enabled", () => {
+    const { card } = techCard(
+      techReady(techData(techReport({ stale: true })), { freshness: "stale" }),
+    );
+    const button = within(card as HTMLElement).getByRole("button", {
+      name: `Open report: ${REPORT_TITLE}`,
+    });
+    expect(button.getAttribute("aria-disabled")).toBeNull();
   });
 
   it("loading shows a skeleton and a hidden `Loading technology and market intelligence`", () => {

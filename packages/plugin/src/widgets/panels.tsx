@@ -7,7 +7,7 @@ import type {
 } from "@ccc/domain";
 import { REPORT_STALE_AFTER_MS } from "@ccc/domain/research.js";
 import type { VNode } from "preact";
-import { useContext } from "preact/hooks";
+import { useContext, useId } from "preact/hooks";
 import { launchStatus, launchStatusKey } from "../projects/launch-status.js";
 import { UntrustedText } from "../view/approval-text.js";
 import type { DestinationId } from "../view/destinations.js";
@@ -475,7 +475,7 @@ function ProjectShortcutsEmpty({
         className="ccc-connect-button ccc-empty-action"
         onClick={() => onNavigate?.("projects")}
       >
-        Go to Projects
+        Go to the projects view
       </button>
       {/* The setup state comes from the card's own widget state (RR-27, S10). */}
       {launchersNeedSetup(data?.launchers) && <SetupCallout onNavigate={onNavigate} />}
@@ -567,7 +567,15 @@ function partialLine(report: TechIntelReport): string {
     : "◈ Partial: some sources were unavailable.";
 }
 
-function TechIntelBody({ data, onNavigate }: WidgetBodyProps<TechIntelData>): VNode | null {
+/** The fixed reason a service-bound control gives while the service is away (08-UI-SPEC disconnected rule). */
+const SERVICE_AWAY_REASON = "The companion service isn't running.";
+
+function TechIntelBody({
+  data,
+  onNavigate,
+  serviceAway,
+}: WidgetBodyProps<TechIntelData>): VNode | null {
+  const reasonId = useId();
   const report = data.report;
   if (report === null) return null;
   return (
@@ -588,14 +596,26 @@ function TechIntelBody({ data, onNavigate }: WidgetBodyProps<TechIntelData>): VN
           </button>
         </>
       ) : null}
+      {/* The reader loads the report from the service, so `Open report` is service-bound: while the
+          service is away it stays focusable and says why (aria-disabled, never native `disabled`). */}
       <button
         type="button"
         className="ccc-connect-button"
         aria-label={`Open report: ${report.title}`}
-        onClick={() => onNavigate?.("research", { noteId: report.noteId })}
+        aria-disabled={serviceAway ? "true" : undefined}
+        aria-describedby={serviceAway ? reasonId : undefined}
+        onClick={() => {
+          if (serviceAway) return;
+          onNavigate?.("research", { noteId: report.noteId });
+        }}
       >
         Open report
       </button>
+      {serviceAway ? (
+        <p id={reasonId} className="ccc-list-meta">
+          {SERVICE_AWAY_REASON}
+        </p>
+      ) : null}
     </div>
   );
 }

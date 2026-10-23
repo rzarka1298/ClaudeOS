@@ -322,8 +322,10 @@ function PartsDisclosure({
       <div id={panelId} hidden={!open}>
         {collectors ? (
           COLLECTORS_GROUPS.map((group) => (
-            <div key={group.label}>
-              <p className="ccc-section-label ccc-section-label--muted">{group.label}</p>
+            <div key={group.label} className="ccc-health-group">
+              <p className="ccc-section-label ccc-section-label--muted ccc-health-group-label">
+                {group.label}
+              </p>
               <PartsList
                 parts={parts.filter((part) => group.partIds.includes(part.partId))}
                 deciding={deciding}
