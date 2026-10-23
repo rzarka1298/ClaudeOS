@@ -679,6 +679,58 @@ const SEED_STATEMENTS: Record<SeedLauncher, (bundleId: string) => string> = {
     `INSERT OR REPLACE INTO launcher_config (launcher_id, config_json, tested, updated_at) VALUES ('claude-desktop', '{"bundleId":"${bundleId}"}', 'false', '2000-01-01T00:00:00.000Z');`,
 };
 
+/** The statement that removes one launcher's row (the launcher id is one of two fixed words). */
+const REMOVE_STATEMENTS: Record<SeedLauncher, string> = {
+  antigravity: "DELETE FROM launcher_config WHERE launcher_id = 'antigravity';",
+  "claude-desktop": "DELETE FROM launcher_config WHERE launcher_id = 'claude-desktop';",
+};
+
+type StoreStatementDeps = DrillDeps & { fixture: { isRunning(): boolean } };
+
+/**
+ * Runs one fixed statement against the STOPPED sandbox store through the `sqlite3` command-line
+ * tool with an argv array. The target is exactly the run root's own store file, which must already
+ * exist. `statementFor` receives the launcher and returns the statement, or undefined to refuse.
+ */
+async function runStoreStatement(
+  paths: RunRootPaths,
+  input: { launcher: SeedLauncher; fixtureState: "stopped" },
+  deps: StoreStatementDeps,
+  statementFor: () => string,
+  checkInput: () => void,
+): Promise<void> {
+  // The fixture handle is required: without it nothing shows the service is down, and a service
+  // that holds the store open would race the write.
+  if (
+    input?.fixtureState !== "stopped" ||
+    typeof deps?.fixture?.isRunning !== "function" ||
+    deps.fixture.isRunning() === true
+  ) {
+    throw new Error("Refusing to change a store unless the service fixture is stopped.");
+  }
+  if (!Object.hasOwn(SEED_STATEMENTS, input.launcher)) {
+    throw new Error("Refusing a launcher other than antigravity or claude-desktop.");
+  }
+  checkInput();
+  const { root, check } = guarded(paths, deps);
+  if (paths.dbPath !== join(paths.runtimeDir, "operational.db")) {
+    throw new Error(MSG_FORGED_PATHS);
+  }
+  const store = check(paths.dbPath);
+  if (!isSameOrInside(root, store) || !existsSync(store) || !statSync(store).isFile()) {
+    throw new Error("Refusing to change the store: the sandbox store is not present.");
+  }
+  const run = deps.run ?? runFixedArgv;
+  try {
+    await run(SQLITE_TOOL, ["-bail", store, statementFor()], {
+      env: { PATH: FIXED_PATH, LC_ALL: "C" },
+      timeoutMs: deps.timeoutMs ?? DRILL_TIMEOUT_MS,
+    });
+  } catch {
+    throw new Error("Changing the sandbox store did not finish successfully.");
+  }
+}
+
 /**
  * Seeds one app-launcher row into the STOPPED sandbox store, so the launcher health drill can
  * show a bundle that is not installed (the save route would refuse such a bundle). The target is
@@ -688,43 +740,44 @@ const SEED_STATEMENTS: Record<SeedLauncher, (bundleId: string) => string> = {
 export async function seedLauncherRow(
   paths: RunRootPaths,
   input: SeedLauncherRowInput,
-  deps: DrillDeps & { fixture: { isRunning(): boolean } },
+  deps: StoreStatementDeps,
 ): Promise<void> {
-  // The fixture handle is required: without it nothing shows the service is down, and a service
-  // that holds the store open would race the write.
-  if (
-    input?.fixtureState !== "stopped" ||
-    typeof deps?.fixture?.isRunning !== "function" ||
-    deps.fixture.isRunning() === true
-  ) {
-    throw new Error("Refusing to seed a store unless the service fixture is stopped.");
-  }
-  const statement = Object.hasOwn(SEED_STATEMENTS, input.launcher)
-    ? SEED_STATEMENTS[input.launcher]
-    : undefined;
-  if (statement === undefined) {
-    throw new Error("Refusing a launcher other than antigravity or claude-desktop.");
-  }
-  if (typeof input.bundleId !== "string" || !BundleIdSchema.safeParse(input.bundleId).success) {
-    throw new Error("Refusing a bundle id that does not match the bundle id pattern.");
-  }
-  const { root, check } = guarded(paths, deps);
-  if (paths.dbPath !== join(paths.runtimeDir, "operational.db")) {
-    throw new Error(MSG_FORGED_PATHS);
-  }
-  const store = check(paths.dbPath);
-  if (!isSameOrInside(root, store) || !existsSync(store) || !statSync(store).isFile()) {
-    throw new Error("Refusing to seed: the sandbox store is not present.");
-  }
-  const run = deps.run ?? runFixedArgv;
-  try {
-    await run(SQLITE_TOOL, ["-bail", store, statement(input.bundleId)], {
-      env: { PATH: FIXED_PATH, LC_ALL: "C" },
-      timeoutMs: deps.timeoutMs ?? DRILL_TIMEOUT_MS,
-    });
-  } catch {
-    throw new Error("Seeding the sandbox store did not finish successfully.");
-  }
+  await runStoreStatement(
+    paths,
+    input,
+    deps,
+    () => (SEED_STATEMENTS[input.launcher] as (bundleId: string) => string)(input.bundleId),
+    () => {
+      if (typeof input.bundleId !== "string" || !BundleIdSchema.safeParse(input.bundleId).success) {
+        throw new Error("Refusing a bundle id that does not match the bundle id pattern.");
+      }
+    },
+  );
+}
+
+export interface RemoveLauncherRowInput {
+  launcher: SeedLauncher;
+  /** The caller states that the service fixture is stopped; anything else is refused. */
+  fixtureState: "stopped";
+}
+
+/**
+ * Removes the row {@link seedLauncherRow} placed (FIX6A M2), from the STOPPED sandbox store, so a
+ * later check does not look up an app that is not on this Mac (that lookup runs `mdfind`). Same
+ * guards as the seed: the run root's own store, the stopped fixture, a fixed statement.
+ */
+export async function removeLauncherRow(
+  paths: RunRootPaths,
+  input: RemoveLauncherRowInput,
+  deps: StoreStatementDeps,
+): Promise<void> {
+  await runStoreStatement(
+    paths,
+    input,
+    deps,
+    () => REMOVE_STATEMENTS[input.launcher],
+    () => undefined,
+  );
 }
 
 // --- process runner -----------------------------------------------------------------------

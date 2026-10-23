@@ -1001,7 +1001,13 @@ export async function pressInRow(
 export const CHECK_CACHE_GAP_MS = 2_100;
 
 export interface CheckClock {
-  /** When the last press of Run checks again was made, in epoch milliseconds (0: never). */
+  /**
+   * When the page last SHOWED a new answer (or a gesture's answer was seen), in epoch milliseconds
+   * (0: never). The name stays from when it was set at the press: the service caches an answer from
+   * the moment its run finishes, which is later than the press, so a gap measured from the press can
+   * be shorter than two seconds of cache age (FIX6A M2). The moment the page shows the answer is at
+   * or after the run's end, so a gap measured from it is never too short.
+   */
   lastPressAt: number;
 }
 
@@ -1012,15 +1018,17 @@ export function newCheckClock(): CheckClock {
 /**
  * Presses Run checks again once the previous answer is more than two seconds old (so the press is a
  * new run, not the cached one) and waits until the page shows a newer answer and the button is free.
- * Returns the settled section.
+ * The answer cache clock is set when the poll sees that answer, not at the press (FIX6A M2).
+ * Returns the settled section. `now` is the clock (epoch milliseconds); tests pass a fake one.
  */
 export async function recheck(
   browser: HealthBrowser,
   clock: CheckClock,
-  options: { gapMs?: number; wait?: WaitOptions } = {},
+  options: { gapMs?: number; wait?: WaitOptions; now?: () => number } = {},
 ): Promise<HealthRead> {
   const gap = options.gapMs ?? CHECK_CACHE_GAP_MS;
-  await pollUntil(() => Date.now() - clock.lastPressAt >= gap, {
+  const now = options.now ?? Date.now;
+  await pollUntil(() => now() - clock.lastPressAt >= gap, {
     timeoutMs: gap + 5_000,
     intervalMs: 50,
     describe: "the previous answer to be older than the answer cache",
@@ -1035,7 +1043,6 @@ export async function recheck(
       ),
     { ...WAIT.short, describe: "the Run checks again button" },
   );
-  clock.lastPressAt = Date.now();
   return pollUntil(
     async () => {
       const read = await readHealth(browser);
@@ -1046,7 +1053,10 @@ export async function recheck(
         !read.runChecks.busy &&
         read.toolbarGeneratedAt !== null &&
         read.toolbarGeneratedAt !== before;
-      return done ? read : null;
+      if (!done) return null;
+      // The page shows the new answer: the service's cache entry is at most this old.
+      clock.lastPressAt = now();
+      return read;
     },
     { ...(options.wait ?? WAIT.connect), describe: "Diagnostics to show a newer answer" },
   );
@@ -1135,8 +1145,10 @@ export function checkChecked(read: HealthRead): string[] {
 }
 
 /**
- * Item 30, reopening Diagnostics within two seconds of a check: every subsystem row reads Cached and
- * the checked time (the toolbar's and each row's) is the one the first answer had.
+ * Item 30, reopening Diagnostics within two seconds of a check: the five probe rows read Cached
+ * and the companion service row reads Live (the plugin derives it from the connection, so it is
+ * never cached; FIX6A Codex-3), and the checked time (the toolbar's and each row's) is the one the
+ * first answer had.
  */
 export function checkCachedReopen(first: HealthRead, second: HealthRead): string[] {
   const settled = checkSettled(second);
@@ -1151,10 +1163,9 @@ export function checkCachedReopen(first: HealthRead, second: HealthRead): string
       problems.push(`there is no ${name} row`);
       continue;
     }
-    if (row.freshnessLabel !== HEALTH_TEXT.freshnessCached) {
-      problems.push(
-        `${name} reads ${row.freshnessLabel ?? "no freshness"}, not ${HEALTH_TEXT.freshnessCached}`,
-      );
+    const expected = id === "service" ? HEALTH_TEXT.freshnessLive : HEALTH_TEXT.freshnessCached;
+    if (row.freshnessLabel !== expected) {
+      problems.push(`${name} reads ${row.freshnessLabel ?? "no freshness"}, not ${expected}`);
     }
     if (row.checkedAt !== rowOf(first, id)?.checkedAt) {
       problems.push(`${name} shows another checked time than the first answer`);

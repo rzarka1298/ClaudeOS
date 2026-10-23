@@ -118,8 +118,9 @@ describe("bundle export", function () {
     await openDiagnostics(hb);
     // Leaving and coming back mounts the block again, so its preview starts closed.
     await reopenDiagnostics(hb);
-    clock.lastPressAt = Date.now();
     await waitForHealth(hb, checkSettled, "the first answer", WAIT.connect);
+    // Set once the page shows the answer: the service caches it from when its run finished (FIX6A M2).
+    clock.lastPressAt = Date.now();
     const closed = await waitForBundle(
       hb,
       checkBundleClosed,

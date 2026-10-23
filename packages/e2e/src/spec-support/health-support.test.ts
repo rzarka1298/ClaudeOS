@@ -759,19 +759,45 @@ describe("rendererPressRunChecksTwice and checkRunChecksPresses (item 30)", () =
 });
 
 describe("checkCachedReopen (item 30)", () => {
-  const cachedHtml = BASE_HTML.replace(/data-badge="live"/g, 'data-badge="cached"').replace(
-    /<span class="ccc-badge-label">Live<\/span>/g,
-    '<span class="ccc-badge-label">Cached</span>',
-  );
+  /** The page with freshness Cached on the rows whose subsystem `shouldCache` accepts. */
+  function reopened(shouldCache: (subsystem: string) => boolean): string {
+    const marker = '<li class="ccc-health-row"';
+    const [head, ...rows] = BASE_HTML.split(marker);
+    const changed = rows.map((row) => {
+      const subsystem = /data-subsystem="([a-z]+)"/.exec(row)?.[1] ?? "";
+      if (!shouldCache(subsystem)) return row;
+      return row
+        .replace(/data-badge="live"/g, 'data-badge="cached"')
+        .replace(
+          /<span class="ccc-badge-label">Live<\/span>/g,
+          '<span class="ccc-badge-label">Cached</span>',
+        );
+    });
+    return [head, ...changed].join(marker);
+  }
+  const cachedHtml = reopened(() => true);
+  /** What the real reopening shows: the five probe rows Cached, the service row Live (FIX6A Codex-3). */
+  const realReopenHtml = reopened((subsystem) => subsystem !== "service");
 
-  it("accepts a reopening that shows every row as Cached with the same checked time", () => {
-    expect(checkCachedReopen(fresh, readHealthFrom(cachedHtml))).toEqual([]);
+  it("accepts a reopening that shows the five probe rows Cached and the service row Live, with the same checked time", () => {
+    expect(checkCachedReopen(fresh, readHealthFrom(realReopenHtml))).toEqual([]);
   });
 
-  it("flags rows that are not Cached and a checked time that moved", () => {
-    expect(checkCachedReopen(fresh, fresh).join(" ")).toContain("Cached");
+  it("FIX6A Codex-3: the service row is not required to be Cached, and a Cached service row is flagged", () => {
+    const problems = checkCachedReopen(fresh, readHealthFrom(cachedHtml)).join(" ");
+    expect(problems).toContain("Live");
+    expect(problems.toLowerCase()).toContain("service");
+  });
+
+  it("FIX6A Codex-3: a probe row that reads Live in a reopening is flagged by name", () => {
+    const problems = checkCachedReopen(fresh, fresh).join(" ");
+    expect(problems).toContain("Cached");
+    expect(problems).not.toMatch(/Companion service reads Live/);
+  });
+
+  it("flags a checked time that moved", () => {
     const moved = readHealthFrom(
-      cachedHtml.replace(
+      realReopenHtml.replace(
         'datetime="2026-10-23T10:00:00.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-toolbar"',
         'datetime="2026-10-23T10:00:09.000Z" title="x" aria-describedby="abs-toolbar"',
       ),
@@ -1023,6 +1049,72 @@ describe("reopenDiagnostics, waitForLive and recheck", () => {
     expect(read.toolbarGeneratedAt).toBe("2026-10-23T10:00:30.000Z");
     expect(stub.presses).toBe(1);
     expect(clock.lastPressAt).toBeGreaterThan(0);
+  });
+
+  it("FIX6A M2: the answer cache clock is set when the poll sees the new answer, not at the press (the service caches from when the run finishes)", async () => {
+    let t = 10_000;
+    const reads = [fresh, fresh, newer];
+    let index = 0;
+    const browser = {
+      executeObsidianCommand: async () => undefined,
+      executeObsidian: async () => {
+        // The press: the run then takes 700 ms before the page shows its answer.
+        return true;
+      },
+      execute: async () => {
+        const read = reads[Math.min(index++, reads.length - 1)];
+        if (read === newer) t += 700;
+        return read;
+      },
+    } as unknown as HealthBrowser;
+    const clock = newCheckClock();
+    await recheck(browser, clock, {
+      gapMs: 0,
+      now: () => t,
+      wait: { timeoutMs: 5_000, intervalMs: 1 },
+    });
+    expect(clock.lastPressAt).toBe(10_700);
+  });
+
+  it("FIX6A M2: a back-to-back re-check waits two seconds from the seen answer, so it is never served from the cache", async () => {
+    let t = 50_000;
+    let seen = 0;
+    const answers = [
+      { ...fresh, toolbarGeneratedAt: "2026-10-23T10:01:00.000Z" } as HealthRead,
+      { ...fresh, toolbarGeneratedAt: "2026-10-23T10:02:00.000Z" } as HealthRead,
+    ];
+    const presses: number[] = [];
+    const browser = {
+      executeObsidianCommand: async () => undefined,
+      executeObsidian: async () => {
+        presses.push(t);
+        return true;
+      },
+      execute: async () => {
+        // Each press is answered 600 ms after it was made.
+        const pressedAt = presses.at(-1);
+        if (pressedAt !== undefined && seen < presses.length) {
+          t = pressedAt + 600;
+          seen = presses.length;
+        }
+        return presses.length === 0 ? fresh : (answers[presses.length - 1] ?? fresh);
+      },
+    } as unknown as HealthBrowser;
+    const clock = newCheckClock();
+    const opts = (): Parameters<typeof recheck>[2] => ({
+      gapMs: 2_100,
+      // Each look at the clock lets 500 ms pass, standing in for the real waiting.
+      now: () => {
+        t += 500;
+        return t;
+      },
+      wait: { timeoutMs: 5_000, intervalMs: 1 },
+    });
+    await recheck(browser, clock, opts());
+    const firstSeenAt = clock.lastPressAt;
+    await recheck(browser, clock, opts());
+    // The second press came more than the gap after the first answer was seen.
+    expect((presses[1] ?? 0) - firstSeenAt).toBeGreaterThanOrEqual(2_100);
   });
 
   it("waits out the answer cache before it presses", async () => {
