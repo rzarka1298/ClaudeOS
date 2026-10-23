@@ -6,15 +6,19 @@ import {
   existsSync,
   fchmodSync,
   fstatSync,
+  futimesSync,
   lstatSync,
   mkdirSync,
   openSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { BundleIdSchema } from "@ccc/domain";
 import {
   assertNoSymlinkBelow,
@@ -408,6 +412,159 @@ export function writeFakeExecutable(
     kind: "create",
   });
   return file;
+}
+
+// --- scratch files and folders --------------------------------------------------------------
+
+const MAX_SCRATCH_READ_BYTES = 1024 * 1024;
+const MAX_SCRATCH_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MSG_NOT_A_FILE = "Refusing a path that is not a plain file.";
+const MSG_NOT_A_FOLDER = "Refusing a path that is not a plain folder.";
+const MSG_TARGET_EXISTS = "Refusing to move onto a path that already exists.";
+
+/** Reads a plain text file inside the run root (at most 1 MiB), never through a link. */
+export function readTextInRunRoot(
+  paths: RunRootPaths,
+  target: string,
+  deps: DrillDeps = {},
+): string {
+  const { check } = guarded(paths, deps);
+  const file = check(target);
+  let fd: number;
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error(MSG_PATH_LINK);
+    throw error;
+  }
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size > MAX_SCRATCH_READ_BYTES) throw new Error(MSG_NOT_A_FILE);
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Replaces `target` (a plain file or nothing) with `text`, mode 0600: the old file is unlinked and
+ * the new one created exclusively without following a link. The folder it sits in must exist.
+ * A folder at `target` is refused (use {@link removeEmptyDirInRunRoot}).
+ */
+export function replaceFileInRunRoot(
+  paths: RunRootPaths,
+  target: string,
+  text: string,
+  deps: DrillDeps = {},
+): void {
+  if (typeof text !== "string" || text.length > MAX_SCRATCH_READ_BYTES) {
+    throw new Error("Refusing text that is not a small string.");
+  }
+  const { check } = guarded(paths, deps);
+  const file = check(target);
+  check(dirname(file));
+  try {
+    const info = lstatSync(file);
+    if (!info.isFile()) throw new Error(MSG_NOT_A_FILE);
+    unlinkSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  writeThroughDescriptor(file, text, { mode: 0o600, kind: "create" });
+}
+
+/** Removes one plain file inside the run root; returns whether it was there. A folder is refused. */
+export function removeFileInRunRoot(
+  paths: RunRootPaths,
+  target: string,
+  deps: DrillDeps = {},
+): boolean {
+  const { check } = guarded(paths, deps);
+  const file = check(target);
+  try {
+    if (!lstatSync(file).isFile()) throw new Error(MSG_NOT_A_FILE);
+    unlinkSync(file);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/**
+ * Sets the modification and access time of a plain file inside the run root to `ageMs` milliseconds
+ * before now (at most 30 days): the way a drill makes the spool's dropped-records file older than
+ * 24 hours. The time goes onto the descriptor opened without following a link, so only a sandbox
+ * file can be touched.
+ */
+export function ageFileInRunRoot(
+  paths: RunRootPaths,
+  target: string,
+  ageMs: number,
+  deps: DrillDeps = {},
+): void {
+  if (!Number.isInteger(ageMs) || ageMs < 0 || ageMs > MAX_SCRATCH_AGE_MS) {
+    throw new Error("Refusing an age that is not a whole number of milliseconds up to 30 days.");
+  }
+  const { check } = guarded(paths, deps);
+  const file = check(target);
+  let fd: number;
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") throw new Error(MSG_PATH_LINK);
+    throw error;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error(MSG_NOT_A_FILE);
+    const when = new Date(Date.now() - ageMs);
+    futimesSync(fd, when, when);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Creates a folder (mode 0700) inside the run root; an existing folder is used as is. */
+export function makeDirInRunRoot(
+  paths: RunRootPaths,
+  target: string,
+  deps: DrillDeps = {},
+): string {
+  const { check } = guarded(paths, deps);
+  return ensureDir(check, target);
+}
+
+/** Removes one EMPTY folder inside the run root; returns whether it was there. */
+export function removeEmptyDirInRunRoot(
+  paths: RunRootPaths,
+  target: string,
+  deps: DrillDeps = {},
+): boolean {
+  const { check } = guarded(paths, deps);
+  const folder = check(target);
+  try {
+    if (!lstatSync(folder).isDirectory()) throw new Error(MSG_NOT_A_FOLDER);
+    rmdirSync(folder);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/** Moves a file or folder to a path that does not exist yet, both strictly inside the run root. */
+export function renameInRunRoot(
+  paths: RunRootPaths,
+  from: string,
+  to: string,
+  deps: DrillDeps = {},
+): void {
+  const { check } = guarded(paths, deps);
+  const source = check(from);
+  const destination = check(to);
+  lstatSync(source);
+  if (existsSync(destination)) throw new Error(MSG_TARGET_EXISTS);
+  renameSync(source, destination);
 }
 
 // --- spool drops --------------------------------------------------------------------------

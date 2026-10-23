@@ -20,11 +20,18 @@ import { REPO_ROOT } from "../repo-paths.js";
 import { createRunRoot, pathsForRoot, type RunRootPaths } from "../run-root.js";
 import { SQLITE_TOOL } from "../store-copy.js";
 import {
+  ageFileInRunRoot,
   DRILL_TIMEOUT_MS,
   type DrillRunner,
   hookInstallerArgv,
+  makeDirInRunRoot,
   makeSecondVault,
+  readTextInRunRoot,
   refuseOwnerLocations,
+  removeEmptyDirInRunRoot,
+  removeFileInRunRoot,
+  renameInRunRoot,
+  replaceFileInRunRoot,
   runFixedArgv,
   runHookInstaller,
   seedLauncherRow,
@@ -779,5 +786,107 @@ describe("source discipline", () => {
     expect(source).not.toMatch(/\bexecSync\b|\bspawnSync\b|\bexec\(/);
     expect(source).not.toMatch(/git (clean|stash|reset)/);
     expect(source).not.toMatch(/rmSync\([^)]*recursive/);
+  });
+});
+
+describe("scratch file and folder operations (plan 08-20)", () => {
+  const settings = (): string => join(paths.claudeConfigDir, "settings.json");
+
+  it("replaces a plain file with new text, mode 0600, and creates it when missing", () => {
+    mkdirSync(paths.claudeConfigDir, { recursive: true });
+    replaceFileInRunRoot(paths, settings(), '{"a":1}', deps());
+    expect(readFileSync(settings(), "utf8")).toBe('{"a":1}');
+    expect(mode(settings())).toBe(0o600);
+    replaceFileInRunRoot(paths, settings(), "{}", deps());
+    expect(readTextInRunRoot(paths, settings(), deps())).toBe("{}");
+    expect(readdirSync(paths.claudeConfigDir)).toEqual(["settings.json"]);
+  });
+
+  it("refuses a folder at the target, a missing parent, a symlink and a path outside the run root", () => {
+    mkdirSync(paths.claudeConfigDir, { recursive: true });
+    mkdirSync(settings());
+    expect(() => replaceFileInRunRoot(paths, settings(), "x", deps())).toThrow(/plain file/);
+    expect(() =>
+      replaceFileInRunRoot(paths, join(paths.root, "no-such", "x.json"), "x", deps()),
+    ).toThrow();
+    const link = join(paths.root, "linked");
+    symlinkSync(outside, link);
+    expect(() => replaceFileInRunRoot(paths, join(link, "x.json"), "x", deps())).toThrow(
+      /symbolic link/,
+    );
+    expect(() => replaceFileInRunRoot(paths, join(outside, "x.json"), "x", deps())).toThrow(
+      /outside the run root/,
+    );
+    expect(() => replaceFileInRunRoot(paths, join(home, "x.json"), "x", deps())).toThrow();
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it("removes a plain file and reports whether it was there; a folder is refused", () => {
+    mkdirSync(paths.claudeConfigDir, { recursive: true });
+    replaceFileInRunRoot(paths, settings(), "{}", deps());
+    expect(removeFileInRunRoot(paths, settings(), deps())).toBe(true);
+    expect(removeFileInRunRoot(paths, settings(), deps())).toBe(false);
+    mkdirSync(join(paths.root, "folder"));
+    expect(() => removeFileInRunRoot(paths, join(paths.root, "folder"), deps())).toThrow(
+      /plain file/,
+    );
+  });
+
+  it("sets a file's times back by the given age, on a sandbox file only", () => {
+    const file = writeSpoolDrops(paths, 2, deps());
+    const day = 24 * 60 * 60 * 1000;
+    ageFileInRunRoot(paths, file, 25 * 60 * 60 * 1000, deps());
+    const age = Date.now() - statSync(file).mtimeMs;
+    expect(age).toBeGreaterThan(25 * 60 * 60 * 1000 - 60_000);
+    expect(age).toBeLessThan(26 * 60 * 60 * 1000);
+    for (const bad of [-1, 1.5, 31 * day, Number.NaN]) {
+      expect(() => ageFileInRunRoot(paths, file, bad, deps()), `age ${bad}`).toThrow();
+    }
+    const real = join(outside, "real.txt");
+    writeFileSync(real, "x");
+    expect(() => ageFileInRunRoot(paths, real, 1000, deps())).toThrow(/outside the run root/);
+    const link = join(paths.root, "link.txt");
+    symlinkSync(real, link);
+    expect(() => ageFileInRunRoot(paths, link, 1000, deps())).toThrow(/symbolic link/);
+    expect(Date.now() - statSync(real).mtimeMs).toBeLessThan(60_000);
+  });
+
+  it("makes and removes an empty folder; a folder with content or a file is refused", () => {
+    const folder = join(paths.root, "dir-as-settings");
+    expect(makeDirInRunRoot(paths, folder, deps())).toBe(folder);
+    expect(mode(folder)).toBe(0o700);
+    writeFileSync(join(folder, "x"), "x");
+    expect(() => removeEmptyDirInRunRoot(paths, folder, deps())).toThrow();
+    rmSync(join(folder, "x"));
+    expect(removeEmptyDirInRunRoot(paths, folder, deps())).toBe(true);
+    expect(removeEmptyDirInRunRoot(paths, folder, deps())).toBe(false);
+    writeFileSync(join(paths.root, "file"), "x");
+    expect(() => removeEmptyDirInRunRoot(paths, join(paths.root, "file"), deps())).toThrow(
+      /plain folder/,
+    );
+  });
+
+  it("moves a folder to a name that is free and refuses an existing name or an outside path", () => {
+    const vault = makeSecondVault(paths, "second", deps());
+    const away = join(paths.vaultsDir, "second-away");
+    renameInRunRoot(paths, vault, away, deps());
+    expect(existsSync(vault)).toBe(false);
+    expect(existsSync(join(away, ".obsidian"))).toBe(true);
+    renameInRunRoot(paths, away, vault, deps());
+    expect(existsSync(vault)).toBe(true);
+    mkdirSync(away);
+    expect(() => renameInRunRoot(paths, vault, away, deps())).toThrow(/already exists/);
+    expect(() => renameInRunRoot(paths, vault, join(outside, "moved"), deps())).toThrow(
+      /outside the run root/,
+    );
+    expect(existsSync(vault)).toBe(true);
+  });
+
+  it("reads only a plain text file of a sensible size inside the run root", () => {
+    const big = join(paths.root, "big.txt");
+    writeFileSync(big, "x".repeat(2 * 1024 * 1024));
+    expect(() => readTextInRunRoot(paths, big, deps())).toThrow(/plain file/);
+    expect(() => readTextInRunRoot(paths, join(outside, "x"), deps())).toThrow(/outside/);
+    expect(() => readTextInRunRoot(paths, join(paths.root, "folder-none"), deps())).toThrow();
   });
 });

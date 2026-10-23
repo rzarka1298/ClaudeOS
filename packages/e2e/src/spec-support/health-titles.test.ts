@@ -13,7 +13,7 @@ import { extractSpecTitles } from "../tag-lint.js";
  */
 
 const HEALTH_SPEC = "packages/e2e/specs/health-drills.e2e.ts";
-const HEALTH_ITEMS = [22] as const;
+const HEALTH_ITEMS = [22, 23, 24, 25, 26, 27, 28, 29, 30, 36] as const;
 
 function titlesOf(spec: string): string[] {
   const full = join(REPO_ROOT, spec);
@@ -26,7 +26,13 @@ function numbersOf(list: readonly string[]): number[] {
 }
 
 describe("health drills spec titles", () => {
-  it("holds [08-UAT#22] so far (Task 2 adds 23 to 30 and 36), once each", () => {
+  it("holds no title for any other item", () => {
+    expect(
+      titlesOf(HEALTH_SPEC).filter((title) => !/^\[08-UAT#(2[2-9]|30|36)\] /.test(title)),
+    ).toEqual([]);
+  });
+
+  it("holds exactly [08-UAT#22] to [08-UAT#30] and [08-UAT#36], once each", () => {
     expect(numbersOf(titlesOf(HEALTH_SPEC)).sort((a, b) => a - b)).toEqual([...HEALTH_ITEMS]);
   });
 

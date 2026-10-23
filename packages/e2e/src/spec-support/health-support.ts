@@ -1,5 +1,16 @@
-import { SUBSYSTEM_STATUS_DISPLAY, type SubsystemStatus } from "@ccc/domain";
+import { join } from "node:path";
+import {
+  COLLECTORS_REASON_STATUS,
+  HOOKS_REASON_STATUS,
+  LAUNCHERS_REASON_STATUS,
+  SCHEDULER_REASON_STATUS,
+  SERVICE_REASON_STATUS,
+  SUBSYSTEM_STATUS_DISPLAY,
+  type SubsystemStatus,
+  VAULT_REASON_STATUS,
+} from "@ccc/domain";
 import { type DriverBrowser, type PollOptions, pollUntil } from "../driver.js";
+import type { RunRootPaths } from "../run-root.js";
 import {
   HEALTH_ATTRS,
   HEALTH_CLASSES,
@@ -172,9 +183,13 @@ interface RNode {
   querySelectorAll(selector: string): ArrayLike<RNode>;
   cloneNode(deep: boolean): RNode;
   remove(): void;
+  click(): void;
 }
 
+declare const window: { setTimeout(callback: () => void, ms: number): unknown };
+
 declare const document: {
+  activeElement: RNode | null;
   querySelector(selector: string): RNode | null;
   querySelectorAll(selector: string): ArrayLike<RNode>;
 };
@@ -468,7 +483,10 @@ const RAW_ERROR_PATTERNS: readonly (readonly [string, RegExp])[] = [
   ["a home path", /\/(?:Users|home)\/\S+/],
   ["a temporary run folder", /\/(?:tmp|private|var)\/\S*/],
   ["a tilde path", /(?:^|[\s"'(])~\/\S/],
-  ["an errno name", /\bE(?:NOENT|ACCES|PERM|ROFS|NOTDIR|ISDIR|EXIST|XDEV|BUSY|MFILE|NOTEMPTY)\b/],
+  [
+    "an errno name",
+    /\bE(?:NOENT|ACCES|PERM|ROFS|NOTDIR|ISDIR|EXIST|XDEV|BUSY|MFILE|NOTEMPTY|CONNREFUSED|CONNRESET|PIPE|TIMEDOUT)\b/,
+  ],
   ["an error prefix", /\b(?:[A-Z][a-z]+)?Error:/],
   ["a stack frame", /\bat\s+[^\n]*:\d+:\d+/],
   ["an object dump", /\[object \w+\]/],
@@ -595,4 +613,688 @@ export function checkFreshInstall(read: HealthRead): string[] {
   const raw = findRawErrorText(read.text);
   if (raw.length > 0) problems.push(`the section shows raw error text (${raw.join(", ")})`);
   return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Drill discipline: every step that changes the sandbox is undone in a finally
+
+/**
+ * Runs `fn` and then `restore`, in a finally block, whether `fn` returned or threw. When `fn`
+ * threw, its error is the one thrown (a failing restore never hides it); when only `restore`
+ * failed, that error is thrown.
+ */
+export async function withRestore<T>(
+  restore: () => void | Promise<void>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  let result: T | undefined;
+  let stepError: { readonly error: unknown } | undefined;
+  try {
+    result = await fn();
+  } catch (error) {
+    stepError = { error };
+  }
+  // The restore runs whether the step returned or threw, before anything is rethrown.
+  try {
+    await restore();
+  } catch (restoreError) {
+    if (stepError === undefined) throw restoreError;
+  }
+  if (stepError !== undefined) throw stepError.error;
+  return result as T;
+}
+
+/**
+ * The calls that change a sandbox file, folder, mode, setting or Keychain item. The health drills
+ * spec may make each one only inside `withRestore(...)` or `withMode(...)` (D-09, T-08-50).
+ */
+export const MUTATING_HELPERS: readonly string[] = Object.freeze([
+  "replaceFileInRunRoot",
+  "removeFileInRunRoot",
+  "renameInRunRoot",
+  "makeDirInRunRoot",
+  "removeEmptyDirInRunRoot",
+  "ageFileInRunRoot",
+  "writeSpoolDrops",
+  "runHookInstaller",
+  "writeFakeExecutable",
+  "requestVaultSetup",
+  "setTranscriptAnalysis",
+  "setSecret",
+  "deleteUatAccount",
+]);
+
+const GUARD_CALLS: readonly string[] = ["withRestore", "withMode"];
+
+/** `source` with comments and the inside of string and template literals blanked (newlines kept). */
+function blankedSource(source: string): string {
+  let out = "";
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index] as string;
+    const next = source[index + 1];
+    if (char === "/" && next === "/") {
+      while (index < source.length && source[index] !== "\n") {
+        out += " ";
+        index += 1;
+      }
+    } else if (char === "/" && next === "*") {
+      const end = source.indexOf("*/", index + 2);
+      const stop = end < 0 ? source.length : end + 2;
+      out += source.slice(index, stop).replace(/[^\n]/g, " ");
+      index = stop;
+    } else if (char === "'" || char === '"' || char === "`") {
+      out += char;
+      index += 1;
+      while (index < source.length && source[index] !== char) {
+        if (source[index] === "\\") {
+          out += " ";
+          index += 1;
+        }
+        out += source[index] === "\n" ? "\n" : " ";
+        index += 1;
+      }
+      out += char;
+      index += 1;
+    } else {
+      out += char;
+      index += 1;
+    }
+  }
+  return out;
+}
+
+/** The index just after the parenthesis that closes the one opened at `open`. */
+function closingParen(text: string, open: number): number {
+  let depth = 0;
+  for (let index = open; index < text.length; index += 1) {
+    if (text[index] === "(") depth += 1;
+    else if (text[index] === ")") {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return text.length;
+}
+
+/**
+ * The mutating calls in `source` that sit outside every `withRestore(...)` and `withMode(...)`
+ * call, with their line numbers. A call in the restore argument counts as guarded.
+ */
+export function findUnguardedMutations(source: string): { call: string; line: number }[] {
+  const text = blankedSource(source);
+  const extents: [number, number][] = [];
+  for (const guard of GUARD_CALLS) {
+    for (const match of text.matchAll(new RegExp(`\\b${guard}\\(`, "g"))) {
+      const open = (match.index as number) + match[0].length - 1;
+      extents.push([open, closingParen(text, open)]);
+    }
+  }
+  const found: { call: string; line: number; at: number }[] = [];
+  for (const name of MUTATING_HELPERS) {
+    for (const match of text.matchAll(new RegExp(`\\b${name}\\(`, "g"))) {
+      const at = match.index as number;
+      if (extents.some(([from, to]) => at > from && at < to)) continue;
+      found.push({ call: name, line: text.slice(0, at).split("\n").length, at });
+    }
+  }
+  return found.sort((a, b) => a.at - b.at).map(({ call, line }) => ({ call, line }));
+}
+
+// ---------------------------------------------------------------------------
+// Sandbox files the drills touch, and the text recipes that break them
+
+export interface DrillFiles {
+  /** Claude's settings in the scratch config folder (the hooks installer writes its entries here). */
+  readonly claudeSettings: string;
+  /** The record the installer leaves in the runtime folder: `{ nodePath }`. */
+  readonly installJson: string;
+  /** The dropped-records file of the sandbox spool. */
+  readonly spoolDropped: string;
+  /** The fake `claude` the hook installer is pointed at. */
+  readonly fakeClaude: string;
+}
+
+/** The sandbox files the drills touch, all strictly below the run root. */
+export function drillFiles(paths: RunRootPaths): DrillFiles {
+  return {
+    claudeSettings: join(paths.claudeConfigDir, "settings.json"),
+    installJson: join(paths.runtimeDir, "hooks", "install.json"),
+    spoolDropped: join(paths.runtimeDir, "spool", "hooks.dropped"),
+    fakeClaude: join(paths.root, "fake-bin", "claude"),
+  };
+}
+
+function objectOf(text: string, what: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`The ${what} is not valid JSON.`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`The ${what} is not a JSON object.`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/** Claude's settings text with `disableAllHooks` set; every other key is kept. */
+export function settingsWithAllHooksDisabled(text: string): string {
+  const settings = objectOf(text, "Claude settings text");
+  return `${JSON.stringify({ ...settings, disableAllHooks: true }, null, 2)}\n`;
+}
+
+/** Claude's settings text without `disableAllHooks`; every other key is kept. */
+export function settingsWithoutDisableAll(text: string): string {
+  const { disableAllHooks: _removed, ...rest } = objectOf(text, "Claude settings text");
+  return `${JSON.stringify(rest, null, 2)}\n`;
+}
+
+/** The install record with its `nodePath` replaced; every other key is kept. */
+export function installJsonWithNodePath(text: string, nodePath: string): string {
+  const record = objectOf(text, "install record");
+  return `${JSON.stringify({ ...record, nodePath }, null, 2)}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// Item 23: the service stopped, then restarted
+
+function problemsOfReason(
+  row: HealthRowRead,
+  expected: { status: string; reason: string },
+): string[] {
+  const problems: string[] = [];
+  const name = row.name;
+  if (row.status !== expected.status) {
+    problems.push(`${name} is ${row.status ?? "unreadable"}, not ${expected.status}`);
+  }
+  if (row.chip !== chipWord(expected.status, row.subsystem)) {
+    problems.push(
+      `${name} shows the chip "${row.chip}", not "${chipWord(expected.status, row.subsystem)}"`,
+    );
+  }
+  if (row.reason !== expected.reason) {
+    problems.push(
+      `${name} reads the reason code "${row.reason ?? "none"}", not "${expected.reason}"`,
+    );
+  } else if (
+    hasReasonMirror(expected.reason) &&
+    !reasonTextMatches(expected.reason, row.reasonText)
+  ) {
+    problems.push(`${name} does not show the sentence the plugin writes for "${expected.reason}"`);
+  }
+  return problems;
+}
+
+/**
+ * Item 23, with the service stopped (D-03, D-43): the Companion service reads Failing "The plugin
+ * can't reach the companion service."; every other row reads Unknown "Can't be checked while the
+ * companion service isn't running." with no last value (no detail, no checked time, no parts) and
+ * no error text anywhere in the section.
+ */
+export function checkServiceStopped(read: HealthRead): string[] {
+  const settled = checkSettled(read);
+  if (settled.length > 0) return settled;
+  const problems: string[] = [];
+  for (const { id, name } of SUBSYSTEMS) {
+    const row = rowOf(read, id);
+    if (row === undefined) {
+      problems.push(`there is no ${name} row`);
+      continue;
+    }
+    if (id === "service") {
+      problems.push(...problemsOfReason(row, { status: "failing", reason: "service-unreachable" }));
+      continue;
+    }
+    problems.push(...problemsOfReason(row, { status: "unknown", reason: "service-not-running" }));
+    if (row.detail !== null || row.checkedAt !== null || row.parts.length > 0) {
+      problems.push(`${name} still shows a last value`);
+    }
+  }
+  const raw = findRawErrorText(read.text);
+  if (raw.length > 0) problems.push(`the section shows raw error text (${raw.join(", ")})`);
+  return problems;
+}
+
+/** Item 23, after the restart and Run checks again: the service is Running and no row is cleared. */
+export function checkServiceRestored(read: HealthRead): string[] {
+  const settled = checkSettled(read);
+  if (settled.length > 0) return settled;
+  const problems: string[] = [];
+  for (const { id, name } of SUBSYSTEMS) {
+    const row = rowOf(read, id);
+    if (row === undefined) {
+      problems.push(`there is no ${name} row`);
+    } else if (id === "service") {
+      problems.push(...problemsOfReason(row, { status: "ok", reason: "service-live" }));
+    } else if (row.skeleton || row.reason === "service-not-running" || row.status === null) {
+      problems.push(`${name} is still cleared`);
+    }
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Items 24 to 28: a row or a part by status, reason code and sentence
+
+export interface RowExpectation {
+  readonly status: string;
+  readonly reason: string;
+  /** A button the row must offer, in its callout or in any of its parts. */
+  readonly button?: string;
+  /** The row must show a next step. */
+  readonly nextStep?: boolean;
+}
+
+/** What is wrong with a subsystem row against `expected`; an empty list is a pass. */
+export function checkRowIs(
+  read: HealthRead,
+  subsystem: string,
+  expected: RowExpectation,
+): string[] {
+  const row = rowOf(read, subsystem);
+  if (row === undefined) return [`there is no ${subsystem} row`];
+  if (row.skeleton) return [`${row.name} is still a loading placeholder`];
+  const problems = problemsOfReason(row, expected);
+  if (expected.button !== undefined) {
+    const offered = [...row.buttons, ...row.parts.flatMap((part) => part.buttons)];
+    if (!offered.includes(expected.button)) {
+      problems.push(`${row.name} offers no "${expected.button}" control`);
+    }
+  }
+  if (expected.nextStep === true && (row.nextStep === null || row.nextStep === "")) {
+    problems.push(`${row.name} shows no next step`);
+  }
+  return problems;
+}
+
+export interface PartExpectation {
+  readonly status: string;
+  readonly reason: string;
+  readonly button?: string;
+}
+
+/** What is wrong with one part of a row against `expected`; an empty list is a pass. */
+export function checkPartIs(
+  read: HealthRead,
+  subsystem: string,
+  partId: string,
+  expected: PartExpectation,
+): string[] {
+  const row = rowOf(read, subsystem);
+  if (row === undefined) return [`there is no ${subsystem} row`];
+  const part = partOf(row, partId);
+  if (part === undefined) return [`there is no ${partId} part on ${row.name}`];
+  const problems: string[] = [];
+  if (part.status !== expected.status) {
+    problems.push(
+      `the ${partId} part of ${row.name} is ${part.status ?? "unreadable"}, not ${expected.status}`,
+    );
+  }
+  if (part.reason !== expected.reason) {
+    problems.push(
+      `the ${partId} part of ${row.name} reads the reason code "${part.reason ?? "none"}", not "${expected.reason}"`,
+    );
+  } else if (
+    hasReasonMirror(expected.reason) &&
+    !reasonTextMatches(expected.reason, part.reasonText)
+  ) {
+    problems.push(
+      `the ${partId} part of ${row.name} does not show the sentence for "${expected.reason}"`,
+    );
+  }
+  if (expected.button !== undefined && !part.buttons.includes(expected.button)) {
+    problems.push(`the ${partId} part of ${row.name} offers no "${expected.button}" control`);
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Pressing controls and re-checking
+
+/**
+ * Clicks the button of a subsystem row whose visible text is `label`; false when there is none.
+ * SELF-CONTAINED (renderer function).
+ */
+export function rendererClickInRow(c: HealthDomConfig, subsystem: string, label: string): boolean {
+  const rows = document.querySelectorAll(`li.${c.row}[${c.attrSubsystem}="${subsystem}"]`);
+  for (let i = 0; i < rows.length; i += 1) {
+    const buttons = (rows[i] as RNode).querySelectorAll("button");
+    for (let j = 0; j < buttons.length; j += 1) {
+      const button = buttons[j] as RNode;
+      if ((button.textContent ?? "").replace(/\s+/g, " ").trim() === label) {
+        button.click();
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export async function pressInRow(
+  browser: HealthBrowser,
+  subsystem: string,
+  label: string,
+): Promise<void> {
+  await pollUntil(() => browser.execute(rendererClickInRow, HEALTH_DOM_CONFIG, subsystem, label), {
+    ...WAIT.short,
+    describe: `the "${label}" control of the ${subsystem} row`,
+  });
+}
+
+/** The answer cache keeps one run per trigger for two seconds; a re-check waits this long first. */
+export const CHECK_CACHE_GAP_MS = 2_100;
+
+export interface CheckClock {
+  /** When the last press of Run checks again was made, in epoch milliseconds (0: never). */
+  lastPressAt: number;
+}
+
+export function newCheckClock(): CheckClock {
+  return { lastPressAt: 0 };
+}
+
+/**
+ * Presses Run checks again once the previous answer is more than two seconds old (so the press is a
+ * new run, not the cached one) and waits until the page shows a newer answer and the button is free.
+ * Returns the settled section.
+ */
+export async function recheck(
+  browser: HealthBrowser,
+  clock: CheckClock,
+  options: { gapMs?: number; wait?: WaitOptions } = {},
+): Promise<HealthRead> {
+  const gap = options.gapMs ?? CHECK_CACHE_GAP_MS;
+  await pollUntil(() => Date.now() - clock.lastPressAt >= gap, {
+    timeoutMs: gap + 5_000,
+    intervalMs: 50,
+    describe: "the previous answer to be older than the answer cache",
+  });
+  const before = (await readHealth(browser)).toolbarGeneratedAt;
+  await pollUntil(
+    () =>
+      browser.executeObsidian(
+        rendererClick,
+        `.${HEALTH_CLASSES.healthToolbar} button`,
+        HEALTH_TEXT.runChecksLabel,
+      ),
+    { ...WAIT.short, describe: "the Run checks again button" },
+  );
+  clock.lastPressAt = Date.now();
+  return pollUntil(
+    async () => {
+      const read = await readHealth(browser);
+      const done =
+        read.mounted &&
+        !read.busy &&
+        read.runChecks !== null &&
+        !read.runChecks.busy &&
+        read.toolbarGeneratedAt !== null &&
+        read.toolbarGeneratedAt !== before;
+      return done ? read : null;
+    },
+    { ...(options.wait ?? WAIT.connect), describe: "Diagnostics to show a newer answer" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Item 30: the busy button, the ignored second press and the cached reopening
+
+export interface PressSnapshot {
+  readonly busy: boolean;
+  readonly disabled: boolean;
+  readonly status: string;
+}
+
+export interface RunChecksPresses {
+  readonly found: boolean;
+  readonly first: PressSnapshot | null;
+  readonly second: PressSnapshot | null;
+}
+
+/**
+ * Presses Run checks again twice back to back and reports what the page showed after each press,
+ * one task later (so the page has drawn). SELF-CONTAINED (renderer function; helpers are arrows in
+ * an array literal because of keepNames).
+ */
+export async function rendererPressRunChecksTwice(c: HealthDomConfig): Promise<RunChecksPresses> {
+  const H = [
+    (n: RNode | null): string =>
+      n === null ? "" : (n.textContent ?? "").replace(/\s+/g, " ").trim(),
+    () =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(() => resolve(), 0);
+      }),
+  ];
+  const text = H[0] as (n: RNode | null) => string;
+  const tick = H[1] as () => Promise<void>;
+  const button = document.querySelector(`.${c.toolbar} button`);
+  const line = document.querySelector(`.${c.status}`);
+  if (button === null) return { found: false, first: null, second: null };
+  const first: PressSnapshot[] = [];
+  for (let press = 0; press < 2; press += 1) {
+    button.click();
+    await tick();
+    first.push({
+      busy: button.getAttribute(c.attrBusy) === "true",
+      disabled: button.getAttribute(c.attrDisabled) === "true",
+      status: text(line),
+    });
+  }
+  return { found: true, first: first[0] ?? null, second: first[1] ?? null };
+}
+
+/** Item 30: the first press makes the button busy and the line "Checking…"; the second changes nothing. */
+export function checkRunChecksPresses(result: RunChecksPresses): string[] {
+  if (!result.found || result.first === null || result.second === null) {
+    return ["the Run checks again button is not on the page"];
+  }
+  const problems: string[] = [];
+  if (!result.first.busy) problems.push("the button was not busy right after the first press");
+  if (!result.first.disabled) problems.push("the button was not marked disabled while busy");
+  if (result.first.status !== HEALTH_TEXT.checking) {
+    problems.push(`the status line read "${result.first.status}", not "${HEALTH_TEXT.checking}"`);
+  }
+  if (
+    !result.second.busy ||
+    result.second.status !== result.first.status ||
+    result.second.disabled !== result.first.disabled
+  ) {
+    problems.push("the second press was not ignored: the page changed after it");
+  }
+  return problems;
+}
+
+/** The statement the finished check makes: the line reads "Checked just now." and the button is free. */
+export function checkChecked(read: HealthRead): string[] {
+  const settled = checkSettled(read);
+  if (settled.length > 0) return settled;
+  const problems: string[] = [];
+  if (read.runChecks === null || read.runChecks.busy) problems.push("the button is still busy");
+  if (!read.statusLine.startsWith(HEALTH_TEXT.checkedJustNow)) {
+    problems.push(
+      `the status line reads "${read.statusLine}", not "${HEALTH_TEXT.checkedJustNow}"`,
+    );
+  }
+  return problems;
+}
+
+/**
+ * Item 30, reopening Diagnostics within two seconds of a check: every subsystem row reads Cached and
+ * the checked time (the toolbar's and each row's) is the one the first answer had.
+ */
+export function checkCachedReopen(first: HealthRead, second: HealthRead): string[] {
+  const settled = checkSettled(second);
+  if (settled.length > 0) return settled;
+  const problems: string[] = [];
+  if (second.toolbarGeneratedAt !== first.toolbarGeneratedAt) {
+    problems.push("the toolbar's checked time moved, so the reopening ran a new check");
+  }
+  for (const { id, name } of SUBSYSTEMS) {
+    const row = rowOf(second, id);
+    if (row === undefined) {
+      problems.push(`there is no ${name} row`);
+      continue;
+    }
+    if (row.freshnessLabel !== HEALTH_TEXT.freshnessCached) {
+      problems.push(
+        `${name} reads ${row.freshnessLabel ?? "no freshness"}, not ${HEALTH_TEXT.freshnessCached}`,
+      );
+    }
+    if (row.checkedAt !== rowOf(first, id)?.checkedAt) {
+      problems.push(`${name} shows another checked time than the first answer`);
+    }
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Status of a reason code, from the domain's own tables
+
+const STATUS_TABLES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  service: SERVICE_REASON_STATUS,
+  vault: VAULT_REASON_STATUS,
+  hooks: HOOKS_REASON_STATUS,
+  collectors: COLLECTORS_REASON_STATUS,
+  scheduler: SCHEDULER_REASON_STATUS,
+  launchers: LAUNCHERS_REASON_STATUS,
+};
+
+/** The status the domain gives a reason code of a subsystem; throws for an unknown pair. */
+export function statusOfReason(subsystem: string, code: string): string {
+  const table = Object.hasOwn(STATUS_TABLES, subsystem) ? STATUS_TABLES[subsystem] : undefined;
+  if (table === undefined)
+    throw new Error(`There is no reason table for the subsystem "${subsystem}".`);
+  const status = Object.hasOwn(table, code) ? table[code] : undefined;
+  if (status === undefined) {
+    throw new Error(`The reason code "${code}" is not a ${subsystem} reason code.`);
+  }
+  return status;
+}
+
+/** {@link checkRowIs} with the status taken from the domain for `code`. */
+export function expectRow(
+  read: HealthRead,
+  subsystem: string,
+  code: string,
+  extra: { button?: string; nextStep?: boolean } = {},
+): string[] {
+  return checkRowIs(read, subsystem, {
+    ...extra,
+    status: statusOfReason(subsystem, code),
+    reason: code,
+  });
+}
+
+/** {@link checkPartIs} with the status taken from the domain for `code`. */
+export function expectPart(
+  read: HealthRead,
+  subsystem: string,
+  partId: string,
+  code: string,
+  extra: { button?: string } = {},
+): string[] {
+  return checkPartIs(read, subsystem, partId, {
+    ...extra,
+    status: statusOfReason(subsystem, code),
+    reason: code,
+  });
+}
+
+/** The row offers a button with this label, in its callout or in one of its parts. */
+export function checkOffers(read: HealthRead, subsystem: string, label: string): string[] {
+  const row = rowOf(read, subsystem);
+  if (row === undefined) return [`there is no ${subsystem} row`];
+  const offered = [...row.buttons, ...row.parts.flatMap((part) => part.buttons)];
+  return offered.includes(label) ? [] : [`${row.name} offers no "${label}" control`];
+}
+
+/** The Scheduler row always says that nothing runs on a timer (ADR-0013, item 27). */
+export function checkSchedulerLine(read: HealthRead): string[] {
+  const row = rowOf(read, "scheduler");
+  if (row === undefined) return ["there is no Scheduler row"];
+  return (row.detail ?? "").includes(HEALTH_TEXT.schedulerFixedLine)
+    ? []
+    : [`the Scheduler row does not say "${HEALTH_TEXT.schedulerFixedLine}"`];
+}
+
+// ---------------------------------------------------------------------------
+// Where the page is: the section after a go-to action, and the vault setup modal
+
+export interface SectionRead {
+  readonly navCurrent: string | null;
+  readonly heading: string;
+  /** The section's own heading holds keyboard focus (what a go-to action does). */
+  readonly headingFocused: boolean;
+}
+
+/** The current section nav item, the section heading and whether it is focused. SELF-CONTAINED. */
+export function rendererReadSection(c: HealthDomConfig): SectionRead {
+  const H = [
+    (n: RNode | null): string =>
+      n === null ? "" : (n.textContent ?? "").replace(/\s+/g, " ").trim(),
+  ];
+  const text = H[0] as (n: RNode | null) => string;
+  const content = document.querySelector(`.${c.content}`);
+  const heading = content === null ? null : content.querySelector("h3");
+  const current = document.querySelector(`nav.${c.nav} [${c.attrCurrent}="page"]`);
+  return {
+    navCurrent: current === null ? null : text(current),
+    heading: text(heading),
+    headingFocused: heading !== null && document.activeElement === heading,
+  };
+}
+
+export async function readSection(browser: HealthBrowser): Promise<SectionRead> {
+  return browser.execute(rendererReadSection, HEALTH_DOM_CONFIG);
+}
+
+/** The open modal's title and button labels, or a null title when no modal is open. SELF-CONTAINED. */
+export function rendererReadModal(): { title: string | null; buttons: string[] } {
+  const modal = document.querySelector(".modal");
+  if (modal === null) return { title: null, buttons: [] };
+  const title = modal.querySelector("h2");
+  const buttons: string[] = [];
+  const found = modal.querySelectorAll("button");
+  for (let i = 0; i < found.length; i += 1) {
+    buttons.push(((found[i] as RNode).textContent ?? "").replace(/\s+/g, " ").trim());
+  }
+  return { title: title === null ? null : (title.textContent ?? "").trim(), buttons };
+}
+
+export async function readModal(
+  browser: HealthBrowser,
+): Promise<{ title: string | null; buttons: string[] }> {
+  return browser.execute(rendererReadModal);
+}
+
+/**
+ * Leaves Diagnostics for another section and comes back, so the section mounts again and fetches
+ * again (that fetch is an owner gesture), then waits for the first answer.
+ */
+export async function reopenDiagnostics(
+  browser: HealthBrowser,
+  options: WaitOptions = WAIT.connect,
+): Promise<HealthRead> {
+  await clickPath(browser, reopenClickPath());
+  return waitForHealth(browser, checkSettled, "Diagnostics to show its answer again", options);
+}
+
+/** Waits until the section is settled and Run checks again is free: the service is live again. */
+export async function waitForLive(
+  browser: HealthBrowser,
+  options: WaitOptions = WAIT.connect,
+): Promise<HealthRead> {
+  return waitForHealth(
+    browser,
+    (read) => {
+      const settled = checkSettled(read);
+      if (settled.length > 0) return settled;
+      return read.runChecks !== null && !read.runChecks.disabled && !read.runChecks.busy
+        ? []
+        : ["Run checks again is still disabled, so the service is not live"];
+    },
+    "the service to be live and Diagnostics to be ready",
+    options,
+  );
 }

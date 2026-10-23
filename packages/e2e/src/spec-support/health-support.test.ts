@@ -5,20 +5,42 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 import { REPO_ROOT } from "../repo-paths.js";
+import { pathsForRoot } from "../run-root.js";
 import { HEALTH_TEXT, reasonSentence } from "./health-copy.js";
 import {
+  checkCachedReopen,
   checkFreshInstall,
+  checkOffers,
+  checkPartIs,
+  checkRowIs,
+  checkRunChecksPresses,
+  checkSchedulerLine,
+  checkServiceRestored,
+  checkServiceStopped,
   diagnosticsClickPath,
+  drillFiles,
+  expectPart,
   expectReason,
+  expectRow,
   findRawErrorText,
+  findUnguardedMutations,
   HEALTH_DOM_CONFIG,
   type HealthBrowser,
   type HealthRead,
+  installJsonWithNodePath,
+  newCheckClock,
   openDiagnostics,
   partOf,
+  recheck,
   reopenClickPath,
+  reopenDiagnostics,
   rowOf,
+  settingsWithAllHooksDisabled,
+  settingsWithoutDisableAll,
+  statusOfReason,
   waitForHealth,
+  waitForLive,
+  withRestore,
 } from "./health-support.js";
 import { rendererClick } from "./tasks-support.js";
 
@@ -31,6 +53,17 @@ import { rendererClick } from "./tasks-support.js";
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+interface LooseElement {
+  setAttribute(name: string, value: string): void;
+  addEventListener(type: string, listener: () => void): void;
+  textContent: string | null;
+  focus(): void;
+}
+
+interface LooseDocument {
+  querySelector(selector: string): unknown;
+}
+
 const FIXTURE = join(HERE, "health-dom-fixtures", "rows.html");
 const SOURCE = readFileSync(join(HERE, "health-support.ts"), "utf8");
 const BASE_HTML = readFileSync(FIXTURE, "utf8");
@@ -458,5 +491,528 @@ describe("waitForHealth", () => {
         intervalMs: 5,
       }),
     ).rejects.toThrow(/the vault row never changed/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: the break drills
+
+const LIST_START = '<ul class="ccc-health-list">';
+const NOT_IN_VERSION_START = '<h4 class="ccc-settings-group-title">Not part of this version</h4>';
+
+function chipHtml(status: string, word: string): string {
+  return `<span class="ccc-badge" data-status="${status}"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">?</span><span class="ccc-badge-label">${word}</span></span>`;
+}
+
+function rowHtml(spec: {
+  subsystem: string;
+  name: string;
+  status: string;
+  word: string;
+  reason: string;
+  text: string;
+  detail?: string;
+  meta?: boolean;
+  parts?: string;
+}): string {
+  const meta =
+    spec.meta === false
+      ? '<p class="ccc-health-meta"><span>Not checked</span> <span class="ccc-badge" data-badge="unavailable"><span class="ccc-badge-glyph" aria-hidden="true">?</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Unavailable</span></span></p>'
+      : '<p class="ccc-health-meta"><span>Checked </span><time datetime="2026-10-23T10:00:00.000Z">just now</time> <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">?</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span></p>';
+  const detail = spec.detail === undefined ? "" : `<p class="ccc-health-detail">${spec.detail}</p>`;
+  return `<li class="ccc-health-row" data-status="${spec.status}" data-subsystem="${spec.subsystem}" data-reason="${spec.reason}"><div><h5 class="ccc-settings-item-title">${spec.name}</h5>${chipHtml(spec.status, spec.word)}</div><div><p>${spec.text}</p>${detail}${meta}</div>${spec.parts ?? ""}</li>`;
+}
+
+const NAMES: Record<string, string> = {
+  service: "Companion service",
+  vault: "Vault access",
+  hooks: "Claude Code hooks",
+  collectors: "Usage collectors",
+  scheduler: "Scheduler",
+  launchers: "App launchers",
+};
+
+/** The section with the six rows replaced by `rows` (the Not part of this version rows stay). */
+function sectionWith(rows: string[]): string {
+  const head = BASE_HTML.slice(0, BASE_HTML.indexOf(LIST_START) + LIST_START.length);
+  const tailAt = BASE_HTML.indexOf("</ul>", BASE_HTML.indexOf(LIST_START));
+  const tail = BASE_HTML.slice(tailAt);
+  void NOT_IN_VERSION_START;
+  return `${head}${rows.join("")}${tail}`;
+}
+
+const NOT_RUNNING = "Can't be checked while the companion service isn't running.";
+
+function clearedRow(subsystem: string): string {
+  return rowHtml({
+    subsystem,
+    name: NAMES[subsystem] as string,
+    status: "unknown",
+    word: "Unknown",
+    reason: "service-not-running",
+    text: NOT_RUNNING,
+    meta: false,
+  });
+}
+
+const STOPPED_HTML = sectionWith([
+  rowHtml({
+    subsystem: "service",
+    name: "Companion service",
+    status: "failing",
+    word: "Failing",
+    reason: "service-unreachable",
+    text: "The plugin can't reach the companion service.",
+    meta: false,
+  }),
+  ...["vault", "hooks", "collectors", "scheduler", "launchers"].map(clearedRow),
+]);
+
+describe("checkServiceStopped and checkServiceRestored (item 23)", () => {
+  const stopped = readHealthFrom(STOPPED_HTML);
+
+  it("accepts the stopped look: the service row Failing, the other five Unknown with no last value", () => {
+    expect(checkServiceStopped(stopped)).toEqual([]);
+  });
+
+  it("flags a service row that is not Failing with the unreachable reason", () => {
+    const problems = checkServiceStopped(fresh).join(" ");
+    expect(problems).toContain("Companion service");
+  });
+
+  it("flags a row that kept a last value, a detail or a wrong reason", () => {
+    const kept = readHealthFrom(
+      STOPPED_HTML.replace(
+        'data-subsystem="vault" data-reason="service-not-running"',
+        'data-subsystem="vault" data-reason="vault-ready"',
+      ),
+    );
+    expect(checkServiceStopped(kept).join(" ")).toContain("Vault access");
+    const detail = readHealthFrom(
+      STOPPED_HTML.replace(
+        `<p>${NOT_RUNNING}</p>`,
+        `<p>${NOT_RUNNING}</p><p class="ccc-health-detail">Version 0.1.0 · started 5s ago</p>`,
+      ),
+    );
+    expect(checkServiceStopped(detail).join(" ")).toContain("last value");
+  });
+
+  it("flags raw error text on a stopped section, naming the kind only", () => {
+    const leaky = readHealthFrom(
+      STOPPED_HTML.replace(
+        "The plugin can't reach the companion service.",
+        "connect ECONNREFUSED /tmp/ccc-uat.abc123/rt/svc.sock",
+      ),
+    );
+    const problems = checkServiceStopped(leaky).join(" ");
+    expect(problems).toContain("raw error text");
+    expect(problems).not.toContain("svc.sock");
+  });
+
+  it("accepts the restored look: the service Running and no row still cleared", () => {
+    expect(checkServiceRestored(fresh)).toEqual([]);
+    expect(checkServiceRestored(stopped).join(" ")).toContain("Companion service");
+  });
+});
+
+describe("checkRowIs and checkPartIs", () => {
+  it("accepts a row with the expected status, reason code and sentence", () => {
+    expect(
+      checkRowIs(fresh, "vault", { status: "setup-needed", reason: "vault-not-set-up" }),
+    ).toEqual([]);
+  });
+
+  it("names the row and the codes when the status or the reason is not the expected one", () => {
+    const wrongStatus = checkRowIs(fresh, "vault", {
+      status: "failing",
+      reason: "vault-not-set-up",
+    });
+    expect(wrongStatus.join(" ")).toContain("Vault access");
+    expect(wrongStatus.join(" ")).toContain("failing");
+    const wrongReason = checkRowIs(fresh, "vault", {
+      status: "setup-needed",
+      reason: "vault-root-missing",
+    });
+    expect(wrongReason.join(" ")).toContain("vault-root-missing");
+    expect(wrongReason.join(" ")).toContain("vault-not-set-up");
+  });
+
+  it("can require a button on the row, in its callout or in a part", () => {
+    expect(
+      checkRowIs(fresh, "hooks", {
+        status: "setup-needed",
+        reason: "hooks-not-installed",
+        button: "Copy install command",
+      }),
+    ).toEqual([]);
+    expect(
+      checkRowIs(fresh, "hooks", {
+        status: "setup-needed",
+        reason: "hooks-not-installed",
+        button: "Set up vault",
+      }).join(" "),
+    ).toContain("Set up vault");
+    expect(
+      checkRowIs(fresh, "collectors", {
+        status: "setup-needed",
+        reason: "statusline-not-installed",
+        button: "Go to the security section",
+      }),
+    ).toEqual([]);
+  });
+
+  it("reports a missing row", () => {
+    expect(checkRowIs(fresh, "nothing", { status: "ok", reason: "x" }).join(" ")).toContain(
+      "no nothing row",
+    );
+  });
+
+  it("judges a part by its id, status, reason code and sentence", () => {
+    expect(
+      checkPartIs(fresh, "collectors", "codex-install", {
+        status: "setup-needed",
+        reason: "codex-not-installed",
+      }),
+    ).toEqual([]);
+    expect(
+      checkPartIs(fresh, "collectors", "codex-install", {
+        status: "ok",
+        reason: "codex-not-installed",
+      }).join(" "),
+    ).toContain("codex-install");
+    expect(
+      checkPartIs(fresh, "collectors", "nope", { status: "ok", reason: "x" }).join(" "),
+    ).toContain("no nope part");
+  });
+
+  it("describes the Codex parts as the sandbox: no home path or version on them", () => {
+    const parts = rowOf(fresh, "collectors")?.parts.filter((part) =>
+      part.partId.startsWith("codex"),
+    );
+    expect(parts?.length).toBe(4);
+    for (const part of parts ?? []) expect(findRawErrorText(part.text), part.partId).toEqual([]);
+  });
+});
+
+describe("rendererPressRunChecksTwice and checkRunChecksPresses (item 30)", () => {
+  async function press(behaviour: "gated" | "ungated"): Promise<unknown> {
+    const { JSDOM } = loadJsdom();
+    const dom = new JSDOM(`<!doctype html><html><body>${BASE_HTML}</body></html>`);
+    const window = dom.window as Record<string, unknown> & { document: LooseDocument };
+    const document = window.document;
+    const button = document.querySelector(".ccc-health-toolbar button") as LooseElement;
+    const status = document.querySelector(".ccc-settings-status") as LooseElement;
+    let busy = false;
+    button.addEventListener("click", () => {
+      if (busy && behaviour === "gated") return;
+      busy = true;
+      button.setAttribute("aria-busy", "true");
+      button.setAttribute("aria-disabled", "true");
+      status.textContent = "Checking…";
+      if (behaviour === "ungated") status.textContent = `Checking… ${Math.random()}`;
+    });
+    const context = vm.createContext({ document, window });
+    const text = rendererText("rendererPressRunChecksTwice");
+    return vm.runInContext(
+      `(${text}).apply(null, ${JSON.stringify([HEALTH_DOM_CONFIG])})`,
+      context,
+    );
+  }
+
+  it("presses the button twice back to back and reports what the page showed after each press", async () => {
+    const result = JSON.parse(JSON.stringify(await press("gated")));
+    expect(result.found).toBe(true);
+    expect(result.first).toEqual({ busy: true, disabled: true, status: "Checking…" });
+    expect(result.second).toEqual({ busy: true, disabled: true, status: "Checking…" });
+    expect(checkRunChecksPresses(result)).toEqual([]);
+  });
+
+  it("flags a second press that was not ignored, a missing button and a press that did nothing", () => {
+    const idle = { busy: false, disabled: false, status: "" };
+    const busy = { busy: true, disabled: true, status: "Checking…" };
+    expect(checkRunChecksPresses({ found: false, first: null, second: null }).join(" ")).toContain(
+      "button",
+    );
+    expect(checkRunChecksPresses({ found: true, first: idle, second: idle }).join(" ")).toContain(
+      "busy",
+    );
+    expect(
+      checkRunChecksPresses({
+        found: true,
+        first: busy,
+        second: { ...busy, status: "Checking… again" },
+      }).join(" "),
+    ).toContain("second press");
+  });
+});
+
+describe("checkCachedReopen (item 30)", () => {
+  const cachedHtml = BASE_HTML.replace(/data-badge="live"/g, 'data-badge="cached"').replace(
+    /<span class="ccc-badge-label">Live<\/span>/g,
+    '<span class="ccc-badge-label">Cached</span>',
+  );
+
+  it("accepts a reopening that shows every row as Cached with the same checked time", () => {
+    expect(checkCachedReopen(fresh, readHealthFrom(cachedHtml))).toEqual([]);
+  });
+
+  it("flags rows that are not Cached and a checked time that moved", () => {
+    expect(checkCachedReopen(fresh, fresh).join(" ")).toContain("Cached");
+    const moved = readHealthFrom(
+      cachedHtml.replace(
+        'datetime="2026-10-23T10:00:00.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-toolbar"',
+        'datetime="2026-10-23T10:00:09.000Z" title="x" aria-describedby="abs-toolbar"',
+      ),
+    );
+    expect(checkCachedReopen(fresh, moved).join(" ")).toContain("checked time");
+  });
+});
+
+describe("withRestore (item 29/24/25 drill discipline)", () => {
+  it("runs the restore after a step that succeeded and returns its value", async () => {
+    const order: string[] = [];
+    const value = await withRestore(
+      async () => {
+        order.push("restore");
+      },
+      async () => {
+        order.push("step");
+        return 7;
+      },
+    );
+    expect(value).toBe(7);
+    expect(order).toEqual(["step", "restore"]);
+  });
+
+  it("runs the restore when the step throws, and the step's error is the one thrown", async () => {
+    const order: string[] = [];
+    await expect(
+      withRestore(
+        async () => {
+          order.push("restore");
+          throw new Error("restore failed");
+        },
+        async () => {
+          order.push("step");
+          throw new Error("step failed");
+        },
+      ),
+    ).rejects.toThrow("step failed");
+    expect(order).toEqual(["step", "restore"]);
+  });
+
+  it("throws the restore's error when the step itself succeeded", async () => {
+    await expect(
+      withRestore(
+        async () => {
+          throw new Error("restore failed");
+        },
+        async () => 1,
+      ),
+    ).rejects.toThrow("restore failed");
+  });
+});
+
+describe("findUnguardedMutations (Test 3)", () => {
+  it("flags a mutating call outside withRestore and withMode, with its line", () => {
+    const source = [
+      "it('x', async () => {",
+      "  replaceFileInRunRoot(paths, file, 'x');",
+      "  await withRestore(() => removeFileInRunRoot(paths, file), async () => {",
+      "    replaceFileInRunRoot(paths, file, 'y');",
+      "  });",
+      "  await withMode(paths, dir, 0o000, async () => { renameInRunRoot(paths, a, b); });",
+      "  writeSpoolDrops(paths, 3);",
+      "});",
+    ].join("\n");
+    expect(findUnguardedMutations(source)).toEqual([
+      { call: "replaceFileInRunRoot", line: 2 },
+      { call: "writeSpoolDrops", line: 7 },
+    ]);
+  });
+
+  it("ignores a mutating name in a comment or a string", () => {
+    const source = "// replaceFileInRunRoot(a)\nconst x = 'removeFileInRunRoot(b)';\n";
+    expect(findUnguardedMutations(source)).toEqual([]);
+  });
+
+  it("finds nothing unguarded in the health drills spec", () => {
+    const spec = readFileSync(join(REPO_ROOT, "packages/e2e/specs/health-drills.e2e.ts"), "utf8");
+    expect(findUnguardedMutations(spec)).toEqual([]);
+  });
+});
+
+describe("drill recipes", () => {
+  const paths = pathsForRoot("/tmp/ccc-uat.abc123", "0123abcd");
+
+  it("names the sandbox files the drills touch, all below the run root", () => {
+    const files = drillFiles(paths);
+    expect(files.claudeSettings).toBe("/tmp/ccc-uat.abc123/claude/settings.json");
+    expect(files.installJson).toBe("/tmp/ccc-uat.abc123/rt/hooks/install.json");
+    expect(files.spoolDropped).toBe("/tmp/ccc-uat.abc123/rt/spool/hooks.dropped");
+    expect(files.fakeClaude).toBe("/tmp/ccc-uat.abc123/fake-bin/claude");
+    for (const file of Object.values(files))
+      expect(file.startsWith(`${paths.root}/`), file).toBe(true);
+  });
+
+  it("turns all hooks off in Claude's settings text and back on, keeping every other key", () => {
+    const original = JSON.stringify({ hooks: { Stop: [] }, other: 1 }, null, 2);
+    const off = settingsWithAllHooksDisabled(original);
+    expect(JSON.parse(off)).toEqual({ hooks: { Stop: [] }, other: 1, disableAllHooks: true });
+    expect(JSON.parse(settingsWithoutDisableAll(off))).toEqual({ hooks: { Stop: [] }, other: 1 });
+    expect(() => settingsWithAllHooksDisabled("not json")).toThrow(/settings/);
+    expect(() => settingsWithAllHooksDisabled("[1]")).toThrow(/settings/);
+  });
+
+  it("points the install record's node path at a missing program, keeping the other keys", () => {
+    const original = JSON.stringify({ nodePath: "/usr/local/bin/node", v: 1 });
+    const broken = installJsonWithNodePath(original, "/tmp/ccc-uat.abc123/fake-bin/missing-node");
+    expect(JSON.parse(broken)).toEqual({
+      nodePath: "/tmp/ccc-uat.abc123/fake-bin/missing-node",
+      v: 1,
+    });
+    expect(() => installJsonWithNodePath("x", "/a")).toThrow(/install record/);
+  });
+});
+
+describe("statusOfReason, expectRow and expectPart", () => {
+  it("takes the status of a reason code from the domain's own table", () => {
+    expect(statusOfReason("vault", "vault-mismatch")).toBe("degraded");
+    expect(statusOfReason("vault", "vault-root-missing")).toBe("failing");
+    expect(statusOfReason("hooks", "no-events-yet")).toBe("unknown");
+    expect(statusOfReason("scheduler", "run-interrupted")).toBe("unknown");
+    expect(statusOfReason("launchers", "bundle-not-found")).toBe("failing");
+    expect(statusOfReason("service", "service-unreachable")).toBe("failing");
+    expect(() => statusOfReason("vault", "no-such-reason")).toThrow(/reason code/);
+    expect(() => statusOfReason("nowhere", "vault-ready")).toThrow(/subsystem/);
+  });
+
+  it("judges a row and a part by code alone, with the status the domain says", () => {
+    expect(expectRow(fresh, "vault", "vault-not-set-up")).toEqual([]);
+    expect(expectRow(fresh, "vault", "vault-root-missing").join(" ")).toContain(
+      "vault-root-missing",
+    );
+    expect(expectPart(fresh, "collectors", "codex-install", "codex-not-installed")).toEqual([]);
+    expect(expectPart(fresh, "collectors", "spool", "spool-dropped-records").join(" ")).toContain(
+      "spool",
+    );
+  });
+});
+
+describe("checkOffers and checkSchedulerLine", () => {
+  it("finds a button on the row's callout or in one of its parts", () => {
+    expect(checkOffers(fresh, "hooks", "Copy install command")).toEqual([]);
+    expect(checkOffers(fresh, "collectors", "Go to the security section")).toEqual([]);
+    expect(checkOffers(fresh, "hooks", "Set up vault").join(" ")).toContain("Set up vault");
+    expect(checkOffers(fresh, "nothing", "x").join(" ")).toContain("no nothing row");
+  });
+
+  it("requires the scheduler's fixed manual-trigger line in every state", () => {
+    expect(checkSchedulerLine(fresh)).toEqual([]);
+    const without = readHealthFrom(
+      BASE_HTML.replace(
+        '<p class="ccc-health-detail">Manual trigger only in this version. Nothing runs on a timer.</p>',
+        "",
+      ),
+    );
+    expect(checkSchedulerLine(without).join(" ")).toContain("Manual trigger only");
+  });
+});
+
+describe("rendererReadSection and rendererReadModal", () => {
+  function run(name: string, html: string, config: unknown, focus?: string): unknown {
+    const { JSDOM } = loadJsdom();
+    const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`);
+    const window = dom.window as Record<string, unknown> & { document: LooseDocument };
+    if (focus !== undefined) (window.document.querySelector(focus) as LooseElement).focus();
+    const context = vm.createContext({ document: window.document, window });
+    const text = rendererText(name);
+    return JSON.parse(
+      JSON.stringify(vm.runInContext(`(${text}).apply(null, ${JSON.stringify(config)})`, context)),
+    );
+  }
+
+  it("reads the current nav item, the section heading and whether the heading holds focus", () => {
+    expect(run("rendererReadSection", BASE_HTML, [HEALTH_DOM_CONFIG], "h3")).toEqual({
+      navCurrent: "Diagnostics",
+      heading: "Diagnostics",
+      headingFocused: true,
+    });
+    expect(run("rendererReadSection", BASE_HTML, [HEALTH_DOM_CONFIG])).toMatchObject({
+      headingFocused: false,
+    });
+  });
+
+  it("reads the open modal's title and button labels, or null when there is none", () => {
+    expect(run("rendererReadModal", BASE_HTML, [])).toEqual({ title: null, buttons: [] });
+    const modal = `${BASE_HTML}<div class="modal"><h2>Set up managed vault</h2><div><button>Confirm</button><button>Cancel</button></div></div>`;
+    expect(run("rendererReadModal", modal, [])).toEqual({
+      title: "Set up managed vault",
+      buttons: ["Confirm", "Cancel"],
+    });
+  });
+});
+
+describe("reopenDiagnostics, waitForLive and recheck", () => {
+  function scripted(reads: HealthRead[]): {
+    browser: HealthBrowser;
+    clicks: unknown[][];
+    presses: number;
+  } {
+    const clicks: unknown[][] = [];
+    const state = { presses: 0 };
+    let index = 0;
+    const browser = {
+      executeObsidianCommand: async () => undefined,
+      executeObsidian: async (_fn: unknown, ...args: unknown[]) => {
+        clicks.push(args);
+        if (args[1] === "Run checks again") state.presses += 1;
+        return true;
+      },
+      execute: async () => reads[Math.min(index++, reads.length - 1)],
+    } as unknown as HealthBrowser;
+    return {
+      browser,
+      clicks,
+      get presses() {
+        return state.presses;
+      },
+    };
+  }
+
+  const newer = { ...fresh, toolbarGeneratedAt: "2026-10-23T10:00:30.000Z" } as HealthRead;
+
+  it("clicks the reopen path (another section, then Diagnostics) and returns the settled section", async () => {
+    const { browser, clicks } = scripted([fresh]);
+    const read = await reopenDiagnostics(browser);
+    expect(clicks.map((args) => args[1])).toEqual([null, "Visual", "Diagnostics"]);
+    expect(read.mounted).toBe(true);
+  });
+
+  it("waits until the Run checks again button is free, which means the service is live", async () => {
+    const disabled = { ...fresh, runChecks: { ...fresh.runChecks, disabled: true } } as HealthRead;
+    const { browser } = scripted([disabled, disabled, fresh]);
+    const read = await waitForLive(browser, { timeoutMs: 5_000, intervalMs: 1 });
+    expect(read.runChecks?.disabled).toBe(false);
+  });
+
+  it("presses Run checks again and returns the first section that shows a newer answer", async () => {
+    const stub = scripted([fresh, fresh, newer]);
+    const clock = newCheckClock();
+    const read = await recheck(stub.browser, clock, {
+      gapMs: 0,
+      wait: { timeoutMs: 5_000, intervalMs: 1 },
+    });
+    expect(read.toolbarGeneratedAt).toBe("2026-10-23T10:00:30.000Z");
+    expect(stub.presses).toBe(1);
+    expect(clock.lastPressAt).toBeGreaterThan(0);
+  });
+
+  it("waits out the answer cache before it presses", async () => {
+    const stub = scripted([fresh, newer]);
+    const clock = { lastPressAt: Date.now() };
+    const started = Date.now();
+    await recheck(stub.browser, clock, { gapMs: 120, wait: { timeoutMs: 5_000, intervalMs: 1 } });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(100);
   });
 });
