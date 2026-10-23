@@ -208,7 +208,7 @@ export function findHomeFormLeaks(body: string): string[] {
     if (typeof value === "string") {
       if (HOME_FORM_PATH.test(value)) hits.push(`a home-form path in ${path}`);
     } else if (Array.isArray(value)) {
-      value.forEach((item, index) => walk(item, `${path}.${index}`));
+      for (const [index, item] of value.entries()) walk(item, `${path}.${index}`);
     } else if (typeof value === "object" && value !== null) {
       for (const [key, item] of Object.entries(value)) {
         if (path === "" && key === "paths") continue;
