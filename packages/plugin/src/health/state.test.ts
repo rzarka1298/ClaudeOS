@@ -194,8 +194,10 @@ describe("refreshHealth (D-05)", () => {
     const second = deferred<ReturnType<typeof fixtureResponse>>();
     const answers = [first, second];
     configureHealth({ api: { get: () => (answers.shift() as typeof first).promise } });
-    const olderRun = refreshHealth("gesture", { vaultBasePath: null });
-    const newerRun = refreshHealth("reconnect", { vaultBasePath: null });
+    // A reconnect fetch is the older one: a later owner gesture overtakes it (the reverse is not
+    // allowed, see "a reconnect never supersedes an in-flight gesture" below).
+    const olderRun = refreshHealth("reconnect", { vaultBasePath: null });
+    const newerRun = refreshHealth("gesture", { vaultBasePath: null });
     const newer = fixtureResponse({ generatedAt: "2026-10-22T09:05:00.000Z" });
     second.resolve(newer);
     first.resolve(fixtureResponse({ generatedAt: "2026-10-22T08:00:00.000Z" }));
@@ -215,6 +217,68 @@ describe("refreshHealth (D-05)", () => {
     expect(await run).toEqual({ kind: "superseded" });
     expect(healthResponse.value).toBeNull();
     expect(healthPhase.value).toBe("idle");
+  });
+});
+
+describe("a reconnect never supersedes an in-flight gesture (wave-3 review MINOR-2)", () => {
+  it("joins the gesture fetch: one request, still a gesture, its answer published, both callers told", async () => {
+    const pending = deferred<ReturnType<typeof fixtureResponse>>();
+    const get = vi.fn((_trigger: string) => pending.promise);
+    configureHealth({ api: { get } });
+    const gesture = refreshHealth("gesture", { vaultBasePath: null });
+    const reconnect = refreshHealth("reconnect", { vaultBasePath: null });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith("gesture");
+
+    const answer = fixtureResponse({ generatedAt: "2026-10-22T09:05:00.000Z" });
+    pending.resolve(answer);
+    const [gestureOutcome, reconnectOutcome] = await Promise.all([gesture, reconnect]);
+    expect(gestureOutcome).toEqual({ kind: "ok", timedOut: 0 });
+    expect(reconnectOutcome).toEqual(gestureOutcome);
+    expect(healthResponse.value).toBe(answer);
+    expect(healthPhase.value).toBe("ready");
+  });
+
+  it("after the gesture settles a reconnect fetches again, with its own trigger", async () => {
+    const get = vi.fn((_trigger: string) => Promise.resolve(fixtureResponse()));
+    configureHealth({ api: { get } });
+    await refreshHealth("gesture", { vaultBasePath: null });
+    await refreshHealth("reconnect", { vaultBasePath: null });
+    expect(get.mock.calls.map((call) => call[0])).toEqual(["gesture", "reconnect"]);
+  });
+
+  it("a gesture that was overtaken by the service going away is not joined", async () => {
+    const stale = deferred<ReturnType<typeof fixtureResponse>>();
+    const fresh = deferred<ReturnType<typeof fixtureResponse>>();
+    const answers = [stale, fresh];
+    const get = vi.fn((_trigger: string) => (answers.shift() as typeof stale).promise);
+    configureHealth({ api: { get } });
+    const gesture = refreshHealth("gesture", { vaultBasePath: null });
+    clearHealth();
+    // The service is back; the old gesture's answer would be dropped, so the reconnect fetches.
+    const reconnect = refreshHealth("reconnect", { vaultBasePath: null });
+    expect(get.mock.calls.map((call) => call[0])).toEqual(["gesture", "reconnect"]);
+    const answer = fixtureResponse({ generatedAt: "2026-10-22T09:06:00.000Z" });
+    fresh.resolve(answer);
+    stale.resolve(fixtureResponse());
+    await Promise.all([gesture, reconnect]);
+    expect(healthResponse.value).toBe(answer);
+  });
+
+  it("a gesture still supersedes an in-flight reconnect", async () => {
+    const first = deferred<ReturnType<typeof fixtureResponse>>();
+    const second = deferred<ReturnType<typeof fixtureResponse>>();
+    const answers = [first, second];
+    const get = vi.fn((_trigger: string) => (answers.shift() as typeof first).promise);
+    configureHealth({ api: { get } });
+    const reconnect = refreshHealth("reconnect", { vaultBasePath: null });
+    const gesture = refreshHealth("gesture", { vaultBasePath: null });
+    expect(get.mock.calls.map((call) => call[0])).toEqual(["reconnect", "gesture"]);
+    const answer = fixtureResponse({ generatedAt: "2026-10-22T09:07:00.000Z" });
+    second.resolve(answer);
+    first.resolve(fixtureResponse());
+    await Promise.all([reconnect, gesture]);
+    expect(healthResponse.value).toBe(answer);
   });
 });
 
