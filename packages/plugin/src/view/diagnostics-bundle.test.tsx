@@ -866,7 +866,11 @@ describe("Task 3, Test 3: with the service away the bundle is still offered from
           launchers: null,
         }),
       );
-      const features = JSON.parse(text ?? "{}").features;
+      const features = (
+        JSON.parse(text ?? "{}") as {
+          features: { transcriptAnalysis: unknown; launchers: { antigravity: unknown } };
+        }
+      ).features;
       expect(features.transcriptAnalysis).toBeNull();
       expect(features.launchers.antigravity).toBeNull();
     },

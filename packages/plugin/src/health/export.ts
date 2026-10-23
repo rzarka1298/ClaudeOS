@@ -215,15 +215,15 @@ const TIMED_OUT = Symbol("timed-out");
  * system call cannot be cancelled) but nothing waits on it, and a late rejection is swallowed.
  */
 async function within<T>(ms: number, work: Promise<T>): Promise<T | typeof TIMED_OUT> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: number | undefined;
   const clock = new Promise<typeof TIMED_OUT>((done) => {
-    timer = setTimeout(() => done(TIMED_OUT), ms);
+    timer = window.setTimeout(() => done(TIMED_OUT), ms);
   });
   work.catch(() => {});
   try {
     return await Promise.race([work, clock]);
   } finally {
-    clearTimeout(timer);
+    window.clearTimeout(timer);
   }
 }
 

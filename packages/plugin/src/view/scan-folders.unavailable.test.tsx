@@ -61,7 +61,8 @@ function actionsWith(overrides: Partial<ScanActions> = {}) {
     dismissSuggestion: vi.fn(() => Promise.resolve({ kind: "failed" as const })),
     suggestionsPage: vi.fn(() => Promise.resolve({ kind: "failed" as const })),
   };
-  return { ...spies, ...overrides } as typeof spies & ScanActions;
+  const actions: ScanActions = { ...spies, ...overrides };
+  return { actions, spies };
 }
 
 /** 30 suggestions, 60 counted: Show more must fetch (a page is not held). */
@@ -108,7 +109,7 @@ function expectBlocked(el: HTMLElement): void {
 
 describe("FIX6B Codex-4: the scan list while the service is away", () => {
   it("every service-dependent control is aria-disabled, described by the reason, and never natively disabled", () => {
-    renderScan(heldAndMore(), actionsWith(), true);
+    renderScan(heldAndMore(), actionsWith().actions, true);
     expectBlocked(screen.getByRole("button", { name: "Register project-00" }));
     expectBlocked(screen.getByRole("button", { name: "Dismiss project-00" }));
     expectBlocked(screen.getByRole("button", { name: "Show 25 more" }));
@@ -119,7 +120,7 @@ describe("FIX6B Codex-4: the scan list while the service is away", () => {
   });
 
   it("pressing a blocked control sends no request and opens nothing", async () => {
-    const actions = actionsWith();
+    const { actions, spies } = actionsWith();
     renderScan(heldAndMore(), actions, true);
     fireEvent.click(screen.getByRole("button", { name: "Register project-00" }));
     fireEvent.click(screen.getByRole("button", { name: "Dismiss project-00" }));
@@ -129,34 +130,34 @@ describe("FIX6B Codex-4: the scan list while the service is away", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(actions.registerSuggestion).not.toHaveBeenCalled();
-    expect(actions.dismissSuggestion).not.toHaveBeenCalled();
-    expect(actions.suggestionsPage).not.toHaveBeenCalled();
-    expect(actions.listScanState).not.toHaveBeenCalled();
-    expect(actions.rescan).not.toHaveBeenCalled();
-    expect(actions.removeScanRoot).not.toHaveBeenCalled();
+    expect(spies.registerSuggestion).not.toHaveBeenCalled();
+    expect(spies.dismissSuggestion).not.toHaveBeenCalled();
+    expect(spies.suggestionsPage).not.toHaveBeenCalled();
+    expect(spies.listScanState).not.toHaveBeenCalled();
+    expect(spies.rescan).not.toHaveBeenCalled();
+    expect(spies.removeScanRoot).not.toHaveBeenCalled();
     // Stop scanning opened no confirmation, and nothing was announced as scanning.
     expect(screen.queryByRole("button", { name: "Remove scan folder" })).toBeNull();
     expect(screen.queryByText("Scanning…")).toBeNull();
   });
 
   it("changing the depth does not rescan, and the select keeps what is in effect", async () => {
-    const actions = actionsWith();
+    const { actions, spies } = actionsWith();
     renderScan(heldAndMore(), actions, true);
-    const select = screen.getByRole("combobox", {
+    const select = screen.getByRole<HTMLSelectElement>("combobox", {
       name: "Look this many levels deep",
-    }) as HTMLSelectElement;
+    });
     select.value = "3";
     fireEvent.change(select);
     await act(async () => {
       await Promise.resolve();
     });
-    expect(actions.rescan).not.toHaveBeenCalled();
+    expect(spies.rescan).not.toHaveBeenCalled();
     expect(select.value).toBe("1");
   });
 
   it("a removal confirmation already open when the service goes away cannot be confirmed, but can be dismissed", async () => {
-    const actions = actionsWith();
+    const { actions, spies } = actionsWith();
     const state = heldAndMore();
     scanState.value = state;
     const view = render(<Harness actions={actions} away={false} />);
@@ -168,7 +169,7 @@ describe("FIX6B Codex-4: the scan list while the service is away", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(actions.removeScanRoot).not.toHaveBeenCalled();
+    expect(spies.removeScanRoot).not.toHaveBeenCalled();
     const keep = screen.getByRole("button", { name: "Keep scan folder" });
     expect(keep.getAttribute("aria-disabled")).toBeNull();
     fireEvent.click(keep);
@@ -178,17 +179,17 @@ describe("FIX6B Codex-4: the scan list while the service is away", () => {
   it("showing rows already held is local and stays available", async () => {
     const a = root({ suggestionCount: 30 });
     const all = suggestionsFor(a.scanRootId, 30);
-    const actions = actionsWith();
+    const { actions, spies } = actionsWith();
     renderScan({ scanRoots: [a], suggestions: all, partial: false }, actions, true);
     const more = screen.getByRole("button", { name: "Show 5 more" });
     expect(more.getAttribute("aria-disabled")).toBeNull();
     fireEvent.click(more);
     expect(screen.getByText("project-29")).toBeTruthy();
-    expect(actions.suggestionsPage).not.toHaveBeenCalled();
+    expect(spies.suggestionsPage).not.toHaveBeenCalled();
   });
 
   it("with the service live no control carries a blocked state, and the requests go out", async () => {
-    const actions = actionsWith();
+    const { actions, spies } = actionsWith();
     renderScan(heldAndMore(), actions, false);
     for (const name of ["Rescan folder", "Stop scanning", "Register project-00"]) {
       const el = screen.getByRole("button", { name });
@@ -199,11 +200,11 @@ describe("FIX6B Codex-4: the scan list while the service is away", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(actions.rescan).toHaveBeenCalledTimes(1);
+    expect(spies.rescan).toHaveBeenCalledTimes(1);
   });
 
   it("controls unblock when the service returns", () => {
-    const actions = actionsWith();
+    const { actions } = actionsWith();
     scanState.value = heldAndMore();
     const view = render(<Harness actions={actions} away={true} />);
     expectBlocked(screen.getByRole("button", { name: "Rescan folder" }));
@@ -247,7 +248,7 @@ describe("FIX6B Codex-4: through the Settings Projects section", () => {
 
   it("scan folders that loaded while live become read-only on a disconnect, described by the visible reason", async () => {
     const state = heldAndMore();
-    const actions = actionsWith({
+    const { actions, spies } = actionsWith({
       listScanState: vi.fn(() => Promise.resolve({ kind: "state", state } as const)),
     });
     const view = render(settings({ kind: "live" }, actions));
@@ -281,8 +282,8 @@ describe("FIX6B Codex-4: through the Settings Projects section", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(actions.rescan).not.toHaveBeenCalled();
-    expect(actions.registerSuggestion).not.toHaveBeenCalled();
+    expect(spies.rescan).not.toHaveBeenCalled();
+    expect(spies.registerSuggestion).not.toHaveBeenCalled();
   });
 });
 
@@ -294,7 +295,7 @@ describe("FIX6B Codex-4: the standalone Projects destination keeps its own away 
       projects: [],
       launchers: EMPTY_PROJECTS_SNAPSHOT.launchers,
     };
-    const actions = actionsWith();
+    const { actions, spies } = actionsWith();
     render(
       <ProjectsView
         actions={{
@@ -319,6 +320,6 @@ describe("FIX6B Codex-4: the standalone Projects destination keeps its own away 
     await act(async () => {
       await Promise.resolve();
     });
-    expect(actions.rescan).toHaveBeenCalledTimes(1);
+    expect(spies.rescan).toHaveBeenCalledTimes(1);
   });
 });
