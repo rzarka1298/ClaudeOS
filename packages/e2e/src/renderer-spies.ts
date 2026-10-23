@@ -365,7 +365,12 @@ export function installSaveDialogStub(answer: SaveDialogAnswer): {
   const calls: SaveDialogCall[] = [];
   // Array elements are not a naming context, so esbuild keepNames leaves this arrow alone.
   const S = [
-    (options?: { defaultPath?: unknown; filters?: unknown; properties?: unknown }) => {
+    (
+      ...args: Array<{ defaultPath?: unknown; filters?: unknown; properties?: unknown } | undefined>
+    ) => {
+      // Electron's signature is showSaveDialog([window,] options): the options are the last
+      // argument, whether or not the plugin named its own window first (FIX4B m8).
+      const options = args[args.length - 1];
       const defaultPath = typeof options?.defaultPath === "string" ? options.defaultPath : null;
       const filters = Array.isArray(options?.filters)
         ? (options.filters as Array<{ name?: unknown; extensions?: unknown }>).map((entry) => ({

@@ -1615,7 +1615,10 @@ const DEFAULT_BUNDLE_NAME = new RegExp(
   `^${HEALTH_TEXT.bundleFileNamePrefix}\\d{4}-\\d{2}-\\d{2}\\.json$`,
 );
 
-/** What the stubbed save dialog was asked (item 35's automated part). */
+/**
+ * What the stubbed save dialog was asked (item 35's automated part): a bare, dated default name, a
+ * json filter and no overwrite confirmation (D-12a).
+ */
 export function checkSaveDialogCall(
   call:
     | {
@@ -1638,8 +1641,9 @@ export function checkSaveDialogCall(
   if (!call.filters.some((filter) => filter.extensions.includes("json"))) {
     problems.push("the dialog has no json filter");
   }
-  if (!call.properties.includes("showOverwriteConfirmation")) {
-    problems.push("the dialog does not ask for an overwrite confirmation");
+  // D-12a (FIX4B): Save never replaces a file, so the dialog must not ask to confirm an overwrite.
+  if (call.properties.includes("showOverwriteConfirmation")) {
+    problems.push("the dialog asks for an overwrite confirmation, but Save never overwrites");
   }
   return problems;
 }
