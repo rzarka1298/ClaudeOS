@@ -110,6 +110,46 @@ export const HAS_SECRET_TIMEOUT_MS = 1500;
 const EXIT_ITEM_NOT_FOUND = 44;
 
 /**
+ * The spawn options of the presence lookup, in ONE place so a test can run the very same options
+ * against a harmless real child (`/bin/sleep`) and prove an abort kills it (FIX3A). The cap and the
+ * SIGKILL bound the child; stdio is ignored so nothing it prints is captured; the caller's signal,
+ * when there is one, kills the child instead of leaving it to run out its own cap.
+ */
+export function presenceSpawnOptions(signal: AbortSignal | undefined) {
+  return {
+    reject: false,
+    timeout: HAS_SECRET_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    ...(signal === undefined ? {} : { cancelSignal: signal }),
+  } as const;
+}
+
+/** The fields of an execa result the presence answer is read from. */
+export interface PresenceResultFacts {
+  readonly exitCode?: number | undefined;
+  readonly failed?: boolean | undefined;
+  readonly timedOut?: boolean | undefined;
+  readonly isTerminated?: boolean | undefined;
+  readonly isCanceled?: boolean | undefined;
+}
+
+/** Exit 0 is present, exit 44 is absent; a killed, canceled or timed-out child, or any other exit, is error. */
+export function classifyPresenceResult(
+  result: PresenceResultFacts,
+): "present" | "absent" | "error" {
+  // A child that was killed, canceled or timed out has no answer, whatever exit code it was reporting.
+  if (result.timedOut === true || result.isTerminated === true || result.isCanceled === true) {
+    return "error";
+  }
+  if (result.exitCode === 0 && result.failed !== true) return "present";
+  if (result.exitCode === EXIT_ITEM_NOT_FOUND) return "absent";
+  return "error";
+}
+
+/**
  * Whether `account`'s item exists in the macOS Keychain, **without ever
  * reading its value** (plan 08-04; D-38, research A 1.5; threat T-08-06).
  *
@@ -144,25 +184,9 @@ export async function hasSecret(
     const result = await execa(
       SECURITY_BINARY,
       ["find-generic-password", "-a", account, "-s", SERVICE_NAME],
-      {
-        reject: false,
-        timeout: HAS_SECRET_TIMEOUT_MS,
-        killSignal: "SIGKILL",
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
-        // The health probe's own signal (plan 08-12): an abort kills the child instead of leaving it
-        // to run out its own 1.5 s cap.
-        ...(signal === undefined ? {} : { cancelSignal: signal }),
-      },
+      presenceSpawnOptions(signal),
     );
-    // A child that was killed, canceled or timed out has no answer, whatever exit code it was reporting.
-    if (result.timedOut === true || result.isTerminated === true || result.isCanceled === true) {
-      return "error";
-    }
-    if (result.exitCode === 0 && result.failed !== true) return "present";
-    if (result.exitCode === EXIT_ITEM_NOT_FOUND) return "absent";
-    return "error";
+    return classifyPresenceResult(result);
   } catch {
     return "error";
   }
