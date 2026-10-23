@@ -29,12 +29,33 @@ export const SOCKET_PATH_MAX_BYTES = 104;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9._-]+$/;
 const RUN_ROOT_NAME = /^ccc-uat\.[A-Za-z0-9]{6}$/;
 
-/** The three test-only service variables; they exist only for the expiry kind (D-05). */
+/** The three test-only service variables; the timing two exist only for the expiry kind (D-05). */
 export const TEST_OVERRIDE_ENV = {
   enable: "CCC_ENABLE_TEST_OVERRIDES",
   approvalTtl: "CCC_APPROVAL_TEST_TTL_MS",
   sweep: "CCC_APPROVAL_SWEEP_MS",
 } as const;
+
+/**
+ * The research-key account variable. Every sandboxed service gets it (FIX4A M2): opening Security,
+ * Paths or Diagnostics, or pressing the bundle's `Run checks again`, sends a `gesture` health fetch,
+ * and that does an attribute-only Keychain lookup of this account. Left unset, the lookup would be
+ * about the owner's real research key.
+ */
+const KEY_ACCOUNT_ENV = "CCC_RESEARCH_KEY_ACCOUNT";
+
+/**
+ * The throwaway research-key account of a run: `<run account>-nokey`. The run account carries a
+ * random run id, so the name is random per run; nothing ever creates it, so the lookup always finds
+ * nothing. It is neither the install secret's account (which the service creates) nor the research
+ * fixture's `-research` account (which a drill may create and delete).
+ */
+export function noKeyAccountFor(account: string): string {
+  assertUatAccount(account);
+  const key = `${account}-nokey`;
+  assertUatAccount(key);
+  return key;
+}
 
 const EXPIRY_TTL_MS = "15000";
 const EXPIRY_SWEEP_MS = "500";
@@ -226,8 +247,11 @@ export function buildServiceEnv(
     CCC_CODEX_CANDIDATES_DIR: paths.codexCandidatesDir,
     CCC_CODEX_BRIDGE_HOME: paths.codexBridgeHome,
   };
+  // Every kind: the flag lets the service read the account variable (FIX4A M2). Nothing else is
+  // enabled by it here; the approval timing overrides below belong to the expiry kind alone.
+  env[TEST_OVERRIDE_ENV.enable] = "1";
+  env[KEY_ACCOUNT_ENV] = noKeyAccountFor(account);
   if (kind === "expiry") {
-    env[TEST_OVERRIDE_ENV.enable] = "1";
     env[TEST_OVERRIDE_ENV.approvalTtl] = EXPIRY_TTL_MS;
     env[TEST_OVERRIDE_ENV.sweep] = EXPIRY_SWEEP_MS;
   }
@@ -238,6 +262,7 @@ const SCRUBBED_ENV_KEYS: readonly string[] = [
   TEST_OVERRIDE_ENV.enable,
   TEST_OVERRIDE_ENV.approvalTtl,
   TEST_OVERRIDE_ENV.sweep,
+  KEY_ACCOUNT_ENV,
   "CCC_RUNTIME_DIR",
   "CCC_SOCKET_PATH",
   "CLAUDE_CONFIG_DIR",

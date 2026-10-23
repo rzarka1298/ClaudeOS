@@ -361,6 +361,9 @@ describe("the guard environment reaches the service fixture only through the bra
     expect(calls[0]?.env[RESEARCH_TEST_ENV.fixtureDir]).toBe(prepared.fixtureDir);
     expect(calls[0]?.env[RESEARCH_TEST_ENV.summariser]).toBe("extractive");
     expect(calls[0]?.env.CCC_INSTALL_SECRET_ACCOUNT).toBe(INSTALL_ACCOUNT);
+    // The research fixture's own empty account wins over the runner's default no-key account, so a
+    // drill that stores a throwaway key (item 36) is read by the service (FIX4A M2).
+    expect(calls[0]?.env[RESEARCH_TEST_ENV.keyAccount]).toBe(prepared.keyAccount);
     await fixture.stop();
   });
 
@@ -407,10 +410,12 @@ describe("the guard environment reaches the service fixture only through the bra
       },
     );
     await fixture.start({ kind: "normal" });
-    expect(Object.keys(calls[0]?.env ?? {}).some((key) => key.startsWith("CCC_RESEARCH"))).toBe(
-      false,
-    );
-    expect(calls[0]?.env.CCC_ENABLE_TEST_OVERRIDES).toBeUndefined();
+    // No fixture directory and no summariser override; only the guarded no-key account (FIX4A M2).
+    expect(
+      Object.keys(calls[0]?.env ?? {}).filter((key) => key.startsWith("CCC_RESEARCH")),
+    ).toEqual([RESEARCH_TEST_ENV.keyAccount]);
+    expect(calls[0]?.env[RESEARCH_TEST_ENV.keyAccount]).toBe(`${INSTALL_ACCOUNT}-nokey`);
+    expect(calls[0]?.env.CCC_ENABLE_TEST_OVERRIDES).toBe("1");
     await fixture.stop();
   });
 });

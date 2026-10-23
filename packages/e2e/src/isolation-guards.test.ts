@@ -193,7 +193,7 @@ describe("service env (Test 4)", () => {
   const account = "ccc-uat-0123abcd";
   const root = join("/tmp", RUN_ROOT_NAME);
 
-  it("normal kind: only isolation variables, all inside the run root, no overrides", () => {
+  it("normal kind: only isolation variables, all inside the run root, and the guarded no-key account (FIX4A M2)", () => {
     const env = buildServiceEnv(paths(root), account, "normal");
     expect(env.CCC_RUNTIME_DIR).toBe(join(root, "rt"));
     expect(env.CCC_SOCKET_PATH).toBe(join(root, "rt", "svc.sock"));
@@ -213,8 +213,35 @@ describe("service env (Test 4)", () => {
         "CCC_CODEX_HOME",
         "XDG_STATE_HOME",
         "CCC_CLAUDE_CANDIDATES_DISABLED",
+        "CCC_ENABLE_TEST_OVERRIDES",
+        "CCC_RESEARCH_KEY_ACCOUNT",
       ].sort(),
     );
+  });
+
+  it("every kind sets the override flag and a nonexistent per-run no-key research account (FIX4A M2)", () => {
+    // An owner gesture health check (opening Security, Paths or Diagnostics, or the bundle's Run
+    // checks again) does an attribute-only Keychain lookup of the research-key account. The flag
+    // lets the service use the account variable, so the lookup is about a throwaway name.
+    for (const kind of ["normal", "expiry"] as const) {
+      const env = buildServiceEnv(paths(root), account, kind);
+      expect(env.CCC_ENABLE_TEST_OVERRIDES, kind).toBe("1");
+      const key = env.CCC_RESEARCH_KEY_ACCOUNT;
+      expect(key, kind).toBe(`${account}-nokey`);
+      expect(() => assertUatAccount(key as string), kind).not.toThrow();
+      // Never the install secret's account (that item is created) and never the research account
+      // of the research fixture (item 36 creates that one).
+      expect(key).not.toBe(account);
+      expect(key).not.toBe(`${account}-research`);
+      expect(key).not.toBe("anthropic-api-key");
+    }
+  });
+
+  it("the no-key account differs from run to run, because the run account does", () => {
+    const first = buildServiceEnv(paths(root), "ccc-uat-0123abcd", "normal");
+    const second = buildServiceEnv(paths(root), "ccc-uat-4567ef01", "normal");
+    expect(first.CCC_RESEARCH_KEY_ACCOUNT).toBe("ccc-uat-0123abcd-nokey");
+    expect(second.CCC_RESEARCH_KEY_ACCOUNT).toBe("ccc-uat-4567ef01-nokey");
   });
 
   it("seals the owner's Claude install off the same way, in both kinds (B-M6)", () => {
@@ -323,12 +350,12 @@ describe("service env (Test 4)", () => {
     }
   });
 
-  it("expiry kind adds exactly the three test-override variables", () => {
+  it("expiry kind adds the two approval timing overrides to what every kind carries", () => {
     const env = buildServiceEnv(paths(root), account, "expiry");
     expect(env.CCC_ENABLE_TEST_OVERRIDES).toBe("1");
     expect(env.CCC_APPROVAL_TEST_TTL_MS).toBe("15000");
     expect(env.CCC_APPROVAL_SWEEP_MS).toBe("500");
-    expect(Object.keys(env)).toHaveLength(14);
+    expect(Object.keys(env)).toHaveLength(15);
   });
 
   it("refuses the default install-secret account and an account outside the ccc-uat family", () => {
@@ -355,6 +382,7 @@ describe("service env (Test 4)", () => {
       XDG_STATE_HOME: "/real/state",
       CCC_CLAUDE_CANDIDATES_DISABLED: "0",
       CCC_CLAUDE_CANDIDATES_DIR: "/real/claude/bin",
+      CCC_RESEARCH_KEY_ACCOUNT: "anthropic-api-key",
     };
     const scrubbed = scrubInheritedEnv(inherited);
     expect(scrubbed).toEqual({ PATH: "/usr/bin", HOME: "/home-x" });
