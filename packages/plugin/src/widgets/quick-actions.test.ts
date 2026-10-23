@@ -14,6 +14,7 @@ import {
 } from "../projects/launch-status.js";
 import { createPluginLauncher } from "../projects/plugin-launcher.js";
 import { launchersFocusRequested } from "../view/launchers-focus.js";
+import { settingsSectionRequested, takeSettingsSectionRequest } from "../view/settings-sections.js";
 import type { QuickActionDescriptor } from "./contract.js";
 import { dispatchQuickAction } from "./quick-actions.js";
 import { WIDGETS } from "./registry.js";
@@ -55,24 +56,104 @@ const RUN_SKILL: QuickActionDescriptor = {
   capability: "skill:run",
 };
 
+const CONNECT_GITHUB: QuickActionDescriptor = {
+  id: "connect-github",
+  label: "Connect GitHub",
+  capability: "connect:github",
+};
+
+/** A connect family member with no landing of its own: it keeps the generic hand-off. */
+const CONNECT_OTHER: QuickActionDescriptor = {
+  id: "connect-linear",
+  label: "Connect Linear",
+  capability: "connect:linear",
+};
+
 describe("a connect:* capability navigates to settings and says where", () => {
   it("navigates exactly once, to settings, and nowhere else", () => {
+    takeSettingsSectionRequest();
     const ctx = context();
     const result = dispatchQuickAction(CONNECT_GOOGLE, ctx);
 
     expect(result).toEqual({ kind: "navigated", destination: "settings" });
     expect(ctx.navigate).toHaveBeenCalledTimes(1);
     expect(ctx.navigate).toHaveBeenCalledWith("settings");
+    takeSettingsSectionRequest();
   });
 
-  it("names the source and where its connector will be configured", () => {
+  it("names the source and where its connector will be configured (a source with no landing of its own)", () => {
     const ctx = context();
-    dispatchQuickAction(CONNECT_GOOGLE, ctx);
+    dispatchQuickAction(CONNECT_OTHER, ctx);
 
     expect(ctx.notify).toHaveBeenCalledTimes(1);
     const message = String(ctx.notify.mock.calls[0]?.[0] ?? "");
-    expect(message).toContain("Google Calendar and Gmail");
+    expect(message).toContain("Linear");
     expect(message).toContain("Settings");
+  });
+});
+
+describe("connect:github and connect:google land on the integrations section (plan 08-15, UI-SPEC R-10)", () => {
+  it.each([
+    ["connect:github", CONNECT_GITHUB, "GitHub"],
+    ["connect:google", CONNECT_GOOGLE, "Google Calendar and Gmail"],
+  ] as const)(
+    "%s requests the integrations section, selects settings and connects nothing",
+    (_capability, descriptor, source) => {
+      takeSettingsSectionRequest();
+      const ctx = context();
+      const result = dispatchQuickAction(descriptor, ctx);
+
+      expect(result).toEqual({ kind: "navigated", destination: "settings" });
+      expect(settingsSectionRequested.peek()).toBe("integrations");
+      expect(ctx.navigate).toHaveBeenCalledTimes(1);
+      expect(ctx.navigate).toHaveBeenCalledWith("settings");
+      expect(ctx.requestLaunch).not.toHaveBeenCalled();
+      expect(ctx.openSwitcher).not.toHaveBeenCalled();
+      // The Notice names the source and says the truth: it can't be connected in this version.
+      expect(ctx.notify).toHaveBeenCalledTimes(1);
+      const message = String(ctx.notify.mock.calls[0]?.[0] ?? "");
+      expect(message).toBe(
+        `${source} isn't part of this version. The integrations section lists each account.`,
+      );
+      expect(message).not.toMatch(/once its connector is available|configured/);
+      takeSettingsSectionRequest();
+    },
+  );
+
+  it("asks for the section before it navigates, so the destination finds the request on mount", () => {
+    takeSettingsSectionRequest();
+    const seen: Array<string | null> = [];
+    const ctx = context();
+    ctx.navigate.mockImplementation(() => {
+      seen.push(settingsSectionRequested.peek());
+    });
+    dispatchQuickAction(CONNECT_GITHUB, ctx);
+    expect(seen).toEqual(["integrations"]);
+    takeSettingsSectionRequest();
+  });
+
+  it("every other connect:* capability behaves as before and requests no section", () => {
+    takeSettingsSectionRequest();
+    const ctx = context();
+    const result = dispatchQuickAction(CONNECT_OTHER, ctx);
+    expect(result).toEqual({ kind: "navigated", destination: "settings" });
+    expect(ctx.notify).toHaveBeenCalledWith(
+      "Connect Linear from Settings → Claude command center once its connector is available.",
+    );
+    expect(settingsSectionRequested.peek()).toBeNull();
+
+    const hooks = context();
+    dispatchQuickAction({ id: "h", label: "Hooks", capability: "connect:claude-hooks" }, hooks);
+    expect(String(hooks.notify.mock.calls[0]?.[0])).toContain("Claude Code hooks");
+    expect(settingsSectionRequested.peek()).toBeNull();
+  });
+
+  it("makes no connect call: the dispatcher still imports no client, network or process module", () => {
+    const code = DISPATCHER_SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toMatch(
+      /service-api-client|child_process|fetch\(|XMLHttpRe|WebSocket|["']node:/,
+    );
+    expect(code).toMatch(/from "\.\.\/view\/settings-sections\.js"/);
   });
 });
 
@@ -290,9 +371,9 @@ describe("session:* and usage:* descriptors reach the one runner (D-36, 05-17)",
 
   it("other connect:* capabilities keep their old copy", () => {
     const ctx = context();
-    dispatchQuickAction(CONNECT_GOOGLE, ctx);
+    dispatchQuickAction(CONNECT_OTHER, ctx);
     expect(ctx.notify).toHaveBeenCalledWith(
-      "Connect Google Calendar and Gmail from Settings → Claude command center once its connector is available.",
+      "Connect Linear from Settings → Claude command center once its connector is available.",
     );
   });
 

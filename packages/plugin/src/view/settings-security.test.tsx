@@ -134,7 +134,7 @@ function serve(response: DiagnosticsHealthResponse | Error | "never") {
     if (response instanceof Error) return Promise.reject(response);
     return Promise.resolve(response);
   });
-  configureHealth({ api: { get } as never });
+  configureHealth({ api: { get } });
   return get;
 }
 
@@ -389,7 +389,7 @@ describe("Task 2, Test 3: opening Security uses the Diagnostics health refresh",
     expect(get).toHaveBeenCalledWith("gesture");
     expect(healthViewMounted()).toBe(true);
     // A reconnect while the section is open refreshes it through the shared hook, never as a gesture.
-    act(() => {
+    await act(async () => {
       onHealthLive();
     });
     await flush();

@@ -5,6 +5,7 @@ import { LAUNCH_PAIR_ACTION } from "@ccc/domain/launch.js";
 import type { ProjectLaunchActionId } from "../projects/launch-status.js";
 import type { DestinationId } from "../view/destinations.js";
 import { requestLaunchersFocus } from "../view/launchers-focus.js";
+import { requestSettingsSection } from "../view/settings-sections.js";
 import type { QuickActionDescriptor } from "./contract.js";
 
 /**
@@ -116,6 +117,14 @@ const CLAUDE_HOOKS_NOTICE =
 const CODEX_SETTINGS_NOTICE =
   "Open Codex settings from Obsidian settings → Claude command center → Codex.";
 
+/**
+ * The `connect:github` / `connect:google` Notice: the truth, not a promise that a connector can be
+ * configured. The integrations section lists each account.
+ */
+function accountNotInVersionNotice(source: string): string {
+  return `${source} isn't part of this version. The integrations section lists each account.`;
+}
+
 /** `Connect Google Calendar and Gmail` → `Google Calendar and Gmail`. */
 function sourceFromLabel(label: string): string {
   return label.startsWith("Connect ") ? label.slice("Connect ".length) : label;
@@ -174,6 +183,16 @@ export function dispatchQuickAction(
   if (descriptor.capability === "connect:codex-settings") {
     ctx.navigate(SETTINGS);
     ctx.notify(CODEX_SETTINGS_NOTICE);
+    return { kind: "navigated", destination: SETTINGS };
+  }
+
+  if (descriptor.capability === "connect:github" || descriptor.capability === "connect:google") {
+    // R-10: the shipped permission-required cards for GitHub and Google land on the integrations
+    // section, whose Accounts group says honestly that these sources are not part of this version.
+    // The request comes first so the destination finds it on mount; nothing is connected here.
+    requestSettingsSection("integrations");
+    ctx.navigate(SETTINGS);
+    ctx.notify(accountNotInVersionNotice(sourceFromLabel(descriptor.label)));
     return { kind: "navigated", destination: SETTINGS };
   }
 

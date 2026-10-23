@@ -291,4 +291,20 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
     );
     expect(document.activeElement).toBe(sectionHeading("Launchers"));
   });
+
+  it("the Overview Connect action's request lands on the Integrations heading and connects nothing (R-10)", async () => {
+    renderShell("overview");
+    await act(async () => {
+      requestSettingsSection("integrations");
+      requestDestination("settings");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    expect(document.activeElement).toBe(sectionHeading("Integrations"));
+    expect(screen.queryByRole("button", { name: /connect|sign in/i })).toBeNull();
+  });
 });

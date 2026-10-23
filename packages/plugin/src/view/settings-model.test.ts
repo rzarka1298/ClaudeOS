@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ClaudeIntegrationStatus } from "@ccc/domain";
+import { HOOK_SILENT_THRESHOLD_MS } from "@ccc/domain/diagnostics.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { motionMode } from "../motion.js";
 import { formatAbsoluteTime } from "../widgets/relative-time.js";
@@ -473,5 +474,52 @@ describe("the moved string constants keep their exact text (FIX1B)", () => {
       Object.entries(model).filter(([, value]) => typeof value === "string"),
     );
     expect(actual).toEqual(PINNED_STRINGS);
+  });
+});
+
+describe("one hook silence threshold (plan 08-15 Task 3, D-04)", () => {
+  const PLUGIN_SRC = join(HERE, "..");
+  const DOMAIN_DIAGNOSTICS = join(HERE, "..", "..", "..", "domain", "src", "diagnostics.ts");
+  const DEFINITION =
+    /\b(?:const|let|var)\s+HOOK_SILENT_THRESHOLD_MS\b|\bHOOK_SILENT_THRESHOLD_MS\s*[:=]\s*\d/;
+
+  /** Every non-test TypeScript source file under the plugin's `src`. */
+  function pluginSources(): string[] {
+    return (readdirSync(PLUGIN_SRC, { recursive: true }) as string[])
+      .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
+      .map((file) => join(PLUGIN_SRC, file));
+  }
+
+  it("imports the threshold from the domain and defines none", () => {
+    const source = readFileSync(join(HERE, "settings-model.ts"), "utf8");
+    expect(source).toMatch(
+      /import\s*\{[^}]*\bHOOK_SILENT_THRESHOLD_MS\b[^}]*\}\s*from\s*"@ccc\/domain\/diagnostics\.js"/s,
+    );
+    expect(source).not.toMatch(DEFINITION);
+    expect(source).not.toMatch(/10\s*\*\s*60\s*\*\s*1000/);
+  });
+
+  it("finds no definition of the threshold anywhere in the plugin, and exactly one in the domain", () => {
+    const definitions = pluginSources().filter((file) =>
+      DEFINITION.test(readFileSync(file, "utf8")),
+    );
+    expect(definitions).toEqual([]);
+    const domain = readFileSync(DOMAIN_DIAGNOSTICS, "utf8");
+    expect(domain.match(/export const HOOK_SILENT_THRESHOLD_MS\b/g)).toHaveLength(1);
+  });
+
+  it("the sentence flips exactly at the domain's threshold", () => {
+    const base = Date.parse("2026-10-22T10:00:00.000Z");
+    const status = (elapsedMs: number) => ({
+      hooks: "installed" as const,
+      lastEventAt: new Date(base - elapsedMs).toISOString(),
+      telemetry: { kind: "ok" as const },
+    });
+    expect(hookStatusText(status(HOOK_SILENT_THRESHOLD_MS), base)).toMatch(
+      /^Installed\. Last event /,
+    );
+    expect(hookStatusText(status(HOOK_SILENT_THRESHOLD_MS + 1000), base)).toMatch(
+      /^Installed, but no events have arrived since /,
+    );
   });
 });

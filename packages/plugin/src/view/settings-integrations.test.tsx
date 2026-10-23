@@ -257,7 +257,7 @@ describe("Task 1, Test 2: the live signal wins, the seam is the fallback, the se
     await flush();
     expect(f.getClaude).not.toHaveBeenCalled();
     expect(f.getCodex).not.toHaveBeenCalled();
-    act(() => {
+    await act(async () => {
       claudeIntegration.value = {
         ...CLAUDE_NOT_INSTALLED,
         hooks: "installed",

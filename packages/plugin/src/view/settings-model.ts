@@ -1,4 +1,7 @@
 import type { ClaudeIntegrationStatus } from "@ccc/domain";
+// The silence threshold before "Last event …" gives way to "no events have arrived since …" is the
+// domain's one definition (D-04: one answer per subsystem); the plugin keeps no second copy.
+import { HOOK_SILENT_THRESHOLD_MS } from "@ccc/domain/diagnostics.js";
 import {
   applyMotionPreference,
   type MediaQueryListLike,
@@ -58,9 +61,6 @@ export const CLAUDE_HOOKS_NOT_INSTALLED_TEXT =
   "Not installed. Session tracking and waiting-for-approval states need them.";
 const CLAUDE_HOOKS_SILENT_SUFFIX =
   " Claude Code skips hooks in folders you haven't trusted and when hooks are turned off in its settings.";
-/** The silence threshold before "Last event …" gives way to "no events have arrived since …". */
-const HOOK_SILENT_THRESHOLD_MS = 10 * 60 * 1000;
-
 /**
  * A Claude Code version shape safe to render: dotted digits only (mirrors
  * `widgets/frame.tsx`'s `claudeCodeVersion` -- kept local rather than
