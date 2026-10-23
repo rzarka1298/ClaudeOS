@@ -82,6 +82,7 @@ import {
   asSettingsBrowser,
   checkContrastReading,
   checkDataJson,
+  checkDetectionSettled,
   checkFocusNotMoved,
   checkKeyboardWalk,
   checkLauncherSaved,
@@ -276,6 +277,15 @@ describe("settings core", function () {
         text: labels[0] ?? null,
       },
     ]);
+    // The press activates the section, and the heading takes focus a moment after the click
+    // (the focus follows the render). Wait for that before putting focus on the nav item, or the
+    // late heading focus lands after it and the first ArrowDown has no nav item to move from.
+    await waitForSettings(
+      sb,
+      (read) => checkSectionFocused(read, labels[0] as string),
+      `the ${labels[0]} heading to take focus after the press`,
+      WAIT.short,
+    );
     await focusNav(labels[0] as string);
     for (let index = 1; index < labels.length; index += 1) {
       const read = await press(Key.ArrowDown);
@@ -432,6 +442,7 @@ describe("settings core", function () {
             rows: extras.scanFolders,
             folderName: basename(scanRoot),
             storeRoots: store.scanRoots.filter((row) => row.path.endsWith(SCAN_FOLDER_NAME)).length,
+            facts: { homeDir: homedir(), userName: userInfo().username },
           }),
         ).toEqual([]);
       },
@@ -768,6 +779,11 @@ describe("settings core", function () {
           async () => {
             for (const id of SETTINGS_SECTION_IDS) {
               await opened(id);
+              // Launchers detects on open and its Detect apps control is aria-disabled until that
+              // ends, which the contrast reading exempts; read it once the detection has settled.
+              if (id === "launchers") {
+                await waitForExtras(checkDetectionSettled, "the app detection to settle");
+              }
               await measure(sectionLabel(id), contrastSubjects(id));
               await look(id, `.${SETTINGS_CLASSES.settingsContent}`);
             }

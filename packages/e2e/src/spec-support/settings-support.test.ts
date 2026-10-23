@@ -29,6 +29,7 @@ import {
   checkDataJson,
   checkDeleteDialog,
   checkDeleted,
+  checkDetectionSettled,
   checkFocusNotMoved,
   checkIntegrationsNotSetUp,
   checkKeyboardWalk,
@@ -942,21 +943,50 @@ describe("the project and scan folder verdicts (Test 2, item 10)", () => {
   it("accepts a listed scan folder with a display path and a store row", () => {
     expect(
       checkScanFolderListed({
-        rows: [{ path: "…/tmp/settings-scan", meta: "Not scanned yet" }],
+        rows: [{ path: "~/code/settings-scan", meta: "Not scanned yet" }],
         folderName: "settings-scan",
         storeRoots: 1,
       }),
     ).toEqual([]);
   });
 
-  it("flags a missing row, an absolute path and an empty store", () => {
+  it("accepts an outside-home folder shown as it is: Phase 4 shows only the home folder as ~", () => {
+    // The sandbox scan folder lives under /tmp. The service's project display rule returns an
+    // outside-home path unchanged, and such a path carries no user segment, so it leaks nothing.
+    expect(
+      checkScanFolderListed({
+        rows: [{ path: "/tmp/ccc-uat.AbC123/settings-scan", meta: "Not scanned yet" }],
+        folderName: "settings-scan",
+        storeRoots: 1,
+        facts: { homeDir: "/Users/username", userName: "username" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("flags a row that shows the home folder or the user name", () => {
+    const facts = { homeDir: "/Users/username", userName: "username" };
+    for (const path of [
+      "/Users/username/code/settings-scan",
+      "/Volumes/username-backup/settings-scan",
+    ]) {
+      const problems = checkScanFolderListed({
+        rows: [{ path, meta: "" }],
+        folderName: "settings-scan",
+        storeRoots: 1,
+        facts,
+      });
+      expect(problems.join(" "), path).toContain("private location");
+    }
+  });
+
+  it("flags a missing row, a home path and an empty store", () => {
     const problems = checkScanFolderListed({
       rows: [{ path: `${USERS}/someone/settings-scan`, meta: "" }],
       folderName: "other",
       storeRoots: 0,
     });
     expect(problems.join(" ")).toContain("no scan folder row");
-    expect(problems.join(" ")).toContain("absolute path");
+    expect(problems.join(" ")).toContain("private location");
     expect(problems.join(" ")).toContain("store holds no scan folder");
   });
 });
@@ -989,6 +1019,19 @@ describe("the launcher verdicts (Test 2, item 11)", () => {
 
   it("accepts the three configurable panels with a detect line and a set-up count", () => {
     expect(checkLaunchersListed(extras())).toEqual([]);
+  });
+
+  it("reads a detection still running as not settled, and a finished or failed one as settled", () => {
+    // The Detect apps control is aria-disabled while it runs, so a contrast reading taken then
+    // cannot measure it (disabled controls are exempt).
+    expect(checkDetectionSettled(extras({ detectLine: "Detecting apps…" }))).toEqual([
+      "the app detection is still running",
+    ]);
+    expect(checkDetectionSettled(extras({ detectLine: "" }))).toEqual([
+      "the app detection is still running",
+    ]);
+    expect(checkDetectionSettled(extras())).toEqual([]);
+    expect(checkDetectionSettled(extras({ detectLine: "Couldn't detect apps." }))).toEqual([]);
   });
 
   it("flags a missing panel, a missing count and a detection that failed", () => {

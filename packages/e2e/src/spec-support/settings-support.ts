@@ -1597,17 +1597,28 @@ export function checkRegistered(input: {
   return problems;
 }
 
+/**
+ * A scan folder is listed by the Phase 4 display rule: the home folder shows as `~`, and a folder
+ * OUTSIDE home (the sandbox keeps its scan folder under /tmp) shows as the path it is. So a row may
+ * be absolute; what it may never do is name the home folder, the user name or a `/Users/` path.
+ * The run root is no secret here (it is the sandbox), so `facts` carries the home and user only.
+ */
 export function checkScanFolderListed(input: {
   readonly rows: readonly { readonly path: string; readonly meta: string }[];
   readonly folderName: string;
   readonly storeRoots: number;
+  readonly facts?: Pick<PathFacts, "homeDir" | "userName">;
 }): string[] {
   const problems: string[] = [];
   if (!input.rows.some((row) => row.path.endsWith(input.folderName))) {
     problems.push("no scan folder row names the folder that was added");
   }
-  if (input.rows.some((row) => row.path.startsWith("/"))) {
-    problems.push("a scan folder row shows an absolute path");
+  const leaks = new Set<string>();
+  for (const row of input.rows) {
+    for (const kind of findAbsolutePathProblems(row.path, input.facts ?? {})) leaks.add(kind);
+  }
+  if (leaks.size > 0) {
+    problems.push(`a scan folder row shows a private location (${[...leaks].join(", ")})`);
   }
   if (input.storeRoots < 1) problems.push("the store holds no scan folder");
   return problems;
@@ -1621,6 +1632,17 @@ const CONFIGURABLE_PANELS: readonly string[] = [
   SETTINGS_TEXT.panelClaudeCode,
   SETTINGS_TEXT.panelClaudeDesktop,
 ];
+
+/**
+ * The Launchers section's detection has ended, whether it found apps or failed. While it runs the
+ * `Detect apps` control is aria-disabled and its status line reads `Detecting apps…`.
+ */
+export function checkDetectionSettled(extras: SettingsExtras): string[] {
+  const line = extras.detectLine;
+  const ended =
+    line.startsWith(SETTINGS_TEXT.detectedPrefix) || line.includes(SETTINGS_TEXT.detectFailed);
+  return ended ? [] : ["the app detection is still running"];
+}
 
 /** The three configurable panels are there, with a set-up count and a finished detection. */
 export function checkLaunchersListed(extras: SettingsExtras): string[] {
