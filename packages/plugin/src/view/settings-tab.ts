@@ -1,6 +1,14 @@
 import { type App, Notice, type Plugin, PluginSettingTab } from "obsidian";
 import type { MotionPreference } from "../motion.js";
-import { CODEX_BRIDGE_NAME, CODEX_HOOKS_NAME } from "./codex-settings.js";
+import {
+  CODEX_BRIDGE_NAME,
+  CODEX_COPY_BRIDGE_NAME,
+  CODEX_COPY_INSTALL_NAME,
+  CODEX_COPY_UNINSTALL_NAME,
+  CODEX_HOOKS_NAME,
+  CODEX_LAUNCHER_NAME,
+  CODEX_NOTIFY_NAME,
+} from "./codex-settings.js";
 import { requestDestination } from "./navigation-request.js";
 import {
   asMotionPreference,
@@ -52,6 +60,8 @@ export const POINTER_DESC =
  * row is the control), so the action's own name is kept findable as a search alias instead.
  */
 export const POINTER_ACTION_LABEL = "Open settings";
+/** The old Codex Launcher row's own action label, still findable (it was an alias on that row). */
+export const OLD_LAUNCHER_ACTION_LABEL = "Open launcher settings";
 
 /**
  * Every setting that moved to the destination, by the name the owner knew it as, so searching
@@ -70,6 +80,12 @@ export const POINTER_ALIASES: string[] = [
   CODEX_BRIDGE_NAME,
   CLAUDE_COPY_INSTALL_NAME,
   CLAUDE_COPY_UNINSTALL_NAME,
+  CODEX_COPY_INSTALL_NAME,
+  CODEX_COPY_UNINSTALL_NAME,
+  CODEX_COPY_BRIDGE_NAME,
+  CODEX_LAUNCHER_NAME,
+  CODEX_NOTIFY_NAME,
+  OLD_LAUNCHER_ACTION_LABEL,
   POINTER_ACTION_LABEL,
 ];
 
