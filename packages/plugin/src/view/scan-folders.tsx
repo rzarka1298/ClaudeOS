@@ -418,6 +418,20 @@ export interface ScanFoldersProps {
   readonly now: number;
   /** Quiet mode (FIX2B M1): every status region below is plain, and its messages go here. */
   readonly announce?: Announce | undefined;
+  /**
+   * Set while the companion service is away and this surface is read-only (FIX6B, Codex-4): every
+   * control that would send a request is `aria-disabled`, described by the visible reason element
+   * with this id, and does nothing when pressed. The native `disabled` attribute is never used.
+   * Absent where the surface keeps no away rule of its own (the Projects destination).
+   */
+  readonly unavailable?: { readonly reasonId: string } | undefined;
+}
+
+/** The `aria-disabled` pair for a control that needs the service, or `{}` when it is there. */
+function awayAttrs(unavailable: { readonly reasonId: string } | undefined) {
+  return unavailable === undefined
+    ? ({} as const)
+    : ({ "aria-disabled": "true", "aria-describedby": unavailable.reasonId } as const);
 }
 
 /**
@@ -452,7 +466,14 @@ function rowButton(container: HTMLElement | null, selector: string, index: numbe
  * The Suggestions and Scan folders sections (UI-SPEC S3 reading order 5 and
  * 6, S5). Suggestions render only while at least one scan folder exists.
  */
-export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps): VNode {
+export function ScanFolders({
+  state,
+  actions,
+  now,
+  announce,
+  unavailable,
+}: ScanFoldersProps): VNode {
+  const away = unavailable !== undefined;
   const roots = state?.scanRoots ?? [];
   const suggestions = state?.suggestions ?? [];
   const groups = roots.map((root) => {
@@ -518,6 +539,7 @@ export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps)
   }
 
   async function register(suggestion: SuggestionView): Promise<void> {
+    if (away) return;
     if (!begin(suggestion.suggestionId)) return;
     const index = rowIndexOf(suggestion.suggestionId);
     try {
@@ -558,6 +580,7 @@ export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps)
   }
 
   async function dismiss(suggestion: SuggestionView): Promise<void> {
+    if (away) return;
     if (!begin(suggestion.suggestionId)) return;
     const index = rowIndexOf(suggestion.suggestionId);
     try {
@@ -581,6 +604,11 @@ export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps)
     }
   }
 
+  /** True when `Show {n} more` only reveals rows already held: no request, so no service. */
+  function revealsHeldRows(root: ScanRootView, held: number, shown: number): boolean {
+    return held >= shown + SUGGESTIONS_PAGE || held >= suggestionTotal(root, held);
+  }
+
   /**
    * `Show {n} more`: reveals rows already held, or first fetches the
    * folder's next page from the service (codex review 3, finding 2), after
@@ -593,10 +621,12 @@ export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps)
         ...current,
         [root.scanRootId]: (current[root.scanRootId] ?? SUGGESTIONS_PAGE) + SUGGESTIONS_PAGE,
       }));
-    if (held >= shown + SUGGESTIONS_PAGE || held >= suggestionTotal(root, held)) {
+    if (revealsHeldRows(root, held, shown)) {
       reveal();
       return;
     }
+    // Fetching the next page needs the service.
+    if (away) return;
     if (loadingRef.current.has(root.scanRootId)) return;
     loadingRef.current.add(root.scanRootId);
     try {
@@ -701,6 +731,7 @@ export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps)
                             className="ccc-connect-button"
                             aria-label={`Register ${suggestion.folderName}`}
                             aria-disabled={busy}
+                            {...awayAttrs(unavailable)}
                             onClick={() => void register(suggestion)}
                           >
                             Register
@@ -710,6 +741,7 @@ export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps)
                             className="ccc-list-more"
                             aria-label={`Dismiss ${suggestion.folderName}`}
                             aria-disabled={busy}
+                            {...awayAttrs(unavailable)}
                             onClick={() => void dismiss(suggestion)}
                           >
                             Dismiss
@@ -722,6 +754,9 @@ export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps)
                     <button
                       type="button"
                       className="ccc-list-more"
+                      {...(revealsHeldRows(root, group.length, shown)
+                        ? {}
+                        : awayAttrs(unavailable))}
                       onClick={() => void showMore(root, group.length, shown)}
                     >
                       {`Show ${Math.min(remaining, SUGGESTIONS_PAGE)} more`}
@@ -766,6 +801,7 @@ export function ScanFolders({ state, actions, now, announce }: ScanFoldersProps)
                 actions={actions}
                 now={now}
                 announce={announce}
+                unavailable={unavailable}
                 onRemoved={() => setFocusTarget({ kind: "root", index })}
               />
             ))}
@@ -787,6 +823,8 @@ interface ScanFolderRowProps {
   readonly actions: ScanActions;
   readonly now: number;
   readonly announce?: Announce | undefined;
+  /** See `ScanFoldersProps.unavailable`. */
+  readonly unavailable?: { readonly reasonId: string } | undefined;
   /** Called once this row's folder was removed, so the list can move focus on. */
   readonly onRemoved: () => void;
 }
@@ -796,7 +834,15 @@ interface ScanFolderRowProps {
  * `Stop scanning` with the inline confirmation. Each row owns its own
  * in-flight state, so scanning one folder never blocks another (S5 loading).
  */
-function ScanFolderRow({ root, actions, now, announce, onRemoved }: ScanFolderRowProps): VNode {
+function ScanFolderRow({
+  root,
+  actions,
+  now,
+  announce,
+  unavailable,
+  onRemoved,
+}: ScanFolderRowProps): VNode {
+  const away = unavailable !== undefined;
   const [status, setStatus] = useState<RowStatus>({ kind: "idle" });
   const [confirming, setConfirming] = useState(false);
   const [returnFocus, setReturnFocus] = useState(false);
@@ -825,7 +871,7 @@ function ScanFolderRow({ root, actions, now, announce, onRemoved }: ScanFolderRo
   }
 
   async function rescan(depth?: number): Promise<void> {
-    if (busyRef.current) return;
+    if (busyRef.current || away) return;
     busyRef.current = true;
     // Written before the first await, so it shows in the same render (D-40).
     setStatus({ kind: "scanning" });
@@ -865,7 +911,7 @@ function ScanFolderRow({ root, actions, now, announce, onRemoved }: ScanFolderRo
   }
 
   async function remove(): Promise<void> {
-    if (removingRef.current) return;
+    if (removingRef.current || away) return;
     setRemoving(true);
     let outcome: ScanActionOutcome;
     try {
@@ -928,9 +974,10 @@ function ScanFolderRow({ root, actions, now, announce, onRemoved }: ScanFolderRo
           className="ccc-text-input"
           value={shownDepth}
           aria-disabled={scanning ? "true" : undefined}
+          {...awayAttrs(unavailable)}
           onChange={(event) => {
             const select = event.currentTarget;
-            if (busyRef.current) {
+            if (busyRef.current || away) {
               // Ignored while a rescan runs: the select keeps what is in effect.
               select.value = shownDepth;
               return;
@@ -961,6 +1008,7 @@ function ScanFolderRow({ root, actions, now, announce, onRemoved }: ScanFolderRo
               type="button"
               className="ccc-button-danger"
               aria-disabled={removing ? "true" : undefined}
+              {...awayAttrs(unavailable)}
               onClick={() => void remove()}
             >
               Remove scan folder
@@ -976,6 +1024,7 @@ function ScanFolderRow({ root, actions, now, announce, onRemoved }: ScanFolderRo
             type="button"
             className="ccc-list-more"
             aria-disabled={scanning ? "true" : undefined}
+            {...awayAttrs(unavailable)}
             onClick={() => void rescan()}
           >
             Rescan folder
@@ -984,7 +1033,10 @@ function ScanFolderRow({ root, actions, now, announce, onRemoved }: ScanFolderRo
             type="button"
             ref={stopRef}
             className="ccc-list-more"
-            onClick={() => setConfirming(true)}
+            {...awayAttrs(unavailable)}
+            onClick={() => {
+              if (!away) setConfirming(true);
+            }}
           >
             Stop scanning
           </button>
