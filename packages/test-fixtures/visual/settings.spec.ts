@@ -136,6 +136,26 @@ async function fitViewportToContent(page: Page): Promise<void> {
   }
 }
 
+/**
+ * The capture must be the whole page: the shell root clips to the viewport, so a box that starts above
+ * the viewport top or ends below its bottom would be baselined cut off (the refusal cell was, until
+ * the scroll was reset before the viewport was grown).
+ */
+async function expectWholeBoxInViewport(page: Page): Promise<void> {
+  const facts = await page.evaluate(() => {
+    const box = document
+      .querySelector<HTMLElement>("[data-harness-width]")
+      ?.getBoundingClientRect();
+    return {
+      top: box?.top ?? Number.NaN,
+      bottom: box?.bottom ?? Number.NaN,
+      height: window.innerHeight,
+    };
+  });
+  expect(facts.top).toBeGreaterThanOrEqual(0);
+  expect(facts.bottom).toBeLessThanOrEqual(facts.height + 1);
+}
+
 /** Focus moves can scroll the content pane before the capture; the baseline shows the page from its top. */
 async function resetScroll(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -300,8 +320,12 @@ for (const { view, caseId, width, motion } of CELLS) {
       await page.locator("html[data-harness-ready=true]").waitFor({ state: "attached" });
       // A harness error is a typo in the spec, never a state worth a baseline.
       await expect(page.locator(".ccc-harness-error")).toHaveCount(0);
+      // A focus move (the bundle refusal heading) can scroll the clipped shell root; the page is measured
+      // and captured from its top, so scroll is reset both before the viewport is grown and after.
+      await resetScroll(page);
       await fitViewportToContent(page);
       await resetScroll(page);
+      await expectWholeBoxInViewport(page);
       await ASSERTIONS[`${caseId}-${width}${suffix}`]?.(page);
       await expect(page.locator("[data-harness-width]")).toHaveScreenshot(snapshotName, {
         timeout: 45_000,
