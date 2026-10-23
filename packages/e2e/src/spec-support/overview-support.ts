@@ -983,6 +983,45 @@ export function rendererFocusControl(
   return { found: false, activeLabel: null };
 }
 
+/** The accessible name of the focused element, read at the moment of the call. SELF-CONTAINED. */
+export function rendererActiveLabel(): string | null {
+  const active = document.activeElement;
+  return active === null ? null : active.getAttribute("aria-label");
+}
+
+/**
+ * After a launch press (FIX4A m4): only the pressed control's status changed. The project's status
+ * line carries nothing about the Finder control (neither before nor after), and no card other than
+ * the project shortcuts has a launch status. Returns what is wrong; an empty list is a pass.
+ */
+export function checkOnlyPressedChanged(
+  before: readonly OverviewCard[],
+  after: readonly OverviewCard[],
+  _action: PressableLauncher,
+): string[] {
+  const problems: string[] = [];
+  const title = OVERVIEW_TEXT.projectShortcutsTitle;
+  for (const [when, cards] of [
+    ["before", before],
+    ["after", after],
+  ] as const) {
+    const status = cardByTitle(cards, title)?.launchStatus ?? "";
+    if (status.includes(OVERVIEW_TEXT.finderWord)) {
+      problems.push(
+        `the launch status line mentions the ${OVERVIEW_TEXT.finderWord} control ${when} the press`,
+      );
+    }
+  }
+  for (const card of after) {
+    if (card.title === title) continue;
+    const beforeCard = cardByTitle(before, card.title);
+    if ((card.launchStatus ?? null) !== (beforeCard?.launchStatus ?? null)) {
+      problems.push(`${card.title} changed its launch status, but only ${title} may`);
+    }
+  }
+  return problems;
+}
+
 export interface LaunchPressInput {
   readonly projectName: string;
   readonly action: PressableLauncher;
@@ -1021,6 +1060,12 @@ export async function pressLaunchControl(
   if (!focus.found || focus.activeLabel !== label) {
     throw new Error("The launch control did not take keyboard focus, so nothing was pressed.");
   }
+  // Re-read what holds focus immediately before Enter (FIX4A m4): an Enter sent while focus had
+  // moved to a neighbour (the Finder control sits in the same toolbar) would press that instead.
+  const stillFocused = await browser.execute(rendererActiveLabel);
+  if (stillFocused !== label) {
+    throw new Error("Focus moved off the launch control before Enter, so nothing was pressed.");
+  }
   await browser.keys(ENTER_KEY);
   let last = "";
   await pollUntil(
@@ -1037,6 +1082,8 @@ export async function pressLaunchControl(
       describe: `the typed not-set-up outcome of the launch status line (it last read "${last}")`,
     },
   );
+  const only = checkOnlyPressedChanged(cards, await readOverviewCards(browser), input.action);
+  if (only.length > 0) throw new Error(only.join("; "));
   return { label, status: last };
 }
 
