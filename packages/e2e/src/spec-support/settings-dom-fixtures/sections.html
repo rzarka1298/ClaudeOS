@@ -1,0 +1,77 @@
+<!-- Synthetic Settings DOM (plan 08-22). Every name is invented. The structure mirrors what the plugin's SettingsDestination, SecuritySection, SettingRow, SettingSwitch and StatusLine render (view/settings-destination.tsx, settings-security.tsx, settings-controls.tsx); settings-support.test.ts reads it with the renderer reader and swaps the section content for the other states. It is hand-written from the plugin source, not dumped from a rendered tree; the first live run confirms the reader against the real DOM. -->
+<section class="ccc-settings" aria-labelledby="settings-h">
+  <div class="ccc-settings-header">
+    <h2 id="settings-h" tabindex="-1">Settings</h2>
+    <p>Plugin configuration and diagnostics.</p>
+    <p class="ccc-settings-status" role="status"></p>
+  </div>
+  <div class="ccc-settings-layout">
+    <nav class="ccc-settings-nav" aria-label="Settings sections">
+      <ul>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Projects</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Launchers</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Integrations</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Approvals and tasks</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Paths</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Visual</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" aria-current="page" tabindex="0">Security</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Schedules</button></li>
+        <li><button type="button" class="ccc-settings-nav-item" tabindex="-1">Diagnostics</button></li>
+      </ul>
+    </nav>
+    <div class="ccc-settings-content">
+      <h3 tabindex="-1" class="ccc-settings-section-title">Security</h3>
+      <p>What protects the command center, and what it stores. Nothing here changes a credential.</p>
+      <dl class="ccc-detail-fields">
+        <dt>Service connection</dt>
+        <dd>A local socket that only you can read (mode 0600).</dd>
+        <dt>Network listener</dt>
+        <dd>None. The companion service doesn't listen on any network port.</dd>
+        <dt>Connection tokens</dt>
+        <dd>Each lasts 1 hour. The plugin asks for a new one when it expires.</dd>
+        <dt>Install secret in keychain</dt>
+        <dd>
+          <p><span class="ccc-badge" data-status="ok"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">✓</span><span class="ccc-badge-label">Present</span></span></p>
+          <p>Stored in the macOS keychain. Only its presence is shown, never its value.</p>
+        </dd>
+        <dt>Research key in keychain</dt>
+        <dd>
+          <p><span class="ccc-badge" data-status="setup-needed"><span class="ccc-visually-hidden">Status: </span><span class="ccc-badge-glyph" aria-hidden="true">⊕</span><span class="ccc-badge-label">Needs setup</span></span></p>
+          <p>Only its presence is shown, never its value.</p>
+          <p><code class="ccc-mono">node scripts/research-key-setup.mjs</code></p>
+          <button type="button" class="ccc-connect-button" data-variant="secondary">Copy key setup command</button>
+        </dd>
+        <dt>Always allow</dt>
+        <dd>No always-allow control exists. Every consequential action asks you each time.</dd>
+      </dl>
+      <div class="ccc-setting-row" role="group" aria-labelledby="row-analysis">
+        <div class="ccc-setting-row-text">
+          <span id="row-analysis">Transcript analysis</span>
+          <p id="desc-analysis">Count tokens from Claude Code's local transcripts.</p>
+        </div>
+        <div class="ccc-setting-row-control">
+          <button type="button" role="switch" class="ccc-switch" aria-checked="false" aria-labelledby="row-analysis" aria-describedby="desc-analysis"><span aria-hidden="true">Off</span></button>
+        </div>
+      </div>
+      <div class="ccc-setting-row" role="group" aria-labelledby="row-delete">
+        <div class="ccc-setting-row-text">
+          <span id="row-delete">Delete cached usage analytics</span>
+          <p id="desc-delete">Removes stored token counts, cost estimates, plan usage history and coverage records.</p>
+          <p data-result="delete-usage">Cached usage analytics deleted.</p>
+        </div>
+        <div class="ccc-setting-row-control">
+          <button type="button" class="ccc-connect-button" data-variant="secondary" aria-describedby="desc-delete">Delete cached usage analytics</button>
+        </div>
+      </div>
+      <div class="ccc-setting-row" role="group" aria-labelledby="row-approvals">
+        <div class="ccc-setting-row-text">
+          <span id="row-approvals">Approval notifications</span>
+          <p id="desc-approvals">Approval notifications are in the approvals and tasks section.</p>
+        </div>
+        <div class="ccc-setting-row-control">
+          <button type="button" class="ccc-connect-button" data-variant="secondary" aria-describedby="desc-approvals">Go to the approvals and tasks section</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
