@@ -2,7 +2,7 @@ import type { ClaudeIntegrationStatus } from "@ccc/domain";
 import type { CodexIntegrationStatus } from "@ccc/domain/codex-integration.js";
 import type { VNode } from "preact";
 import type { ConnectionState } from "../connection-state.js";
-import { codexIntegration } from "../widgets/codex-signals.js";
+import { codexIntegration, codexSnapshotEpoch } from "../widgets/codex-signals.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
 import { HealthLines } from "./codex-launcher-panel.js";
 import {
@@ -11,12 +11,16 @@ import {
   CODEX_COPY_BRIDGE_NAME,
   CODEX_COPY_INSTALL_DESC,
   CODEX_COPY_INSTALL_NAME,
+  CODEX_COPY_UNINSTALL_DESC,
+  CODEX_COPY_UNINSTALL_NAME,
   CODEX_GROUP_HEADING,
   CODEX_HOOKS_NAME,
+  CODEX_HOOKS_UNINSTALL_STEP,
   CODEX_LAUNCHER_DESC,
   CODEX_LAUNCHER_NAME,
   CODEX_NOTIFY_DESC,
   CODEX_NOTIFY_NAME,
+  CODEX_UNINSTALL_COPIED_NOTICE,
   codexBridgeStatusText,
   codexHookStatusText,
 } from "./codex-settings.js";
@@ -80,6 +84,8 @@ export const CLAUDE_GROUP_TITLE = "Claude Code";
 /** The label every install copy button shows; the Codex ones add what they install to the name. */
 const COPY_INSTALL_LABEL = "Copy install command";
 const COPY_CODEX_HOOKS_LABEL = "Copy install command for the Codex hooks";
+const COPY_UNINSTALL_LABEL = "Copy uninstall command";
+const COPY_CODEX_HOOKS_UNINSTALL_LABEL = "Copy uninstall command for the Codex hooks";
 const COPY_CODEX_BRIDGE_LABEL = "Copy install command for the Codex bridge";
 const CODEX_INSTALL_COPIED_NOTICE = "Install step copied. Run it in Terminal.";
 
@@ -209,8 +215,13 @@ export function IntegrationsSection({
   const claude = useIntegrationStatus<ClaudeIntegrationStatus>(claudeIntegration.value, away, () =>
     host.claude.getIntegration(),
   );
-  const codex = useIntegrationStatus<CodexIntegrationStatus>(codexIntegration.value, away, () =>
-    host.codex.getIntegration(),
+  // A reconnect snapshot bumps the epoch even when it carries no Codex status; the hook then reads
+  // the seam again so the rows follow a restarted service without reopening Settings.
+  const codex = useIntegrationStatus<CodexIntegrationStatus>(
+    codexIntegration.value,
+    away,
+    () => host.codex.getIntegration(),
+    codexSnapshotEpoch.value,
   );
   const doctor = launchersSession.codexDoctor.value;
 
@@ -269,6 +280,16 @@ export function IntegrationsSection({
           label={COPY_INSTALL_LABEL}
           ariaLabel={COPY_CODEX_HOOKS_LABEL}
           copiedNotice={CODEX_INSTALL_COPIED_NOTICE}
+          host={host}
+          notify={notify}
+        />
+        <CopyRow
+          name={CODEX_COPY_UNINSTALL_NAME}
+          description={CODEX_COPY_UNINSTALL_DESC}
+          command={CODEX_HOOKS_UNINSTALL_STEP}
+          label={COPY_UNINSTALL_LABEL}
+          ariaLabel={COPY_CODEX_HOOKS_UNINSTALL_LABEL}
+          copiedNotice={CODEX_UNINSTALL_COPIED_NOTICE}
           host={host}
           notify={notify}
         />

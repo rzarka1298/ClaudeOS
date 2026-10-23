@@ -602,3 +602,52 @@ describe("Task 2, Test 5: no credential control, and the pointer to approvals an
     expect(SECTION_VIEWS.security).toBeDefined();
   });
 });
+
+// Plan 08-18 Task 3: the native tab's transcript toggle is gone, so its safety rule is proven here.
+describe("08-18: the Transcript analysis switch is inert until the status is known (moved from the native tab)", () => {
+  it("is aria-disabled while the status is checking and after a failed read, and live once it is known", async () => {
+    serve(responseWith("present", "present"));
+    let settle!: (outcome: "ok" | "fail") => void;
+    const f = fixture();
+    const host: SettingsHost = {
+      ...f.host,
+      claude: {
+        ...f.host.claude,
+        getIntegration: () =>
+          new Promise<ClaudeIntegrationStatus>((resolve, reject) => {
+            settle = (outcome) =>
+              outcome === "ok" ? resolve(CLAUDE_STATUS) : reject(new Error("x"));
+          }),
+      },
+    };
+    const view = renderSecurity({ ...f, host });
+    await flush();
+    const checking = screen.getByRole("switch", { name: "Transcript analysis" });
+    expect(checking.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(checking);
+    await flush();
+    expect(f.setTranscript).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settle("ok");
+      await Promise.resolve();
+    });
+    await flush();
+    const known = screen.getByRole("switch", { name: "Transcript analysis" });
+    expect(known.getAttribute("aria-disabled")).toBeNull();
+
+    // A reopened section whose read fails settles on a disabled switch, not on a guess.
+    view.unmount();
+    claudeIntegration.value = null;
+    renderSecurity({ ...f, host });
+    await flush();
+    await act(async () => {
+      settle("fail");
+      await Promise.resolve();
+    });
+    await flush();
+    expect(
+      screen.getByRole("switch", { name: "Transcript analysis" }).getAttribute("aria-disabled"),
+    ).toBe("true");
+  });
+});

@@ -3939,6 +3939,24 @@ fieldset.ccc-template-rows > legend {
   user-select: text;
 }
 
+/* An `Unknown` path value: muted ink, with the reason on the line below. */
+.ccc-command-center .ccc-setting-unknown {
+  color: var(--ccc-ink-muted);
+}
+
+/* ---- S2 Schedules: the configured sources ------------------------------ */
+
+/* One line per source: the label, then its host in mono. Both wrap. */
+.ccc-command-center .ccc-schedule-sources {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ccc-space-xs);
+  margin: var(--ccc-space-xs) 0 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
 /* ---- S4 diagnostic bundle preview -------------------------------------- */
 
 .ccc-command-center .ccc-bundle-preview {

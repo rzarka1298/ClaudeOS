@@ -426,7 +426,7 @@ describe("hook states that mean no events can arrive never read as zero sessions
       "a missing hook runtime",
       { hookRuntimeMissing: true },
       "hook-runtime-missing",
-      "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+      "The installed hook can't find the Node.js it runs with, so no sessions are reported. The integrations section in Settings shows the command to reinstall it.",
     ],
   ] as const)(
     "%s pauses tracking with a typed reason, with or without stored sessions",

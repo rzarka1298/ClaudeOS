@@ -491,7 +491,7 @@ export const EMPTY_COPY: Readonly<Record<ApprovalFilter, readonly string[]>> = {
   pending: [
     "Nothing needs your decision right now.",
     "When a skill, automation or the dashboard asks to do something consequential, it appears here first.",
-    "To try it, use Obsidian settings → Claude command center → Approvals → Send a test approval.",
+    "To try it, use Send a test approval in the approvals and tasks section of Settings.",
   ],
   decided: ["No decisions yet.", "Requests you approve or deny are listed here."],
   expired: [

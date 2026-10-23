@@ -212,7 +212,9 @@ export function DiagnosticsSection({
     gate.end();
     if (!mountedRef.current) return;
     if (outcome.kind === "ok") notify(checkedLine(outcome.timedOut));
-    else if (outcome.kind === "error") notify(ERROR_HEADING);
+    // An error, or a check the service going away cancelled with no newer fetch to take its place:
+    // either way it did not finish, and the line must not stay on `Checking…` (wave-3 review MINOR-1).
+    else notify(ERROR_HEADING);
   }
 
   return (

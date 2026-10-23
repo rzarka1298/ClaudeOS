@@ -33,6 +33,8 @@ const VIEW_FILES = [
   "diagnostics-copy.ts",
   // Plan 08-15: the Security section reads the same health answer and fetches it once on open.
   "settings-security.tsx",
+  // Plan 08-18: the Paths section reads the same health answer and fetches it once on open.
+  "settings-paths.tsx",
   // Plan 08-16: the bundle block; its `Run checks again` is the third owner action.
   "diagnostics-bundle.tsx",
 ] as const;
@@ -77,7 +79,7 @@ const NETWORK = new RegExp(
 );
 
 const ALLOWED_IMPORT =
-  /^(@ccc\/domain\/(diagnostics|diagnostic-bundle|auth)\.js|@ccc\/domain|preact|preact\/hooks|@preact\/signals|\.\/[\w-]+\.js|\.\.\/connection-state\.js|\.\.\/diagnostics\.js|\.\.\/motion\.js|\.\.\/host-registry\.js|\.\.\/health\/(api|state|bundle-input|export-port)\.js|\.\.\/projects\/projects-state\.js|\.\.\/widgets\/(footer|relative-time|session-signals)\.js)$/;
+  /^(@ccc\/domain\/(diagnostics|diagnostic-bundle|display-path|auth)\.js|@ccc\/domain|preact|preact\/hooks|@preact\/signals|\.\/[\w-]+\.js|\.\.\/connection-state\.js|\.\.\/diagnostics\.js|\.\.\/motion\.js|\.\.\/host-registry\.js|\.\.\/health\/(api|state|bundle-input|export-port)\.js|\.\.\/projects\/projects-state\.js|\.\.\/widgets\/(footer|relative-time|session-signals)\.js)$/;
 
 function importSpecifiers(source: string): string[] {
   return [...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+["']([^"']+)["']/gms)].map(
@@ -161,6 +163,8 @@ describe("no health fetch runs on a timer (D-05)", () => {
       "view/diagnostics-bundle.tsx:gesture",
       "view/diagnostics-section.tsx:gesture",
       "view/diagnostics-section.tsx:gesture",
+      // Opening Paths is an owner action: the one fetch, from its mount effect (plan 08-18).
+      "view/settings-paths.tsx:gesture",
       // Opening Security is an owner action: the one fetch, from its mount effect.
       "view/settings-security.tsx:gesture",
     ]);
@@ -171,6 +175,7 @@ describe("no health fetch runs on a timer (D-05)", () => {
       const count = (source.match(/["']gesture["']/g) ?? []).length;
       if (name === "view/diagnostics-section.tsx") expect(count).toBe(2);
       else if (name === "view/settings-security.tsx") expect(count).toBe(1);
+      else if (name === "view/settings-paths.tsx") expect(count).toBe(1);
       else if (name === "view/diagnostics-bundle.tsx") expect(count).toBe(1);
       else if (name === "health/api.ts") expect(count).toBe(2);
       else expect(count, `${name} names the gesture trigger`).toBe(0);

@@ -661,7 +661,7 @@ describe("Test 7 (section states)", () => {
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "To try it, use Obsidian settings → Claude command center → Approvals → Send a test approval.",
+        "To try it, use Send a test approval in the approvals and tasks section of Settings.",
       ),
     ).toBeTruthy();
     fireEvent.click(chip(/^Decided/));

@@ -107,15 +107,14 @@ export const SWITCHER_CLAUDE_CODE_PREFILL = "Start Claude Code in ";
 
 /** The `connect:claude-hooks` Notice (UI-SPEC setup state): the install is a command the owner runs. */
 const CLAUDE_HOOKS_NOTICE =
-  "Claude Code hooks are installed by a command you run yourself. Copy it from Obsidian settings → Claude command center → Claude.";
+  "Claude Code hooks are installed by a command you run yourself. Copy it from the integrations section.";
 
 /**
- * The `connect:codex-settings` Notice: no public Obsidian API opens a plugin's
- * settings tab, so the honest answer is the path to it. "Claude command
- * center" is the product name, the only place the word appears (UI-SPEC S2).
+ * The `connect:codex-settings` Notice. The Codex rows live in the command center's own Settings
+ * destination (the native Obsidian tab keeps only reduced motion and a pointer, plan 08-18), so
+ * the dispatcher opens the integrations section and the Notice names it.
  */
-const CODEX_SETTINGS_NOTICE =
-  "Open Codex settings from Obsidian settings → Claude command center → Codex.";
+const CODEX_SETTINGS_NOTICE = "Open Codex settings from the integrations section.";
 
 /**
  * The `connect:github` / `connect:google` Notice: the truth, not a promise that a connector can be
@@ -168,6 +167,8 @@ export function dispatchQuickAction(
   }
 
   if (descriptor.capability === "connect:claude-hooks") {
+    // The request comes first so the destination finds it on mount (as for the accounts below).
+    requestSettingsSection("integrations");
     ctx.navigate(SETTINGS);
     ctx.notify(CLAUDE_HOOKS_NOTICE);
     return { kind: "navigated", destination: SETTINGS };
@@ -181,6 +182,7 @@ export function dispatchQuickAction(
   }
 
   if (descriptor.capability === "connect:codex-settings") {
+    requestSettingsSection("integrations");
     ctx.navigate(SETTINGS);
     ctx.notify(CODEX_SETTINGS_NOTICE);
     return { kind: "navigated", destination: SETTINGS };

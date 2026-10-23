@@ -2,20 +2,31 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CodexIntegrationStatus } from "@ccc/domain/codex-integration.js";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
+import * as codexSettings from "./codex-settings.js";
 import {
-  buildCodexGroup,
-  CodexSettingsState,
+  CODEX_BRIDGE_INSTALL_STEP,
+  CODEX_COPY_BRIDGE_DESC,
+  CODEX_COPY_INSTALL_DESC,
+  CODEX_COPY_UNINSTALL_DESC,
+  CODEX_COPY_UNINSTALL_NAME,
+  CODEX_HOOKS_INSTALL_STEP,
+  CODEX_HOOKS_UNINSTALL_STEP,
+  CODEX_INSTALL_COPIED_NOTICE,
+  CODEX_LAUNCHER_DESC,
+  CODEX_NOTIFY_DESC,
+  CODEX_UNINSTALL_COPIED_NOTICE,
   type CodexStatusInput,
   codexBridgeStatusText,
   codexHookStatusText,
 } from "./codex-settings.js";
 
 /**
- * Plan 05.1-19 task 3: the "Codex" settings group (UI-SPEC S4-a, D-12, D-19,
- * D-30). Every string below is asserted LITERALLY from the locked copy, so a
- * drifted constant cannot hide behind a test that imports it.
+ * The Codex status texts and locked copy (05.1 UI-SPEC S4-a, D-12, D-19, D-30), now read by the
+ * Integrations section (plan 08-18 removed the native tab's Codex group). Every string below is
+ * asserted LITERALLY from the locked copy, so a drifted constant cannot hide behind a test that
+ * imports it.
  */
 
 const NOW = Date.parse("2026-10-10T12:00:00.000Z");
@@ -151,177 +162,68 @@ describe("status rows carry no path (R-15, PRIV-04)", () => {
   });
 });
 
-/** A row as a test reads it: the group's tuple holds differently shaped items, one per row kind. */
-interface Row {
-  readonly name: string;
-  readonly desc?: string;
-  readonly action?: (el: HTMLElement, index: number) => void;
-  readonly control?: unknown;
-}
-
-function groupFor(
-  status: CodexStatusInput,
-  overrides: { copy?: (text: string, notice: string) => void; open?: () => void } = {},
-): { readonly type: "group"; readonly heading: string; readonly items: readonly Row[] } {
-  return buildCodexGroup({
-    status,
-    nowMs: NOW,
-    copy: overrides.copy ?? vi.fn(),
-    openLauncherSettings: overrides.open ?? vi.fn(),
-  });
-}
-
-describe("buildCodexGroup (UI-SPEC S4-a: seven rows, locked order and copy)", () => {
-  it("is a group headed Codex with exactly seven rows in the locked order", () => {
-    const group = groupFor("checking");
-    expect(group).toMatchObject({ type: "group", heading: "Codex" });
-    expect(group.items.map((item) => item.name)).toEqual([
-      "Codex hooks",
-      "Copy install step",
-      "Copy uninstall step",
-      "Antigravity terminal bridge",
-      "Copy bridge install step",
-      "Launcher",
-      "Codex notify setting",
-    ]);
-  });
-
-  it("the status rows carry the status text; the three copy rows carry the locked descriptions", () => {
-    const status = integration({
-      hooks: { state: "installed", lastEventAt: FIVE_MIN_AGO },
-      bridge: { state: "not-installed" },
-    });
-    const items = groupFor(status).items;
-    expect(items[0]?.desc).toBe("Installed. Last event 5 minutes ago.");
-    expect(items[3]?.desc).toBe("Not installed. Launches fall back to Terminal.");
-    expect(items[1]?.desc).toBe(
+describe("the locked copy and fixed steps the Integrations section reads (moved from the removed group)", () => {
+  it("pins the copy-row descriptions literally", () => {
+    expect(CODEX_COPY_INSTALL_DESC).toBe(
       "From the Claude command center repository folder, run: ./scripts/codex-hooks/install.sh — add --dry-run to preview the change first. It adds to Codex's hooks file only and never touches its config file or notify setting. Then type /hooks in Codex and trust the new hook.",
     );
-    expect(items[2]?.desc).toBe(
+    expect(CODEX_COPY_UNINSTALL_DESC).toBe(
       "Removes the Codex hooks this app added and leaves everything else as it was: ./scripts/codex-hooks/uninstall.sh",
     );
-    expect(items[4]?.desc).toBe(
+    expect(CODEX_COPY_BRIDGE_DESC).toBe(
       "From the Claude command center repository folder, run: node scripts/codex/install-user-kit.mjs — it installs the Antigravity terminal bridge for your user account only. Restart Antigravity afterwards.",
     );
   });
 
-  it("the copy rows hand EXACTLY the fixed repository-relative strings and the locked Notices to copy()", () => {
-    const copy = vi.fn();
-    const items = groupFor("checking", { copy }).items;
-    items[1]?.action?.({} as never, 1);
-    items[2]?.action?.({} as never, 2);
-    items[4]?.action?.({} as never, 4);
-    expect(copy.mock.calls).toEqual([
-      ["./scripts/codex-hooks/install.sh", "Install step copied. Run it in Terminal."],
-      ["./scripts/codex-hooks/uninstall.sh", "Uninstall step copied. Run it in Terminal."],
-      ["node scripts/codex/install-user-kit.mjs", "Install step copied. Run it in Terminal."],
-    ]);
-    for (const [text] of copy.mock.calls as Array<[string]>) {
-      expect(text).not.toMatch(/^\/|\/Users|~/);
-    }
-  });
-
-  it("the Launcher row has the locked description and an action that opens launcher settings", () => {
-    const open = vi.fn();
-    const launcher = groupFor("checking", { open }).items[5];
-    expect(launcher?.desc).toBe(
+  it("pins the Launcher and notify descriptions literally", () => {
+    expect(CODEX_LAUNCHER_DESC).toBe(
       "Antigravity terminal is the default. It falls back to Terminal when the bridge isn't installed. A Terminal setup you already saved stays as it is until you save a new one.",
     );
-    launcher?.action?.({} as never, 5);
-    expect(open).toHaveBeenCalledTimes(1);
+    expect(CODEX_NOTIFY_DESC).toBe(
+      "Left untouched. This app never takes over Codex's notify setting.",
+    );
   });
 
-  it("the notify row states it is untouched and has no control or action", () => {
-    const notify = groupFor("checking").items[6];
-    expect(notify?.desc).toBe("Left untouched. This app never takes over Codex's notify setting.");
-    expect(notify?.action).toBeUndefined();
-    expect(notify?.control).toBeUndefined();
+  it("the three fixed steps are repository-relative and the notices are the locked ones", () => {
+    expect([
+      CODEX_HOOKS_INSTALL_STEP,
+      CODEX_HOOKS_UNINSTALL_STEP,
+      CODEX_BRIDGE_INSTALL_STEP,
+    ]).toEqual([
+      "./scripts/codex-hooks/install.sh",
+      "./scripts/codex-hooks/uninstall.sh",
+      "node scripts/codex/install-user-kit.mjs",
+    ]);
+    for (const step of [
+      CODEX_HOOKS_INSTALL_STEP,
+      CODEX_HOOKS_UNINSTALL_STEP,
+      CODEX_BRIDGE_INSTALL_STEP,
+    ]) {
+      expect(step).not.toMatch(/^\/|\/Users|~/);
+    }
+    expect(CODEX_COPY_UNINSTALL_NAME).toBe("Copy uninstall step");
+    expect(CODEX_INSTALL_COPIED_NOTICE).toBe("Install step copied. Run it in Terminal.");
+    expect(CODEX_UNINSTALL_COPIED_NOTICE).toBe("Uninstall step copied. Run it in Terminal.");
   });
 
-  it("no row description renders an absolute or home path, and the word command appears only in the product name", () => {
-    for (const status of ["checking", "unavailable"] as const) {
-      for (const item of groupFor(status).items) {
-        const desc = item.desc ?? "";
-        expect(desc).not.toMatch(/\/Users|\/home|~\//);
-        expect(desc.replaceAll("Claude command center", "")).not.toMatch(/command/i);
-      }
+  it("no description renders an absolute or home path, and the word command appears only in the product name", () => {
+    for (const desc of [
+      CODEX_COPY_INSTALL_DESC,
+      CODEX_COPY_UNINSTALL_DESC,
+      CODEX_COPY_BRIDGE_DESC,
+      CODEX_LAUNCHER_DESC,
+      CODEX_NOTIFY_DESC,
+    ]) {
+      expect(desc).not.toMatch(/\/Users|\/home|~\//);
+      expect(desc.replaceAll("Claude command center", "")).not.toMatch(/command/i);
     }
   });
-});
 
-describe("CodexSettingsState (fetch when the tab opens, never forever 'checking')", () => {
-  const flush = async () => {
-    for (let i = 0; i < 6; i++) await Promise.resolve();
-  };
-
-  it("starts at checking and settles on the service's answer, calling onChange", async () => {
-    const answer = integration({ hooks: { state: "installed", lastEventAt: FIVE_MIN_AGO } });
-    const onChange = vi.fn();
-    const state = new CodexSettingsState(() => Promise.resolve(answer), onChange);
-    expect(state.status).toBe("checking");
-
-    state.load();
-    await flush();
-
-    expect(state.status).toBe(answer);
-    expect(onChange).toHaveBeenCalledTimes(1);
-  });
-
-  it("a rejected fetch settles on unavailable", async () => {
-    const onChange = vi.fn();
-    const state = new CodexSettingsState(() => Promise.reject(new Error("down")), onChange);
-    state.load();
-    await flush();
-    expect(state.status).toBe("unavailable");
-    expect(onChange).toHaveBeenCalledTimes(1);
-  });
-
-  it("a fetch started before an adopted update cannot overwrite it when it resolves later", async () => {
-    const resolvers: Array<(status: CodexIntegrationStatus) => void> = [];
-    const state = new CodexSettingsState(
-      () =>
-        new Promise<CodexIntegrationStatus>((resolve) => {
-          resolvers.push(resolve);
-        }),
-      vi.fn(),
-    );
-    const older = integration({});
-    const newer = integration({ hooks: { state: "installed", lastEventAt: FIVE_MIN_AGO } });
-
-    state.load();
-    state.adopt(newer);
-    resolvers[0]?.(older);
-    await flush();
-
-    expect(state.status).toBe(newer);
-  });
-
-  it("starts no second fetch while one is in flight, and keeps the last status during a refetch", async () => {
-    const resolvers: Array<(status: CodexIntegrationStatus) => void> = [];
-    const getIntegration = vi.fn(
-      () =>
-        new Promise<CodexIntegrationStatus>((resolve) => {
-          resolvers.push(resolve);
-        }),
-    );
-    const state = new CodexSettingsState(getIntegration, vi.fn());
-
-    state.load();
-    state.load();
-    expect(getIntegration).toHaveBeenCalledTimes(1);
-
-    const first = integration({ hooks: { state: "installed", lastEventAt: FIVE_MIN_AGO } });
-    resolvers[0]?.(first);
-    await flush();
-    state.load(); // the tab is shown again
-    expect(getIntegration).toHaveBeenCalledTimes(2);
-    expect(state.status).toBe(first); // still the last answer, not "checking"
-  });
-
-  it("without a service seam it stays at checking and never throws", () => {
-    const state = new CodexSettingsState(undefined, vi.fn());
-    expect(() => state.load()).not.toThrow();
-    expect(state.status).toBe("checking");
+  it("the native-tab group builder, its input type and its state class are gone", () => {
+    const exported = Object.keys(codexSettings);
+    expect(exported).not.toContain("buildCodexGroup");
+    expect(exported).not.toContain("CodexSettingsState");
+    expect(exported).not.toContain("CODEX_OPEN_LAUNCHER_LABEL");
   });
 });
 
@@ -330,10 +232,12 @@ describe("the plugin host wires exactly one codex seam member (T-05.1-09, T-05.1
   const main = readFileSync(join(here, "..", "main.ts"), "utf8");
   const settings = readFileSync(join(here, "codex-settings.ts"), "utf8");
 
-  it("main.ts binds getCodexIntegration, the clipboard and the launchers hand-off in one codex member", () => {
+  it("main.ts binds getCodexIntegration and the clipboard in one codex member, with no launcher hand-off", () => {
     expect(main.match(/^\s+codex: \{/gm)).toHaveLength(1);
     expect(main).toMatch(/getIntegration: \(\) => getCodexIntegration\(this\.client\)/);
-    expect(main).toMatch(/openLauncherSettings: \(\) => \{/);
+    // The Launchers section is reached by `requestSettingsSection("launchers")`, not by the host.
+    expect(main).not.toMatch(/openLauncherSettings/);
+    expect(settings).not.toMatch(/openLauncherSettings/);
   });
 
   it("the settings module installs nothing: no process, file-system or network call and no design token", () => {

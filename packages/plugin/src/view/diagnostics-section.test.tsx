@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ConnectionState, connectionState } from "../connection-state.js";
 import { configureHealth } from "../health/api.js";
-import { resetHealthState } from "../health/state.js";
+import { clearHealth, onHealthLive, resetHealthState } from "../health/state.js";
 import {
   allOkHealth,
   allOkHealthFor,
@@ -742,6 +742,75 @@ describe("Task 3, Test 2: Run checks again", () => {
     expect(button.getAttribute("aria-busy")).toBeNull();
     expect(button.getAttribute("aria-disabled")).toBeNull();
     expect(document.activeElement).toBe(button);
+  });
+
+  it("a check the service going away cancels posts the error line instead of staying on Checking… (wave-3 review MINOR-1)", async () => {
+    const first = deferredResponse();
+    const second = deferredResponse();
+    const answers = [first, second];
+    configure(() => (answers.shift() as typeof first).promise);
+    const { notify } = renderSection();
+    first.resolve(fixtureResponse());
+    await settle();
+
+    fireEvent.click(runButton());
+    expect(notify).toHaveBeenLastCalledWith("Checking…");
+    // The service goes away mid-check: the held answer and the fetch in flight are dropped.
+    await act(async () => {
+      clearHealth();
+    });
+    second.resolve(fixtureResponse());
+    await settle();
+
+    expect(notify).toHaveBeenLastCalledWith("Couldn't run the checks.");
+    expect(runButton().getAttribute("aria-busy")).toBeNull();
+  });
+
+  it("says nothing more if the section was closed before the cancelled check ended", async () => {
+    const first = deferredResponse();
+    const second = deferredResponse();
+    const answers = [first, second];
+    configure(() => (answers.shift() as typeof first).promise);
+    const view = renderSection();
+    first.resolve(fixtureResponse());
+    await settle();
+    fireEvent.click(runButton());
+    const callsWhileOpen = (view.notify as ReturnType<typeof vi.fn>).mock.calls.length;
+    await act(async () => {
+      clearHealth();
+    });
+    view.unmount();
+    second.resolve(fixtureResponse());
+    await settle();
+    expect((view.notify as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(callsWhileOpen);
+  });
+
+  it("a reconnect while the press is in flight does not discard it: one gesture fetch, one result line (wave-3 review MINOR-2)", async () => {
+    const first = deferredResponse();
+    const second = deferredResponse();
+    const answers = [first, second];
+    const get = configure(() => (answers.shift() as typeof first).promise);
+    const { notify } = renderSection();
+    first.resolve(fixtureResponse());
+    await settle();
+    expect(get).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(runButton());
+    expect(get).toHaveBeenCalledTimes(2);
+    // The service restarts and the reconnect hook fires while the owner's check is still out.
+    await act(async () => {
+      onHealthLive();
+    });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenLastCalledWith("gesture");
+
+    second.resolve(allOkHealth());
+    await settle();
+    expect(notify).toHaveBeenLastCalledWith("Checked just now.");
+    // The owner's key check stands: the Scheduler row is not left on the reconnect's "not checked".
+    expect(
+      rowNamed("Scheduler").querySelector('[data-reason="research-key-not-checked"]'),
+    ).toBeNull();
   });
 
   it("ends with the timeout sentence, pluralised, when probes timed out, and counts them as unknown", async () => {

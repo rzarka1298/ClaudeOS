@@ -290,28 +290,64 @@ async function fetchAndPublish(
 }
 
 /**
- * Fetches the health route and publishes the answer, newest fetch wins (the `statusSeq`
- * sequence-token pattern): an answer from an older fetch, or from one overtaken by
- * {@link clearHealth}, is dropped. A caller whose fetch was overtaken by a newer one is told what
- * the newest fetch found, so it never waits on an answer that was thrown away.
- *
- * `trigger` is the caller's: `gesture` only ever comes from an owner action.
+ * Waits for `first` and, while its answer was thrown away because a newer fetch overtook it,
+ * for the newest fetch instead, so a caller is never left on an answer nobody published.
  */
-export async function refreshHealth(
-  trigger: HealthTrigger,
-  options: RefreshOptions,
-): Promise<HealthRefreshOutcome> {
-  sequence += 1;
-  const token = sequence;
-  if (healthResponse.peek() === null) healthPhase.value = "loading";
-  let attempt = fetchAndPublish(token, trigger, options);
-  newest = attempt;
+async function settle(first: Promise<HealthRefreshOutcome>): Promise<HealthRefreshOutcome> {
+  let attempt = first;
   let outcome = await attempt;
   while (outcome.kind === "superseded" && newest !== null && newest !== attempt) {
     attempt = newest;
     outcome = await attempt;
   }
   return outcome;
+}
+
+/**
+ * The owner-gesture fetch still in flight, with the sequence token it ran under and what its
+ * callers are waiting on. A reconnect joins it rather than overtaking it (see {@link refreshHealth}).
+ */
+let gestureFlight: {
+  readonly token: number;
+  readonly result: Promise<HealthRefreshOutcome>;
+} | null = null;
+
+/**
+ * Fetches the health route and publishes the answer, newest fetch wins (the `statusSeq`
+ * sequence-token pattern): an answer from an older fetch, or from one overtaken by
+ * {@link clearHealth}, is dropped. A caller whose fetch was overtaken by a newer one is told what
+ * the newest fetch found, so it never waits on an answer that was thrown away.
+ *
+ * `trigger` is the caller's: `gesture` only ever comes from an owner action. A `reconnect` never
+ * overtakes a gesture fetch that is still in flight: it joins that fetch (no second request, the
+ * gesture's trigger and its Keychain check kept) so the owner's fresh answer is not discarded in
+ * favour of a reconnect answer that skips the key lookup. A gesture fetch that
+ * {@link clearHealth} already overtook is not joined: its answer will be dropped, so the
+ * reconnect fetches for itself. A gesture still overtakes a reconnect.
+ */
+export function refreshHealth(
+  trigger: HealthTrigger,
+  options: RefreshOptions,
+): Promise<HealthRefreshOutcome> {
+  if (trigger === "reconnect" && gestureFlight !== null && gestureFlight.token === sequence) {
+    return gestureFlight.result;
+  }
+  sequence += 1;
+  const token = sequence;
+  if (healthResponse.peek() === null) healthPhase.value = "loading";
+  const attempt = fetchAndPublish(token, trigger, options);
+  newest = attempt;
+  const result = settle(attempt);
+  // The only other trigger is the owner's gesture, and this module never names it (the scan keeps
+  // the word out of every file but the section and the API normaliser).
+  if (trigger !== "reconnect") {
+    const flight = { token, result };
+    gestureFlight = flight;
+    void result.then(() => {
+      if (gestureFlight === flight) gestureFlight = null;
+    });
+  }
+  return result;
 }
 
 /** Drops the held answer and any fetch in flight (the service went away, or the plugin unloads). */
@@ -372,5 +408,6 @@ export function watchConnection(): () => void {
 export function resetHealthState(): void {
   clearHealth();
   newest = null;
+  gestureFlight = null;
   views.clear();
 }

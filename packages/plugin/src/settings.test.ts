@@ -91,6 +91,49 @@ describe("assertNoPrivatePathValues (D-43)", () => {
   });
 });
 
+describe("mergeSettings drops unknown keys at load (FIX2B, D-16)", () => {
+  it("returns exactly the four known keys, even when the data file carries more", () => {
+    const merged = mergeSettings({
+      reducedMotion: "reduced",
+      homeDir: "/Users/username",
+      hostName: "example",
+      nested: { projects: [] },
+    });
+    expect(Object.keys(merged).sort()).toEqual([
+      "lastOpenedDestination",
+      "notifyApprovals",
+      "reducedMotion",
+      "socketPathOverride",
+    ]);
+    expect(merged.reducedMotion).toBe("reduced");
+    expect(JSON.stringify(merged)).not.toContain("username");
+  });
+
+  it("keeps a stored value for each known key", () => {
+    expect(
+      mergeSettings({
+        socketPathOverride: "/run/x.sock",
+        lastOpenedDestination: "projects",
+        reducedMotion: "reduced",
+        notifyApprovals: false,
+      }),
+    ).toEqual({
+      socketPathOverride: "/run/x.sock",
+      lastOpenedDestination: "projects",
+      reducedMotion: "reduced",
+      notifyApprovals: false,
+    });
+  });
+
+  it("is not fooled by a __proto__ key in the stored data", () => {
+    const merged = mergeSettings(
+      JSON.parse('{"__proto__":{"polluted":true},"reducedMotion":"auto"}'),
+    );
+    expect(Object.keys(merged)).not.toContain("polluted");
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
 describe("the notifyApprovals setting (plan 06-09, D-26, PLUG-07)", () => {
   it("defaults on in a fresh settings object and for a data file written before the key existed", () => {
     expect(DEFAULT_SETTINGS.notifyApprovals).toBe(true);
