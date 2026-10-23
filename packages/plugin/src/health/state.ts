@@ -3,6 +3,7 @@ import {
   type DiagnosticsErrorCode,
   type DiagnosticsHealthResponse,
   type DisplayedRow,
+  HEALTH_STALE_AFTER_MS,
   type HealthTrigger,
   type OverlayOnlyReason,
   type ServiceReason,
@@ -33,8 +34,11 @@ import { HealthApiError, healthApi } from "./api.js";
  * Memory only: the answer is held for the life of the plugin and never persisted.
  */
 
-/** After this long a row's answer is shown as `Stale` (a plugin constant, UI-SPEC R-F5). */
-export const HEALTH_STALE_AFTER_MS = 5 * 60 * 1000;
+/**
+ * After this long a row's answer is shown as `Stale` (UI-SPEC R-F5). One constant shared with the
+ * service's Keychain-answer window and the bundle's freshness ageing (FIX6A), re-exported here.
+ */
+export { HEALTH_STALE_AFTER_MS };
 
 export type HealthPhase = "idle" | "loading" | "ready" | "error";
 
