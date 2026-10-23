@@ -11,12 +11,14 @@ import {
   deleteUsageAnalytics,
   getClaudeIntegration,
   getCodexIntegration,
+  getDiagnosticsHealth,
   refreshProjects,
   setTranscriptAnalysis,
 } from "@ccc/service-api-client";
 import { apiVersion, type Events, Notice, Plugin, TFolder, type WorkspaceLeaf } from "obsidian";
 import { wireApprovals } from "./approvals/wiring.js";
 import { connectionState } from "./connection-state.js";
+import { wireHealth } from "./health/wiring.js";
 import { createHostRegistry, createObsidianHost, type HostRegistry } from "./host-registry.js";
 import { attachOsMotionPreference } from "./motion.js";
 import { registerSetUpLaunchersCommand } from "./projects/commands.js";
@@ -283,10 +285,17 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       },
       copyText: (text) => navigator.clipboard.writeText(text),
     });
+    // Diagnostics health (plan 08-13): the diagnostics client call is injected here (the plugin's
+    // own code never imports the client package by value), and the reconnect hook refetches with
+    // the `reconnect` trigger only while the Diagnostics section is mounted (Amendment A1).
+    const health = wireHealth(this.hostRegistry, {
+      getHealth: (trigger) => getDiagnosticsHealth(this.client, trigger),
+    });
     this.onServiceLive = combineOnLive(
       refreshProjectsOnConnect(() => refreshProjects(this.client)),
       approvals.onLive,
       tasks.onLive,
+      health.onLive,
     );
 
     // Subscribe to the service event stream at load (after layout-ready), not
