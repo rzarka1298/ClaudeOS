@@ -392,10 +392,20 @@ function rowMeta(
   if (kind === "overdue") {
     return due === null ? "Overdue" : `Overdue since ${dayLabel(due, nowMs, zone)}`;
   }
-  if (due !== null) return `Due ${dueLabel(due, nowMs, zone)}`;
+  // The due-today route also returns rows scheduled today whose deadline is
+  // later: only a deadline that falls today reads `Due 5:00 PM`; otherwise the
+  // row shows today's scheduled time, or the deadline's own date.
+  if (due !== null && isToday(due, nowMs, zone)) return `Due ${dueLabel(due, nowMs, zone)}`;
   const scheduled = scheduledMoment(row);
   if (scheduled !== null) return `Scheduled ${dueLabel(scheduled, nowMs, zone)}`;
+  if (due !== null) return `Due ${dayLabel(due, nowMs, zone)}`;
   return NO_DATE;
+}
+
+/** Whether a moment falls on today's calendar date in `zone`. */
+function isToday(moment: Moment, nowMs: number, zone: string): boolean {
+  const today = localDate(nowMs, zone);
+  return moment.kind === "date" ? moment.date === today : localDate(moment.ms, zone) === today;
 }
 
 /** The label of the next open task: `Next due Oct 22`, or `Most recent open task` when it has no due value. */
@@ -544,9 +554,13 @@ export function todayStateFor(
     const overdue = ranked(response.overdue, zone).map((row) =>
       todayTask({ row, meta: rowMeta(row, "overdue", nowMs, zone) }),
     );
-    const due = ranked(response.due, zone).map((row) =>
-      todayTask({ row, meta: rowMeta(row, "due", nowMs, zone) }),
-    );
+    // A task overdue and also scheduled today comes back in both arrays; show it
+    // once, as overdue, so it neither repeats nor spends two rows of the budget.
+    const overdueIds = new Set(response.overdue.map((row) => row.taskId));
+    const due = ranked(
+      response.due.filter((row) => !overdueIds.has(row.taskId)),
+      zone,
+    ).map((row) => todayTask({ row, meta: rowMeta(row, "due", nowMs, zone) }));
     const rows = [...overdue, ...due];
     const next = response.nextOpen;
     taskBlock = {

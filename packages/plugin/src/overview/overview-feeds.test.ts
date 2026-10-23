@@ -247,6 +247,48 @@ describe("todayStateFor: tasks only (Task 1)", () => {
     expect(state.data.tasks?.rows[0]?.meta).toBe("Scheduled 3:30 PM");
   });
 
+  it("shows today's scheduled time, not a later deadline, for a task scheduled today and due later (Codex wave 3)", () => {
+    const later = row({
+      taskId: "0mfk1a2b30000000000000007",
+      title: "Draft the report",
+      scheduledAt: "2026-10-22T14:00:00Z",
+      dueAt: "2026-10-23T22:00:00Z",
+    });
+    const state = todayStateFor(both(feed({ due: [later], overdue: [] })), LIVE, NOW, ZONE);
+    if (state.kind !== "ready") throw new Error("not ready");
+    expect(state.data.tasks?.rows[0]?.meta).toBe("Scheduled 9:00 AM");
+  });
+
+  it("names the deadline's date when a row has only a deadline that is not today", () => {
+    const tomorrow = row({
+      taskId: "0mfk1a2b30000000000000008",
+      title: "Send the draft",
+      dueDate: "2026-10-23",
+    });
+    const state = todayStateFor(both(feed({ due: [tomorrow], overdue: [] })), LIVE, NOW, ZONE);
+    if (state.kind !== "ready") throw new Error("not ready");
+    expect(state.data.tasks?.rows[0]?.meta).toBe("Due Oct 23");
+  });
+
+  it("shows a task that is both overdue and scheduled today once, as overdue (Codex wave 3)", () => {
+    const both_ = row({
+      taskId: "0mfk1a2b30000000000000009",
+      title: "Fix the build",
+      dueDate: "2026-10-20",
+      scheduledDate: "2026-10-22",
+    });
+    const state = todayStateFor(
+      both(feed({ due: [both_, REVIEW], overdue: [both_] })),
+      LIVE,
+      NOW,
+      ZONE,
+    );
+    if (state.kind !== "ready") throw new Error("not ready");
+    const rows = state.data.tasks?.rows ?? [];
+    expect(rows.map((task) => task.title)).toEqual(["Fix the build", "Review release notes"]);
+    expect(rows[0]?.meta).toBe("Overdue since Oct 20");
+  });
+
   it("goes stale when the answer is older than the live window, and never live while disconnected", () => {
     const old = feed({ due: [REVIEW], overdue: [] }, { fetchedAt: NOW - LIVE_WINDOW_MS - 1 });
     const stale = todayStateFor(both(old), LIVE, NOW, ZONE);
