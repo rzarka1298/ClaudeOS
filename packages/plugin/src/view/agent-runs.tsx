@@ -249,7 +249,7 @@ function NoSelectionPrompt(): VNode {
  * view/widget boundary. */
 const SETUP_HEADING = "Claude Code hooks aren't installed";
 const SETUP_BODY =
-  "Install the optional hook package to see your Claude Code sessions here. Obsidian settings → Claude command center → Claude shows the command to run.";
+  "Install the optional hook package to see your Claude Code sessions here. The integrations section in Settings shows the command to run.";
 const SETUP_BUTTON = "Set up Claude hooks";
 
 const TELEMETRY_PAUSED_HEADING = "Session tracking paused";
@@ -286,7 +286,7 @@ const UNAVAILABLE_BANNER: Readonly<
   "hook-runtime-missing": {
     heading: TELEMETRY_PAUSED_HEADING,
     body: () =>
-      "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+      "The installed hook can't find the Node.js it runs with, so no sessions are reported. The integrations section in Settings shows the command to reinstall it.",
   },
   "hooks-status-unknown": {
     heading: "Session tracking status unknown",

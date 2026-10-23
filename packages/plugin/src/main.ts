@@ -48,8 +48,6 @@ import { listVaultWorkspaces } from "./tasks/workspaces.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
 import { openDeleteUsageModal as openDeleteUsageModalDialog } from "./view/delete-usage-modal.js";
 import { createLaunchConflictChooser } from "./view/launch-conflict-choice.js";
-import { requestLaunchersFocus } from "./view/launchers-focus.js";
-import { requestDestination } from "./view/navigation-request.js";
 import { configureNotify } from "./view/notify-port.js";
 import { createPluginSwitcher } from "./view/plugin-switcher.js";
 import {
@@ -314,8 +312,9 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     // Vault setup (VAULT-01) and the Settings destination's `Set up vault` share one UI seam.
     const vaultSetupUi = createObsidianVaultSetupUi(this.app);
 
-    // The ONE Settings seam, shared by the native tab and the command-center destination
-    // (plan 08-11, D-15). Its display inputs are read once and live in memory only: nothing here
+    // The ONE Settings seam, shared by the native tab (reduced motion and the pointer row, which
+    // read only `settings`, `saveSettings`, `mql` and `revealView`) and the command-center
+    // destination, which uses all of it (plan 08-11, D-15; plan 08-18, D-18). Its display inputs are read once and live in memory only: nothing here
     // is ever written to `data.json` (`assertNoPrivatePathValues` stays in force, D-16).
     const settingsHost: SettingsHost = {
       settings: this.settings,
@@ -330,18 +329,12 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         deleteUsageAnalytics: () => deleteUsageAnalytics(this.client),
         copyText: (text: string) => navigator.clipboard.writeText(text),
       },
-      // The Codex group (plan 05.1-19, D-30): status read, the copy-only install
-      // steps and the Launchers hand-off. Nothing here installs or writes anything.
+      // The Codex rows (plan 05.1-19, D-30): status read and the copy-only install
+      // and uninstall steps. Nothing here installs or writes anything; the Launchers
+      // hand-off is a deep link, not a host member.
       codex: {
         getIntegration: () => getCodexIntegration(this.client),
         copyText: (text: string) => navigator.clipboard.writeText(text),
-        // Same hand-off as the Set up launchers command: focus request first,
-        // then the Settings destination, then the view.
-        openLauncherSettings: () => {
-          requestLaunchersFocus();
-          requestDestination("settings");
-          void this.revealView();
-        },
       },
       // The Approvals group: Send a test approval and its availability.
       approvals: {
@@ -360,6 +353,10 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
       copyText: (text: string) => navigator.clipboard.writeText(text),
       // The existing vault-setup flow, confirm modal and all; the destination only invokes it.
       runVaultSetup: () => runVaultSetup(vaultSetupUi, this.client),
+      // The native tab's `Open settings` row reveals the view after it has asked for Settings.
+      revealView: () => {
+        void this.revealView();
+      },
       display: {
         homeDir: homedir(),
         socketPath,

@@ -511,7 +511,7 @@ describe("Codex 6: unavailable hook reasons are said out loud in Agent runs (D-1
       "hook-runtime-missing",
       { hookRuntimeMissing: true },
       "Session tracking paused",
-      "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+      "The installed hook can't find the Node.js it runs with, so no sessions are reported. The integrations section in Settings shows the command to reinstall it.",
     ],
     [
       "hooks-status-unknown",

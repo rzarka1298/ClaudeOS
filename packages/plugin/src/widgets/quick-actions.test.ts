@@ -132,7 +132,7 @@ describe("connect:github and connect:google land on the integrations section (pl
     takeSettingsSectionRequest();
   });
 
-  it("every other connect:* capability behaves as before and requests no section", () => {
+  it("an unlisted connect:* capability behaves as before and requests no section", () => {
     takeSettingsSectionRequest();
     const ctx = context();
     const result = dispatchQuickAction(CONNECT_OTHER, ctx);
@@ -141,11 +141,15 @@ describe("connect:github and connect:google land on the integrations section (pl
       "Connect Linear from Settings → Claude command center once its connector is available.",
     );
     expect(settingsSectionRequested.peek()).toBeNull();
+  });
 
+  it("the hooks setup action names Claude Code hooks and opens the integrations section", () => {
+    takeSettingsSectionRequest();
     const hooks = context();
     dispatchQuickAction({ id: "h", label: "Hooks", capability: "connect:claude-hooks" }, hooks);
     expect(String(hooks.notify.mock.calls[0]?.[0])).toContain("Claude Code hooks");
-    expect(settingsSectionRequested.peek()).toBeNull();
+    expect(settingsSectionRequested.peek()).toBe("integrations");
+    takeSettingsSectionRequest();
   });
 
   it("makes no connect call: the dispatcher still imports no client, network or process module", () => {
@@ -351,7 +355,8 @@ describe("session:* and usage:* descriptors reach the one runner (D-36, 05-17)",
     expect(ctx.notify).toHaveBeenCalledWith("Focus terminal isn't available yet.");
   });
 
-  it("connect:claude-hooks navigates to settings and posts the exact UI-SPEC Notice", () => {
+  it("connect:claude-hooks requests the integrations section, navigates to settings and posts the Notice that names it", () => {
+    takeSettingsSectionRequest();
     const ctx = context();
     const result = dispatchQuickAction(
       {
@@ -365,8 +370,11 @@ describe("session:* and usage:* descriptors reach the one runner (D-36, 05-17)",
     expect(ctx.navigate).toHaveBeenCalledWith("settings");
     expect(ctx.notify).toHaveBeenCalledTimes(1);
     expect(ctx.notify).toHaveBeenCalledWith(
-      "Claude Code hooks are installed by a command you run yourself. Copy it from Obsidian settings → Claude command center → Claude.",
+      "Claude Code hooks are installed by a command you run yourself. Copy it from the integrations section.",
     );
+    // The native tab no longer holds the Claude group: the Notice must not send the owner there.
+    expect(String(ctx.notify.mock.calls[0]?.[0])).not.toContain("Obsidian settings");
+    expect(takeSettingsSectionRequest()).toBe("integrations");
   });
 
   it("other connect:* capabilities keep their old copy", () => {
@@ -757,7 +765,8 @@ describe("the pair launch and the Codex branches (plan 05.1-17)", () => {
     launchersFocusRequested.value = false;
   });
 
-  it("connect:codex-settings navigates to settings and names the product-name path", () => {
+  it("connect:codex-settings requests the integrations section, navigates to settings and names it", () => {
+    takeSettingsSectionRequest();
     const ctx = context();
     const result = dispatchQuickAction(
       {
@@ -770,9 +779,9 @@ describe("the pair launch and the Codex branches (plan 05.1-17)", () => {
     expect(result).toEqual({ kind: "navigated", destination: "settings" });
     expect(ctx.navigate).toHaveBeenCalledTimes(1);
     expect(ctx.notify).toHaveBeenCalledTimes(1);
-    expect(String(ctx.notify.mock.calls[0]?.[0])).toContain(
-      "Obsidian settings → Claude command center → Codex",
-    );
+    expect(ctx.notify).toHaveBeenCalledWith("Open Codex settings from the integrations section.");
+    expect(String(ctx.notify.mock.calls[0]?.[0])).not.toContain("Obsidian settings");
+    expect(takeSettingsSectionRequest()).toBe("integrations");
   });
 
   it("the existing connect branches are unchanged", () => {

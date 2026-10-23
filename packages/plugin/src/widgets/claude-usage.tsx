@@ -111,7 +111,7 @@ const CAPACITY_UNAVAILABLE_BODY: Readonly<
   Record<PlanCapacityUnavailableReason, (version: string | null) => string>
 > = {
   "wrapper-not-installed": () =>
-    "Install the optional status-line wrapper to see plan usage. Obsidian settings → Claude command center → Claude has the command.",
+    "Install the optional status-line wrapper to see plan usage. The integrations section in Settings has the command.",
   "no-report-yet": () => "Claude Code reports plan usage after the first response in a session.",
   "sign-in-no-limits": () => "Your Claude Code sign-in doesn't report plan limits.",
   "shape-changed": (version) => `The status line format changed in ${claudeCodeVersion(version)}.`,

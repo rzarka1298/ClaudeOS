@@ -6,11 +6,18 @@ import type { CodexIntegrationStatus } from "@ccc/domain/codex-integration.js";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ConnectionState } from "../connection-state.js";
+import { adoptCodexSnapshot } from "../widgets/codex-events.js";
 import { codexIntegration } from "../widgets/codex-signals.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
 import { createLaunchersSession } from "./launchers-settings.js";
 import { createInertSettingsHost, type SettingsHost } from "./settings-host.js";
 import { IntegrationsSection } from "./settings-integrations.js";
+import {
+  CLAUDE_COPY_INSTALL_NAME,
+  CLAUDE_COPY_UNINSTALL_NAME,
+  CLAUDE_HOOKS_NAME,
+  CLAUDE_STATUSLINE_NAME,
+} from "./settings-model.js";
 import { resetPendingActions } from "./settings-pending.js";
 import { takeSettingsSectionRequest } from "./settings-sections.js";
 
@@ -92,9 +99,6 @@ function fixture(
       copyText: () => {
         writes.push("codex.copyText");
         return Promise.resolve();
-      },
-      openLauncherSettings: () => {
-        writes.push("openLauncherSettings");
       },
     },
     runVaultSetup: () => {
@@ -280,6 +284,7 @@ describe("Task 1, Test 2: the live signal wins, the seam is the fallback, the se
       "Copy install command",
       "Copy uninstall command",
       "Copy install command for the Codex hooks",
+      "Copy uninstall command for the Codex hooks",
       "Copy install command for the Codex bridge",
     ]) {
       const button = screen.getByRole("button", { name });
@@ -456,5 +461,233 @@ describe("registration", () => {
     );
     // The native attribute only: `aria-disabled=` is the honest way to say a control can't act.
     expect(source).not.toMatch(/(?<![-\w])disabled=/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Plan 08-18 Task 3: the native tab's Claude and Codex groups are gone, so everything they did is
+// proven here. Each test below replaces one removed `settings-tab.test.ts` case (see the SUMMARY).
+
+/** The names of the rows (`role="group"`) inside one `data-group` block, in document order. */
+function rowNames(container: Element, groupId: string): (string | null)[] {
+  const block = container.querySelector(`[data-group="${groupId}"]`);
+  if (block === null) throw new Error(`no ${groupId} group`);
+  return [...block.querySelectorAll('[role="group"]')].map((row) => {
+    const labelledBy = row.getAttribute("aria-labelledby");
+    return labelledBy === null ? null : (document.getElementById(labelledBy)?.textContent ?? null);
+  });
+}
+
+describe("08-18: the rows moved from the native tab, in their locked order", () => {
+  it("the Claude group has the four status and copy rows in the native tab's order", () => {
+    const { container } = renderSection(fixture());
+    expect(rowNames(container, "claude")).toEqual([
+      CLAUDE_HOOKS_NAME,
+      CLAUDE_COPY_INSTALL_NAME,
+      CLAUDE_COPY_UNINSTALL_NAME,
+      CLAUDE_STATUSLINE_NAME,
+    ]);
+  });
+
+  it("the Codex group has every native row, including Copy uninstall step, in the native order", () => {
+    const { container } = renderSection(fixture());
+    expect(rowNames(container, "codex")).toEqual([
+      "Codex hooks",
+      "Copy install step",
+      "Copy uninstall step",
+      "Antigravity terminal bridge",
+      "Copy bridge install step",
+      "Codex health",
+      "Codex notify setting",
+      "Launcher",
+    ]);
+  });
+
+  it("Copy uninstall step copies the fixed Codex uninstall step and posts the locked notice", async () => {
+    const f = fixture();
+    renderSection(f);
+    const row = group("Copy uninstall step");
+    expect(within(row).getByText("./scripts/codex-hooks/uninstall.sh")).toBeTruthy();
+    expect(
+      within(row).getByText(
+        "Removes the Codex hooks this app added and leaves everything else as it was: ./scripts/codex-hooks/uninstall.sh",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Copy uninstall command for the Codex hooks" }),
+    );
+    await flush();
+    expect(f.copyText).toHaveBeenLastCalledWith("./scripts/codex-hooks/uninstall.sh");
+    expect(f.notify).toHaveBeenLastCalledWith("Uninstall step copied. Run it in Terminal.");
+    expect(f.writes).toEqual([]);
+  });
+
+  it("a refused clipboard write on the Codex uninstall step says so and does not claim a copy", async () => {
+    const f = fixture({ copy: () => Promise.reject(new Error("clipboard denied")) });
+    renderSection(f);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy uninstall command for the Codex hooks" }),
+    );
+    await flush();
+    expect(f.notify).toHaveBeenCalledTimes(1);
+    expect(f.notify).toHaveBeenLastCalledWith(
+      "Couldn't copy the command. It's shown in the setting's description; copy it from there.",
+    );
+  });
+
+  it("the Claude install row names --dry-run and --with-statusline, and no row shows a home path", () => {
+    const { container } = renderSection(fixture());
+    const install = group(CLAUDE_COPY_INSTALL_NAME);
+    expect(install.textContent).toContain("--dry-run");
+    expect(install.textContent).toContain("--with-statusline");
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("/Users/");
+    expect(text).not.toContain("~/.claude");
+  });
+});
+
+describe("08-18: status freshness moved from the native tab", () => {
+  it("opening the section again reads the status again; re-rendering with a new clock reads nothing", async () => {
+    const f = fixture({
+      claude: () => Promise.resolve(CLAUDE_NOT_INSTALLED),
+      codex: () => Promise.resolve(CODEX_STATUS),
+    });
+    const first = renderSection(f);
+    await flush();
+    expect(f.getClaude).toHaveBeenCalledTimes(1);
+
+    // The shared clock ticks: the section re-renders and starts no further read (no refresh loop).
+    first.rerender(
+      <IntegrationsSection
+        host={f.host}
+        connection={{ kind: "live" }}
+        now={NOW + 60_000}
+        notify={f.notify}
+        launchersSession={f.session}
+      />,
+    );
+    await flush();
+    expect(f.getClaude).toHaveBeenCalledTimes(1);
+    expect(f.getCodex).toHaveBeenCalledTimes(1);
+
+    // Leaving the section and coming back (the nav unmounts it) reads the newest answer.
+    first.unmount();
+    renderSection(f);
+    await flush();
+    expect(f.getClaude).toHaveBeenCalledTimes(2);
+    expect(f.getCodex).toHaveBeenCalledTimes(2);
+  });
+
+  it("F4: a reconnect snapshot with no Codex status refreshes the hooks row without reopening Settings", async () => {
+    const INSTALLED_NO_EVENTS: CodexIntegrationStatus = {
+      ...CODEX_STATUS,
+      hooks: { state: "installed", lastEventAt: null, installedSince: "2026-10-11T00:00:00.000Z" },
+    };
+    let current = CODEX_STATUS;
+    codexIntegration.value = CODEX_STATUS;
+    claudeIntegration.value = CLAUDE_NOT_INSTALLED;
+    const f = fixture({ codex: () => Promise.resolve(current) });
+    renderSection(f);
+    await flush();
+    expect(within(group("Codex hooks")).getByText(/^Not installed\./)).toBeTruthy();
+    expect(f.getCodex).not.toHaveBeenCalled();
+
+    // The service restarted; the snapshot carries no integration part, so the section re-reads.
+    current = INSTALLED_NO_EVENTS;
+    await act(async () => {
+      adoptCodexSnapshot({ state: { codex: {} } } as never);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(f.getCodex).toHaveBeenCalledTimes(1);
+    expect(
+      within(group("Codex hooks")).getByText(/^Installed, but no events have arrived/),
+    ).toBeTruthy();
+  });
+
+  it("F4: a snapshot that carries the Codex status is adopted directly, with no second read", async () => {
+    codexIntegration.value = CODEX_STATUS;
+    claudeIntegration.value = CLAUDE_NOT_INSTALLED;
+    // Any read would hang, so only the pushed status can change the row.
+    const f = fixture();
+    renderSection(f);
+    await flush();
+
+    await act(async () => {
+      adoptCodexSnapshot({
+        state: {
+          codex: {
+            integration: {
+              ...CODEX_STATUS,
+              hooks: { state: "installed", lastEventAt: null, installedSince: null },
+            },
+          },
+        },
+      } as never);
+      await Promise.resolve();
+    });
+    await flush();
+    expect(
+      within(group("Codex hooks")).getByText(/^Installed, but no events have arrived/),
+    ).toBeTruthy();
+    expect(f.getCodex).not.toHaveBeenCalled();
+  });
+
+  it("F4: a status pushed while a refresh is in flight stands; the slower, older answer cannot overwrite it", async () => {
+    codexIntegration.value = CODEX_STATUS;
+    claudeIntegration.value = CLAUDE_NOT_INSTALLED;
+    let answerLate!: (status: CodexIntegrationStatus) => void;
+    const f = fixture({
+      codex: () =>
+        new Promise<CodexIntegrationStatus>((resolve) => {
+          answerLate = resolve;
+        }),
+    });
+    renderSection(f);
+    await flush();
+
+    await act(async () => {
+      adoptCodexSnapshot({ state: { codex: {} } } as never);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(f.getCodex).toHaveBeenCalledTimes(1);
+
+    // The service pushes a newer status while that read is still out.
+    await act(async () => {
+      codexIntegration.value = {
+        ...CODEX_STATUS,
+        hooks: { state: "installed", lastEventAt: null, installedSince: null },
+      };
+      await Promise.resolve();
+    });
+    await act(async () => {
+      answerLate(CODEX_STATUS);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(
+      within(group("Codex hooks")).getByText(/^Installed, but no events have arrived/),
+    ).toBeTruthy();
+  });
+
+  it("F4: a refresh that fails settles on the moved unavailable string, never on Checking", async () => {
+    codexIntegration.value = CODEX_STATUS;
+    claudeIntegration.value = CLAUDE_NOT_INSTALLED;
+    const f = fixture({ codex: () => Promise.reject(new Error("down")) });
+    renderSection(f);
+    await act(async () => {
+      adoptCodexSnapshot({ state: { codex: {} } } as never);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(
+      within(group("Codex hooks")).getByText(
+        "Status unavailable — the companion service didn't respond.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("Checking…")).toBeNull();
   });
 });

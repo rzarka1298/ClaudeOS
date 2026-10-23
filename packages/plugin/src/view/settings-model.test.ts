@@ -368,39 +368,25 @@ describe("applyNotifyApprovalsChange and applyTranscriptAnalysisChange (Test 2)"
   });
 });
 
-describe("the native tab still exports every moved name (Test 4)", () => {
-  const tabTestSource = readFileSync(join(HERE, "settings-tab.test.ts"), "utf8");
-  const imported = [
-    ...(/import\s*\{([^}]*)\}\s*from\s*"\.\/settings-tab\.js"/s.exec(tabTestSource)?.[1] ?? "")
-      .split(",")
-      .map((name) => name.trim().replace(/^type\s+/, ""))
-      .filter((name) => name !== ""),
-  ];
+describe("the native tab no longer re-exports the model (plan 08-18)", () => {
+  // The tab kept `export * from "./settings-model.js"` while its old groups lived there, so the
+  // existing importers kept working. Its groups are gone, so the destination and the tab import
+  // the model directly and the tab exports only its own names.
+  const tabSource = readFileSync(join(HERE, "settings-tab.ts"), "utf8");
 
-  it("finds the names the existing tab tests import", () => {
-    expect(imported.length).toBeGreaterThan(40);
+  it("has no star re-export of the model", () => {
+    expect(tabSource).not.toMatch(/export\s*\*\s*from\s*"\.\/settings-model\.js"/);
   });
 
-  it("exports each of them from settings-tab.ts", () => {
-    const exported = new Set(Object.keys(tab));
-    const typeOnly = new Set(["SettingsClaudeSeam", "SettingsTabHost"]);
-    for (const name of imported) {
-      if (typeOnly.has(name)) continue;
-      expect(exported.has(name), name).toBe(true);
-    }
-  });
-
-  it("equals the model's value for every moved text constant", () => {
-    const moved = Object.entries(model).filter(([, value]) => typeof value === "string");
-    expect(moved.length).toBeGreaterThan(30);
-    for (const [name, value] of moved) {
-      expect((tab as Record<string, unknown>)[name], name).toBe(value);
-    }
-    expect(tab.REDUCED_MOTION_OPTIONS).toBe(model.REDUCED_MOTION_OPTIONS);
-    expect(tab.asMotionPreference).toBe(model.asMotionPreference);
-    expect(tab.hookStatusText).toBe(model.hookStatusText);
-    expect(tab.statusLineStatusText).toBe(model.statusLineStatusText);
-    expect(tab.rebuildSuccessNotice).toBe(model.rebuildSuccessNotice);
+  it("exports only the tab, the reduced-motion decision and the pointer-row constants", () => {
+    expect(Object.keys(tab).sort()).toEqual([
+      "CommandCenterSettingTab",
+      "POINTER_ACTION_LABEL",
+      "POINTER_ALIASES",
+      "POINTER_DESC",
+      "POINTER_NAME",
+      "applyReducedMotionChange",
+    ]);
   });
 });
 

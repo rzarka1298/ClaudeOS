@@ -101,7 +101,7 @@ const PERMISSION_COPY: Partial<
   },
   "claude-hooks": {
     heading: "Claude Code hooks aren't installed",
-    body: "Install the optional hook package to see your Claude Code sessions here. Obsidian settings → Claude command center → Claude shows the command to run.",
+    body: "Install the optional hook package to see your Claude Code sessions here. The integrations section in Settings shows the command to run.",
     button: "Set up Claude hooks",
     descriptorLabel: "Connect Claude Code hooks",
   },
@@ -147,7 +147,7 @@ const UNAVAILABLE_COPY: Record<
   "hook-runtime-missing": {
     heading: "Session tracking paused",
     body: () =>
-      "The installed hook can't find the Node.js it runs with, so no sessions are reported. Obsidian settings → Claude command center → Claude shows the command to reinstall it.",
+      "The installed hook can't find the Node.js it runs with, so no sessions are reported. The integrations section in Settings shows the command to reinstall it.",
   },
   "codex-data-changed": {
     heading: "Codex tracking paused",

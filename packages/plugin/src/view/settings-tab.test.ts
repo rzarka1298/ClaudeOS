@@ -1,88 +1,60 @@
-import type { ClaudeIntegrationStatus, CodexIntegrationStatus } from "@ccc/domain";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Notice } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { motionMode } from "../motion.js";
-import { adoptCodexSnapshot } from "../widgets/codex-events.js";
-import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
-import type { SettingsCodexSeam } from "./codex-settings.js";
+import { navigationRequest } from "./navigation-request.js";
 import {
-  APPROVALS_GROUP_HEADING,
-  applyNotifyApprovalsChange,
-  applyReducedMotionChange,
-  applyTranscriptAnalysisChange,
   asMotionPreference,
-  CLAUDE_COPY_FAILED_NOTICE,
-  CLAUDE_COPY_INSTALL_NAME,
-  CLAUDE_COPY_UNINSTALL_NAME,
   CLAUDE_DELETE_USAGE_NAME,
-  CLAUDE_DELETE_USAGE_RETAINED_NOTE,
-  CLAUDE_GROUP_HEADING,
   CLAUDE_HOOKS_NAME,
-  CLAUDE_HOOKS_NOT_INSTALLED_TEXT,
-  CLAUDE_INSTALL_COMMAND,
-  CLAUDE_INSTALL_COPIED_NOTICE,
-  CLAUDE_STATUS_UNAVAILABLE_TEXT,
-  CLAUDE_STATUSLINE_NAME,
-  CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE,
   CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
-  CLAUDE_UNINSTALL_COMMAND,
-  CLAUDE_UNINSTALL_COPIED_NOTICE,
-  CLAUDE_USAGE_DELETE_FAILED_NOTICE,
-  CLAUDE_USAGE_DELETED_NOTICE,
-  CommandCenterSettingTab,
-  hookStatusText,
-  NOTIFY_APPROVALS_DESC,
-  NOTIFY_APPROVALS_KEY,
   NOTIFY_APPROVALS_NAME,
-  NOTIFY_APPROVALS_SAVE_FAILED,
-  REBUILD_DESC,
-  REBUILD_FAILED_NOTICE,
   REBUILD_NAME,
-  REBUILD_NEEDS_SERVICE,
-  REBUILD_STARTED_NOTICE,
   REDUCED_MOTION_KEY,
   REDUCED_MOTION_OPTIONS,
   REDUCED_MOTION_SAVE_FAILED,
-  rebuildSuccessNotice,
-  SEND_TEST_APPROVAL_DESC,
   SEND_TEST_APPROVAL_NAME,
-  SEND_TEST_APPROVAL_NEEDS_SERVICE,
-  type SettingsClaudeSeam,
+} from "./settings-model.js";
+import { settingsSectionRequested, takeSettingsSectionRequest } from "./settings-sections.js";
+import {
+  applyReducedMotionChange,
+  CommandCenterSettingTab,
+  POINTER_ACTION_LABEL,
+  POINTER_ALIASES,
+  POINTER_DESC,
+  POINTER_NAME,
   type SettingsTabHost,
-  statusLineStatusText,
-  TASKS_GROUP_HEADING,
-  TRANSCRIPT_ANALYSIS_KEY,
 } from "./settings-tab.js";
 
-/** Flushes enough microtask ticks for a chain of a few awaited promises to settle. */
-async function flush(times = 6): Promise<void> {
-  for (let i = 0; i < times; i++) await Promise.resolve();
-}
-
 /**
- * The tab's DECISION, not its rendering. Obsidian's own builder draws the
- * control and the live-Obsidian UAT covers that; what a unit test can prove is
- * the ordering guarantee the E8 error row depends on — the root attribute is
- * only rewritten once the value is actually on disk.
+ * The native Obsidian settings tab after plan 08-18 (D-18, OD-1, 08-UI-SPEC S5): exactly two items,
+ * the Reduced motion dropdown and the `Command center settings` pointer row. Everything else the
+ * tab used to hold lives in the command center's Settings destination, where its tests now are
+ * (settings-integrations, settings-security, settings-approvals-tasks, settings-model and
+ * codex-settings); the SUMMARY maps each removed case to its new home.
+ *
+ * The tab's DECISION, not its rendering: Obsidian's own builder draws the controls and the
+ * live-Obsidian UAT covers that.
  */
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 interface Recorded extends SettingsTabHost {
   readonly notices: string[];
+  readonly calls: string[];
   saveCalls: number;
 }
 
-function createHost(
-  options: {
-    failSave?: boolean;
-    claude?: SettingsClaudeSeam;
-    openDeleteUsageModal?: (horizonDate: string | null, analysisOn: boolean) => Promise<boolean>;
-  } = {},
-): Recorded {
+function createHost(options: { failSave?: boolean } = {}): Recorded {
   const notices: string[] = [];
+  const calls: string[] = [];
   const host: Recorded = {
     settings: { reducedMotion: "auto" },
     mql: { matches: false },
     notices,
+    calls,
     saveCalls: 0,
     saveSettings: async () => {
       host.saveCalls++;
@@ -91,33 +63,26 @@ function createHost(
     notify: (message: string) => {
       notices.push(message);
     },
-    claude: options.claude,
-    openDeleteUsageModal: options.openDeleteUsageModal,
+    revealView: () => {
+      // What the tab had asked for by the time it revealed the view.
+      calls.push(
+        `reveal(section=${settingsSectionRequested.value ?? "none"},destination=${navigationRequest.value?.destination ?? "none"})`,
+      );
+    },
   };
   return host;
 }
 
-const BASE_CLAUDE_STATUS: ClaudeIntegrationStatus = {
-  hooks: "not-installed",
-  hookRuntimeMissing: false,
-  disableAllHooks: null,
-  lastEventAt: null,
-  telemetry: { kind: "ok" },
-  detectedClaudeVersion: null,
-  statusLine: "not-installed",
-  statusLineReported: false,
-  transcriptAnalysis: { enabled: false },
-  spoolDropCount: 0,
-  unknownEventCount: 0,
-  cleanupPeriodDays: 30,
-};
-
 beforeEach(() => {
   motionMode.value = "full";
+  takeSettingsSectionRequest();
+  navigationRequest.value = null;
 });
 
 afterEach(() => {
   motionMode.value = "full";
+  takeSettingsSectionRequest();
+  navigationRequest.value = null;
 });
 
 describe("applyReducedMotionChange", () => {
@@ -163,13 +128,13 @@ describe("applyReducedMotionChange", () => {
       settings: host.settings,
       mql: host.mql,
       saveSettings: () => host.saveSettings(),
+      revealView: () => {},
     };
 
     await expect(applyReducedMotionChange(bare, "reduced")).resolves.toBe("reverted");
-    // Under Vitest `obsidian` resolves to the shared stub, whose Notice
-    // records its message -- so the copy is assertable without a DOM. Typed
-    // through the stub's own shape because the real `Notice` exposes only a
-    // `messageEl`, which no test runner can render.
+    // Under Vitest `obsidian` resolves to the shared stub, whose Notice records its message, so the
+    // copy is assertable without a DOM. Typed through the stub's own shape because the real
+    // `Notice` exposes only a `messageEl`, which no test runner can render.
     const recorded = new Notice(REDUCED_MOTION_SAVE_FAILED) as unknown as { message: string };
     expect(recorded.message).toBe(REDUCED_MOTION_SAVE_FAILED);
   });
@@ -189,18 +154,40 @@ describe("asMotionPreference", () => {
   });
 });
 
-describe("CommandCenterSettingTab", () => {
-  it("declares the reduced-motion dropdown with exactly the two documented labels", () => {
-    const host = createHost();
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
+describe("Task 3, Test 1: the tab holds exactly two items", () => {
+  it("declares the Reduced motion dropdown first, with the two documented labels and the default auto", () => {
+    const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
     const [definition] = tab.getSettingDefinitions();
 
+    expect(definition?.name).toBe("Reduced motion");
     expect(definition?.control.key).toBe(REDUCED_MOTION_KEY);
+    expect(definition?.control.key).toBe("reducedMotion");
     expect(definition?.control.type).toBe("dropdown");
+    expect(definition?.control.defaultValue).toBe("auto");
     expect(definition?.control.options).toEqual({ auto: "System", reduced: "Always reduced" });
     expect(REDUCED_MOTION_OPTIONS.auto).toBe("System");
     expect(REDUCED_MOTION_OPTIONS.reduced).toBe("Always reduced");
+  });
+
+  it("returns exactly two items: no group, no third row", () => {
+    const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
+    const definitions = tab.getSettingDefinitions();
+    expect(definitions).toHaveLength(2);
+    expect(definitions.some((item) => "items" in item)).toBe(false);
+  });
+
+  it("the second item is the Command center settings pointer with the UI-SPEC description", () => {
+    const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
+    const pointer = tab.getSettingDefinitions()[1];
+    expect(pointer?.name).toBe("Command center settings");
+    expect(POINTER_NAME).toBe("Command center settings");
+    expect(pointer?.desc).toBe(
+      "Projects, launchers, integrations, approvals, security and diagnostics are in the Settings tab of the command center.",
+    );
+    expect(POINTER_DESC).toBe(pointer?.desc);
+    expect(POINTER_ACTION_LABEL).toBe("Open settings");
+    expect(typeof pointer?.action).toBe("function");
+    expect((pointer as { control?: unknown } | undefined)?.control).toBeUndefined();
   });
 
   it("reads the control value straight off the live settings object", () => {
@@ -223,899 +210,131 @@ describe("CommandCenterSettingTab", () => {
     expect(motionMode.value).toBe("reduced");
   });
 
-  it("declares the Claude group with six rows in the fixed UI-SPEC order (Test 3)", () => {
-    const host = createHost();
+  it("a failed save puts the dropdown back on the persisted value", async () => {
+    const host = createHost({ failSave: true });
     const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const update = vi.spyOn(tab, "update");
 
-    const definitions = tab.getSettingDefinitions();
-    const group = definitions[1];
+    await tab.setControlValue(REDUCED_MOTION_KEY, "reduced");
 
-    expect(group).toMatchObject({ type: "group", heading: CLAUDE_GROUP_HEADING });
-    // A group's `items` field only exists on SettingDefinitionGroup -- narrow first.
-    if (!group || !("items" in group) || !group.items) throw new Error("expected a group");
-    const names = group.items.map((item) => item.name);
-    expect(names).toEqual([
-      CLAUDE_HOOKS_NAME,
-      CLAUDE_COPY_INSTALL_NAME,
-      CLAUDE_COPY_UNINSTALL_NAME,
-      CLAUDE_STATUSLINE_NAME,
-      CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
-      CLAUDE_DELETE_USAGE_NAME,
-    ]);
-  });
-
-  it("reads Checking… before the service answers, then the resolved status after update() (Test 4)", async () => {
-    let resolveIntegration!: (status: ClaudeIntegrationStatus) => void;
-    const host = createHost({
-      claude: {
-        getIntegration: () =>
-          new Promise<ClaudeIntegrationStatus>((resolve) => {
-            resolveIntegration = resolve;
-          }),
-        setTranscriptAnalysis: vi.fn(),
-        deleteUsageAnalytics: vi.fn(),
-        copyText: vi.fn(),
-      },
-    });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    const firstGroup = tab.getSettingDefinitions()[1];
-    if (!firstGroup || !("items" in firstGroup) || !firstGroup.items) {
-      throw new Error("expected a group");
-    }
-    expect(firstGroup.items[0]?.desc).toBe("Checking…");
-
-    resolveIntegration({ ...BASE_CLAUDE_STATUS, hooks: "installed", lastEventAt: null });
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const secondGroup = tab.getSettingDefinitions()[1];
-    if (!secondGroup || !("items" in secondGroup) || !secondGroup.items) {
-      throw new Error("expected a group");
-    }
-    // A resolved installed status with no lastEventAt renders through the
-    // same silent-since bucket as a stale one -- never a blank row.
-    expect(secondGroup.items[0]?.desc).toContain("Installed");
-  });
-
-  it("reverts the transcript toggle and notifies on a failed write, without touching plugin settings (Test 5)", async () => {
-    const setTranscriptAnalysis = vi.fn().mockRejectedValue(new Error("service down"));
-    const host = createHost({
-      claude: {
-        getIntegration: vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS),
-        setTranscriptAnalysis,
-        deleteUsageAnalytics: vi.fn(),
-        copyText: vi.fn(),
-      },
-    });
-
-    const outcome = await applyTranscriptAnalysisChange(host, true);
-
-    expect(outcome).toBe("reverted");
-    expect(setTranscriptAnalysis).toHaveBeenCalledWith(true);
-    expect(host.notices).toEqual([CLAUDE_TRANSCRIPT_ANALYSIS_FAILED_NOTICE]);
-    expect(host.saveCalls).toBe(0);
-    expect(host.settings).not.toHaveProperty("transcriptAnalysis");
-  });
-
-  it("saves the transcript toggle through the service alone (Test 5)", async () => {
-    const setTranscriptAnalysis = vi.fn().mockResolvedValue({ enabled: true });
-    const host = createHost({
-      claude: {
-        getIntegration: vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS),
-        setTranscriptAnalysis,
-        deleteUsageAnalytics: vi.fn(),
-        copyText: vi.fn(),
-      },
-    });
-
-    const outcome = await applyTranscriptAnalysisChange(host, true);
-
-    expect(outcome).toBe("saved");
-    expect(setTranscriptAnalysis).toHaveBeenCalledWith(true);
-    expect(host.notices).toEqual([]);
-    expect(host.saveCalls).toBe(0);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(tab.getControlValue(REDUCED_MOTION_KEY)).toBe("auto");
+    expect(host.notices).toEqual([REDUCED_MOTION_SAVE_FAILED]);
   });
 });
 
-describe("hookStatusText (Test 4)", () => {
-  const NOW = Date.parse("2026-09-28T12:00:00Z");
-
-  it("reads Checking… before the service answers", () => {
-    expect(hookStatusText("checking", NOW)).toBe("Checking…");
-  });
-
-  it("reads the last-event relative time within the silent threshold", () => {
-    const lastEventAt = new Date(NOW - 2 * 60 * 1000).toISOString();
-    const status = { hooks: "installed" as const, lastEventAt, telemetry: { kind: "ok" as const } };
-
-    expect(hookStatusText(status, NOW)).toBe(
-      `Installed. Last event ${formatRelativeTime(lastEventAt, NOW)}.`,
-    );
-  });
-
-  it("reads the no-events-since string once the silent threshold has passed", () => {
-    const lastEventAt = new Date(NOW - 11 * 60 * 1000).toISOString();
-    const status = { hooks: "installed" as const, lastEventAt, telemetry: { kind: "ok" as const } };
-
-    expect(hookStatusText(status, NOW)).toBe(
-      `Installed, but no events have arrived since ${formatAbsoluteTime(lastEventAt)}. ` +
-        "Claude Code skips hooks in folders you haven't trusted and when hooks are turned off in its settings.",
-    );
-  });
-
-  it("reads the not-installed string", () => {
-    const status = {
-      hooks: "not-installed" as const,
-      lastEventAt: null,
-      telemetry: { kind: "ok" as const },
-    };
-    expect(hookStatusText(status, NOW)).toBe(CLAUDE_HOOKS_NOT_INSTALLED_TEXT);
-  });
-
-  it("reads the unsupported-version string ahead of the install state", () => {
-    const status = {
-      hooks: "installed" as const,
-      lastEventAt: null,
-      telemetry: { kind: "unsupported-version" as const, version: "2.1.100" },
-    };
-    expect(hookStatusText(status, NOW)).toBe(
-      "Claude Code 2.1.100 is older than the minimum supported 2.1.214.",
-    );
-  });
-
-  it("reads the shape-changed string ahead of the install state", () => {
-    const status = {
-      hooks: "installed" as const,
-      lastEventAt: null,
-      telemetry: { kind: "shape-changed" as const, version: "2.1.290" },
-    };
-    expect(hookStatusText(status, NOW)).toBe(
-      "Claude Code 2.1.290 changed its hook event format. Session tracking is paused rather than guessed.",
-    );
-  });
-
-  it("reads the unavailable string for a client failure", () => {
-    expect(hookStatusText("unavailable", NOW)).toBe(CLAUDE_STATUS_UNAVAILABLE_TEXT);
-  });
-});
-
-describe("statusLineStatusText (Test 4)", () => {
-  it("reads installed-and-available", () => {
-    expect(statusLineStatusText({ statusLine: "installed", statusLineReported: true }, 0)).toBe(
-      "Installed. Plan usage is available.",
-    );
-  });
-
-  it("reads installed-and-waiting", () => {
-    expect(statusLineStatusText({ statusLine: "installed", statusLineReported: false }, 0)).toBe(
-      "Installed. Waiting for the first response in a Claude Code session.",
-    );
-  });
-
-  it("reads not-installed", () => {
-    expect(
-      statusLineStatusText({ statusLine: "not-installed", statusLineReported: false }, 0),
-    ).toBe(
-      'Not installed. Plan usage reads "Account capacity unavailable". The wrapper keeps your current status line exactly as it is.',
-    );
-  });
-
-  it("reads unavailable for a client failure", () => {
-    expect(statusLineStatusText("unavailable", 0)).toBe(CLAUDE_STATUS_UNAVAILABLE_TEXT);
-  });
-});
-
-/** Task 3: the delete-usage confirmation modal and the copy-command rows. */
-describe("CommandCenterSettingTab -- Claude rows 2, 3 and 6 (Task 3)", () => {
-  function fullClaudeSeam(overrides: Partial<SettingsClaudeSeam> = {}): SettingsClaudeSeam {
-    return {
-      getIntegration: vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS),
-      setTranscriptAnalysis: vi.fn().mockResolvedValue({ enabled: false }),
-      deleteUsageAnalytics: vi.fn().mockResolvedValue(undefined),
-      copyText: vi.fn().mockResolvedValue(undefined),
-      ...overrides,
-    };
-  }
-
-  it("row 6's action opens the modal and deletes on confirm (Test 3)", async () => {
-    const deleteUsageAnalytics = vi.fn().mockResolvedValue(undefined);
-    const openDeleteUsageModal = vi.fn().mockResolvedValue(true);
-    const host = createHost({
-      claude: fullClaudeSeam({ deleteUsageAnalytics }),
-      openDeleteUsageModal,
-    });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-    tab.getSettingDefinitions();
-    await flush();
-
-    const group = tab.getSettingDefinitions()[1];
-    group.items[5].action?.({} as never, 5);
-    await flush();
-
-    expect(openDeleteUsageModal).toHaveBeenCalledTimes(1);
-    expect(deleteUsageAnalytics).toHaveBeenCalledTimes(1);
-    expect(host.notices).toEqual([CLAUDE_USAGE_DELETED_NOTICE]);
-  });
-
-  it("row 6 tells the modal whether transcript analysis is on (wave 4, f44c3ae rebuild)", async () => {
-    for (const enabled of [true, false]) {
-      const openDeleteUsageModal = vi.fn().mockResolvedValue(false);
-      const host = createHost({
-        claude: fullClaudeSeam({
-          getIntegration: vi
-            .fn()
-            .mockResolvedValue({ ...BASE_CLAUDE_STATUS, transcriptAnalysis: { enabled } }),
-        }),
-        openDeleteUsageModal,
-      });
-      const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-      tab.getSettingDefinitions();
-      await flush();
-
-      const group = tab.getSettingDefinitions()[1];
-      group.items[5].action?.({} as never, 5);
-      await flush();
-
-      expect(openDeleteUsageModal).toHaveBeenCalledWith(expect.any(String), enabled);
-    }
-  });
-
-  it("row 6's action calls nothing when the modal is cancelled (Test 3)", async () => {
-    const deleteUsageAnalytics = vi.fn();
-    const openDeleteUsageModal = vi.fn().mockResolvedValue(false);
-    const host = createHost({
-      claude: fullClaudeSeam({ deleteUsageAnalytics }),
-      openDeleteUsageModal,
-    });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-    tab.getSettingDefinitions();
-    await flush();
-
-    const group = tab.getSettingDefinitions()[1];
-    group.items[5].action?.({} as never, 5);
-    await flush();
-
-    expect(deleteUsageAnalytics).not.toHaveBeenCalled();
-    expect(host.notices).toEqual([]);
-  });
-
-  it("row 6's action notifies the failure string on a rejected deletion (Test 3)", async () => {
-    const deleteUsageAnalytics = vi.fn().mockRejectedValue(new Error("service down"));
-    const openDeleteUsageModal = vi.fn().mockResolvedValue(true);
-    const host = createHost({
-      claude: fullClaudeSeam({ deleteUsageAnalytics }),
-      openDeleteUsageModal,
-    });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-    tab.getSettingDefinitions();
-    await flush();
-
-    const group = tab.getSettingDefinitions()[1];
-    group.items[5].action?.({} as never, 5);
-    await flush();
-
-    expect(host.notices).toEqual([CLAUDE_USAGE_DELETE_FAILED_NOTICE]);
-  });
-
-  it("row 6 gains the retained-totals note once transcript analysis is turned off (Test 4, R-15)", async () => {
-    const setTranscriptAnalysis = vi.fn().mockResolvedValue({ enabled: false });
-    const host = createHost({
-      claude: fullClaudeSeam({
-        getIntegration: vi
-          .fn()
-          .mockResolvedValue({ ...BASE_CLAUDE_STATUS, transcriptAnalysis: { enabled: true } }),
-        setTranscriptAnalysis,
-      }),
-    });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-    tab.getSettingDefinitions();
-    await flush();
-
-    await tab.setControlValue(TRANSCRIPT_ANALYSIS_KEY, false);
-
-    const group = tab.getSettingDefinitions()[1];
-    expect(group.items[5].desc).toContain(CLAUDE_DELETE_USAGE_RETAINED_NOTE);
-  });
-
-  it("row 2's action copies the install command and notifies (Test 5)", async () => {
-    const copyText = vi.fn().mockResolvedValue(undefined);
-    const host = createHost({ claude: fullClaudeSeam({ copyText }) });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    const group = tab.getSettingDefinitions()[1];
-    group.items[1].action?.({} as never, 1);
-    await flush();
-
-    expect(copyText).toHaveBeenCalledWith(CLAUDE_INSTALL_COMMAND);
-    expect(host.notices).toEqual([CLAUDE_INSTALL_COPIED_NOTICE]);
-  });
-
-  it("row 3's action copies the uninstall command and notifies (Test 5)", async () => {
-    const copyText = vi.fn().mockResolvedValue(undefined);
-    const host = createHost({ claude: fullClaudeSeam({ copyText }) });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    const group = tab.getSettingDefinitions()[1];
-    group.items[2].action?.({} as never, 2);
-    await flush();
-
-    expect(copyText).toHaveBeenCalledWith(CLAUDE_UNINSTALL_COMMAND);
-    expect(host.notices).toEqual([CLAUDE_UNINSTALL_COPIED_NOTICE]);
-  });
-
-  it("row 2's description mentions --dry-run and --with-statusline, and no row renders a home path (Test 5)", () => {
-    const host = createHost();
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    const group = tab.getSettingDefinitions()[1];
-    expect(group.items[1].desc).toContain("--dry-run");
-    expect(group.items[1].desc).toContain("--with-statusline");
-
-    const allText = group.items.map((item) => `${item.name} ${item.desc ?? ""}`).join(" ");
-    expect(allText).not.toContain("/Users/");
-    expect(allText).not.toContain("~/.claude");
-  });
-});
-
-describe("CommandCenterSettingTab -- status freshness and control safety (wave 2 review)", () => {
-  function seam(overrides: Partial<SettingsClaudeSeam> = {}): SettingsClaudeSeam {
-    return {
-      getIntegration: vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS),
-      setTranscriptAnalysis: vi.fn().mockResolvedValue({ enabled: false }),
-      deleteUsageAnalytics: vi.fn().mockResolvedValue(undefined),
-      copyText: vi.fn().mockResolvedValue(undefined),
-      ...overrides,
-    };
-  }
-
-  function hookRow(tab: CommandCenterSettingTab): string | undefined {
-    return tab.getSettingDefinitions()[1].items[0].desc;
-  }
-
-  function toggleDisabled(tab: CommandCenterSettingTab): boolean {
-    return tab.getSettingDefinitions()[1].items[4].control.disabled();
-  }
-
-  it("re-fetches the status each time the tab is displayed, showing the newest answer", async () => {
-    const getIntegration = vi
-      .fn()
-      .mockResolvedValue({ ...BASE_CLAUDE_STATUS, hooks: "installed", lastEventAt: null })
-      .mockResolvedValueOnce(BASE_CLAUDE_STATUS);
-    const tab = new CommandCenterSettingTab(
-      {} as never,
-      {} as never,
-      createHost({ claude: seam({ getIntegration }) }),
-    );
-
-    tab.getSettingDefinitions(); // first display
-    await flush();
-    expect(hookRow(tab)).toBe(CLAUDE_HOOKS_NOT_INSTALLED_TEXT);
-    await flush(); // the owner opens the tab again (hookRow was that display)
-
-    expect(getIntegration).toHaveBeenCalledTimes(2);
-    expect(hookRow(tab)).toContain("Installed");
-  });
-
-  it("its own update() after a status read starts no further read, so there is no refresh loop", async () => {
-    const getIntegration = vi.fn().mockResolvedValue(BASE_CLAUDE_STATUS);
-    const tab = new CommandCenterSettingTab(
-      {} as never,
-      {} as never,
-      createHost({ claude: seam({ getIntegration }) }),
-    );
-    // Obsidian's update() re-reads getSettingDefinitions(); the stub's does not.
-    tab.update = () => {
-      tab.getSettingDefinitions();
-    };
-
-    tab.getSettingDefinitions();
-    await flush(12);
-
-    expect(getIntegration).toHaveBeenCalledTimes(1);
-  });
-
-  it("starts no second fetch while one is in flight, then re-fetches on the next display", async () => {
-    const resolvers: Array<(status: ClaudeIntegrationStatus) => void> = [];
-    const getIntegration = vi.fn(
-      () =>
-        new Promise<ClaudeIntegrationStatus>((resolve) => {
-          resolvers.push(resolve);
-        }),
-    );
-    const tab = new CommandCenterSettingTab(
-      {} as never,
-      {} as never,
-      createHost({ claude: seam({ getIntegration }) }),
-    );
-
-    tab.getSettingDefinitions();
-    tab.getSettingDefinitions();
-    expect(getIntegration).toHaveBeenCalledTimes(1);
-
-    resolvers[0]?.({ ...BASE_CLAUDE_STATUS, hooks: "installed", lastEventAt: null });
-    await flush();
-    tab.getSettingDefinitions();
-    expect(getIntegration).toHaveBeenCalledTimes(2);
-    resolvers[1]?.(BASE_CLAUDE_STATUS);
-    await flush();
-
-    expect(hookRow(tab)).toBe(CLAUDE_HOOKS_NOT_INSTALLED_TEXT);
-  });
-
-  it("disables the transcript toggle while checking and while unavailable, enables it once known", async () => {
-    let resolveIntegration!: (status: ClaudeIntegrationStatus) => void;
-    let rejectIntegration!: (error: Error) => void;
-    const getIntegration = vi.fn(
-      () =>
-        new Promise<ClaudeIntegrationStatus>((resolve, reject) => {
-          resolveIntegration = resolve;
-          rejectIntegration = reject;
-        }),
-    );
-    const tab = new CommandCenterSettingTab(
-      {} as never,
-      {} as never,
-      createHost({ claude: seam({ getIntegration }) }),
-    );
-
-    tab.getSettingDefinitions();
-    expect(toggleDisabled(tab)).toBe(true); // checking
-
-    resolveIntegration(BASE_CLAUDE_STATUS);
-    await flush();
-    expect(toggleDisabled(tab)).toBe(false);
-
-    tab.getSettingDefinitions(); // shown again; this fetch fails
-    rejectIntegration(new Error("service down"));
-    await flush();
-    expect(hookRow(tab)).toBe(CLAUDE_STATUS_UNAVAILABLE_TEXT);
-    expect(toggleDisabled(tab)).toBe(true);
-  });
-
-  it("a rejected copy notifies the failure instead of the copied notice", async () => {
-    const copyText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
-    const host = createHost({ claude: seam({ copyText }) });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    tab.getSettingDefinitions()[1].items[1].action?.({} as never, 1);
-    await flush();
-
-    expect(copyText).toHaveBeenCalledWith(CLAUDE_INSTALL_COMMAND);
-    expect(host.notices).toEqual([CLAUDE_COPY_FAILED_NOTICE]);
-  });
-});
-
-describe("Approvals group (plan 06-23, UI-SPEC S5)", () => {
-  function approvalsHost(options: { failSave?: boolean; available?: boolean } = {}) {
-    const notices: string[] = [];
-    const press = vi.fn();
-    const host: SettingsTabHost & { saveCalls: number } = {
-      settings: { reducedMotion: "auto", notifyApprovals: true },
-      mql: { matches: false },
-      saveCalls: 0,
-      saveSettings: async () => {
-        host.saveCalls++;
-        if (options.failSave) throw new Error("disk full");
-      },
-      notify: (m: string) => {
-        notices.push(m);
-      },
-      approvals: { sendTestApproval: press, serviceAvailable: () => options.available ?? true },
-    };
-    return { host, notices, press };
-  }
-
-  function group(tab: CommandCenterSettingTab) {
-    const g = tab.getSettingDefinitions()[2];
-    if (!g || !("items" in g) || !g.items) throw new Error("expected the Approvals group");
-    return g;
-  }
-
-  it("Test 1: ends with an Approvals group and keeps the earlier rows and Claude group first", () => {
-    const { host } = approvalsHost();
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-    const defs = tab.getSettingDefinitions();
-
-    expect(defs[0].control.key).toBe(REDUCED_MOTION_KEY);
-    expect(defs[1]).toMatchObject({ type: "group", heading: CLAUDE_GROUP_HEADING });
-    const g = group(tab);
-    expect(g).toMatchObject({ type: "group", heading: APPROVALS_GROUP_HEADING });
-    expect(g.items.map((i) => i.name)).toEqual([NOTIFY_APPROVALS_NAME, SEND_TEST_APPROVAL_NAME]);
-    expect(g.items[0]?.desc).toBe(NOTIFY_APPROVALS_DESC);
-    expect(g.items[0]?.control).toMatchObject({ type: "toggle", key: NOTIFY_APPROVALS_KEY });
-    expect(g.items[1]?.desc).toBe(SEND_TEST_APPROVAL_DESC);
-    expect(NOTIFY_APPROVALS_NAME).toBe("Approval notifications");
-    expect(SEND_TEST_APPROVAL_NAME).toBe("Send a test approval");
-  });
-
-  it("Test 2: pressing the action asks the seam to send", () => {
-    const { host, press } = approvalsHost();
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    group(tab).items[1]?.action?.({} as never, 1);
-
-    expect(press).toHaveBeenCalledTimes(1);
-  });
-
-  it("Test 4: with the service down the action is disabled, says so, and does nothing", () => {
-    const { host, press } = approvalsHost({ available: false });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-    const row = group(tab).items[1];
-
-    expect(row?.desc).toBe(`${SEND_TEST_APPROVAL_DESC}${SEND_TEST_APPROVAL_NEEDS_SERVICE}`);
-    expect(SEND_TEST_APPROVAL_NEEDS_SERVICE).toBe(
-      " Needs the companion service, which isn't running.",
-    );
-    const disabled = row && "disabled" in row ? row.disabled : undefined;
-    expect(typeof disabled === "function" ? disabled() : disabled).toBe(true);
-    row?.action?.({} as never, 1);
-    expect(press).not.toHaveBeenCalled();
-  });
-
-  it("Test 6: the toggle persists first and applies second", async () => {
-    const { host } = approvalsHost();
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(true);
-    await tab.setControlValue(NOTIFY_APPROVALS_KEY, false);
-
-    expect(host.saveCalls).toBe(1);
-    expect(host.settings.notifyApprovals).toBe(false);
-    expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(false);
-  });
-
-  it("Test 6: a failed save restores the control and posts the fixed notice", async () => {
-    const { host, notices } = approvalsHost({ failSave: true });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    const outcome = await applyNotifyApprovalsChange(host, false);
-
-    expect(outcome).toBe("reverted");
-    expect(host.settings.notifyApprovals).toBe(true);
-    expect(notices).toEqual([NOTIFY_APPROVALS_SAVE_FAILED]);
-    expect(NOTIFY_APPROVALS_SAVE_FAILED).toBe("Couldn't save the approval notifications setting.");
-    await tab.setControlValue(NOTIFY_APPROVALS_KEY, false);
-    expect(tab.getControlValue(NOTIFY_APPROVALS_KEY)).toBe(true);
-  });
-});
-
-describe("Tasks group (plan 06-23, UI-SPEC S5)", () => {
-  function tasksHost(
-    options: {
-      available?: boolean;
-      rebuild?: () => Promise<{ tasks: number; attention: number }>;
-    } = {},
-  ) {
-    const notices: string[] = [];
-    const rebuild = options.rebuild ?? vi.fn().mockResolvedValue({ tasks: 212, attention: 0 });
-    const host: SettingsTabHost = {
-      settings: { reducedMotion: "auto", notifyApprovals: true },
-      mql: { matches: false },
-      saveSettings: async () => {},
-      notify: (m: string) => {
-        notices.push(m);
-      },
-      tasks: { rebuildTaskIndex: rebuild, serviceAvailable: () => options.available ?? true },
-    };
-    return { host, notices, rebuild };
-  }
-
-  function row(tab: CommandCenterSettingTab) {
-    const g = tab.getSettingDefinitions()[3];
-    if (!g || !("items" in g) || !g.items) throw new Error("expected the Tasks group");
-    return { group: g, item: g.items[0] };
-  }
-
-  it("Test 1: follows the Approvals group with one Rebuild task index action", () => {
-    const { host } = tasksHost();
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-    const { group, item } = row(tab);
-
-    expect(group).toMatchObject({ type: "group", heading: TASKS_GROUP_HEADING });
-    expect(group.items).toHaveLength(1);
-    expect(item?.name).toBe(REBUILD_NAME);
-    expect(REBUILD_NAME).toBe("Rebuild task index");
-    expect(item?.desc).toBe(REBUILD_DESC);
-    expect(REBUILD_DESC).toBe(
-      "Re-reads every task note in the vault and rebuilds the task lists. Your notes aren't changed.",
-    );
-  });
-
-  it("Test 6: shows the start notice at once, then the success notice with plural rules", async () => {
-    const { host, notices, rebuild } = tasksHost();
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    row(tab).item?.action?.({} as never, 0);
-    expect(notices).toEqual([REBUILD_STARTED_NOTICE]);
-    expect(REBUILD_STARTED_NOTICE).toBe("Rebuilding the task index…");
-    await flush();
-
-    expect(rebuild).toHaveBeenCalledTimes(1);
-    expect(notices[1]).toBe("Task index rebuilt. 212 tasks found.");
-    expect(rebuildSuccessNotice(1, 0)).toBe("Task index rebuilt. 1 task found.");
-    expect(rebuildSuccessNotice(0, 3)).toBe(
-      "Task index rebuilt. 0 tasks found. 3 notes need attention.",
-    );
-    expect(rebuildSuccessNotice(2, 1)).toBe(
-      "Task index rebuilt. 2 tasks found. 1 note needs attention.",
-    );
-  });
-
-  it("Test 6: a failure posts the fixed notice", async () => {
-    const { host, notices } = tasksHost({ rebuild: () => Promise.reject(new Error("down")) });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    row(tab).item?.action?.({} as never, 0);
-    await flush();
-
-    expect(notices).toEqual([REBUILD_STARTED_NOTICE, REBUILD_FAILED_NOTICE]);
-    expect(REBUILD_FAILED_NOTICE).toBe(
-      "Couldn't rebuild the task index. Check the service in Settings → Diagnostics, then try again.",
-    );
-  });
-
-  it("Test 6: with the service down the action is disabled and does nothing", () => {
-    const { host, notices, rebuild } = tasksHost({ available: false });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-    const { item } = row(tab);
-
-    const disabled = item && "disabled" in item ? item.disabled : undefined;
-    expect(typeof disabled === "function" ? disabled() : disabled).toBe(true);
-    item?.action?.({} as never, 0);
-    expect(rebuild).not.toHaveBeenCalled();
-    expect(notices).toEqual([]);
-  });
-
-  it("with the service down the row says why, like the Approvals row", () => {
-    const { host } = tasksHost({ available: false });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    expect(row(tab).item?.desc).toBe(`${REBUILD_DESC}${REBUILD_NEEDS_SERVICE}`);
-    expect(REBUILD_NEEDS_SERVICE).toBe(" Needs the companion service, which isn't running.");
-  });
-
-  it("a second press while a rebuild is running is ignored; a later press works again", async () => {
-    let finish!: () => void;
-    const rebuild = vi.fn(
-      () =>
-        new Promise<{ tasks: number; attention: number }>((resolve) => {
-          finish = () => resolve({ tasks: 1, attention: 0 });
-        }),
-    );
-    const { host, notices } = tasksHost({ rebuild });
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    row(tab).item?.action?.({} as never, 0);
-    row(tab).item?.action?.({} as never, 0);
-    expect(rebuild).toHaveBeenCalledTimes(1);
-    expect(notices).toEqual([REBUILD_STARTED_NOTICE]);
-    finish();
-    await flush();
-    row(tab).item?.action?.({} as never, 0);
-    expect(rebuild).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("Codex group (plan 05.1-19, UI-SPEC S4-a and S4-c)", () => {
-  /** A row as a test reads it: the group's tuple holds differently shaped items. */
-  interface Row {
-    readonly name: string;
-    readonly desc?: string;
-    readonly action?: (el: HTMLElement, index: number) => void;
-  }
-
-  const INSTALLED: CodexIntegrationStatus = {
-    hooks: { state: "not-installed", lastEventAt: null, installedSince: null },
-    bridge: { state: "not-installed", lastWindowAt: null },
-    codex: { installed: true, version: "0.159.2" },
-    doctor: null,
-  };
-
-  function codexSeam(overrides: Partial<SettingsCodexSeam> = {}): SettingsCodexSeam {
-    return {
-      getIntegration: vi.fn().mockResolvedValue(INSTALLED),
-      copyText: vi.fn().mockResolvedValue(undefined),
-      openLauncherSettings: vi.fn(),
-      ...overrides,
-    };
-  }
-
-  function codexRows(tab: CommandCenterSettingTab): readonly Row[] {
-    const definitions = tab.getSettingDefinitions() as unknown as Array<{
-      type?: string;
-      heading?: string;
-      items?: Row[];
-    }>;
-    const group = definitions.find((item) => item.heading === "Codex");
-    if (!group?.items) throw new Error("expected the Codex group");
-    return group.items;
-  }
-
-  it("Test 1: appends the Codex group after every existing group and leaves their order alone", () => {
+describe("Task 3, Test 2: the pointer row keeps every migrated setting findable", () => {
+  it("carries an alias for each migrated setting name", () => {
     const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
-    const definitions = tab.getSettingDefinitions() as unknown as Array<{ heading?: string }>;
-    expect(definitions.map((item) => item.heading)).toEqual([
-      undefined,
-      CLAUDE_GROUP_HEADING,
-      APPROVALS_GROUP_HEADING,
-      TASKS_GROUP_HEADING,
-      "Codex",
-    ]);
-    expect(codexRows(tab).map((row) => row.name)).toEqual([
+    const aliases = tab.getSettingDefinitions()[1]?.aliases ?? [];
+    for (const name of [
+      "Transcript analysis",
+      "Delete cached usage analytics",
+      "Approval notifications",
+      "Send a test approval",
+      "Rebuild task index",
       "Codex hooks",
-      "Copy install step",
-      "Copy uninstall step",
-      "Antigravity terminal bridge",
-      "Copy bridge install step",
-      "Launcher",
-      "Codex notify setting",
-    ]);
+      "Claude Code hooks",
+    ]) {
+      expect(aliases, name).toContain(name);
+    }
+    expect(aliases).toEqual(POINTER_ALIASES);
   });
 
-  it("Test 6: reads Checking… until the service answers, then the status after the answer", async () => {
-    const tab = new CommandCenterSettingTab({} as never, {} as never, {
-      ...createHost(),
-      codex: codexSeam(),
-    });
-    expect(codexRows(tab)[0]?.desc).toBe("Checking…");
-    await flush();
-    expect(codexRows(tab)[0]?.desc).toBe(
-      "Not installed. Live status for interactive Codex sessions needs the optional hook package. Sessions and usage still appear from Codex's own records.",
+  it("builds its aliases from the one set of destination names, not a second copy", () => {
+    expect(POINTER_ALIASES).toEqual(
+      expect.arrayContaining([
+        CLAUDE_TRANSCRIPT_ANALYSIS_NAME,
+        CLAUDE_DELETE_USAGE_NAME,
+        NOTIFY_APPROVALS_NAME,
+        SEND_TEST_APPROVAL_NAME,
+        REBUILD_NAME,
+        CLAUDE_HOOKS_NAME,
+      ]),
     );
-    expect(codexRows(tab)[3]?.desc).toBe("Not installed. Launches fall back to Terminal.");
+    expect(new Set(POINTER_ALIASES).size).toBe(POINTER_ALIASES.length);
   });
 
-  it("F4: a snapshot after a reconnect refreshes the hooks row without reopening Settings", async () => {
-    const INSTALLED_NO_EVENTS: CodexIntegrationStatus = {
-      ...INSTALLED,
-      hooks: { state: "installed", lastEventAt: null, installedSince: "2026-10-11T00:00:00.000Z" },
-    };
-    let current = INSTALLED;
-    const getIntegration = vi.fn().mockImplementation(async () => current);
-    const tab = new CommandCenterSettingTab({} as never, {} as never, {
-      ...createHost(),
-      codex: codexSeam({ getIntegration }),
-    });
-    tab.update = () => {
-      tab.getSettingDefinitions();
-    };
-    tab.getSettingDefinitions();
-    await flush(12);
-    expect(codexRows(tab)[0]?.desc).toContain("Not installed");
-
-    // Service restarted; the reconnect snapshot carries no integration part, so the tab refetches.
-    current = INSTALLED_NO_EVENTS;
-    adoptCodexSnapshot({ state: { codex: {} } } as never);
-    await flush(12);
-    expect(codexRows(tab)[0]?.desc).toContain("Installed, but no events have arrived");
-    tab.hide();
+  it("keeps the action's own name findable", () => {
+    expect(POINTER_ALIASES).toContain("Open settings");
   });
+});
 
-  it("F4: a snapshot that carries the integration status is adopted directly", async () => {
-    // Any later fetch hangs, so only the pushed status can change the row.
-    const getIntegration = vi
-      .fn()
-      .mockResolvedValueOnce(INSTALLED)
-      .mockReturnValue(new Promise(() => {}));
-    const tab = new CommandCenterSettingTab({} as never, {} as never, {
-      ...createHost(),
-      codex: codexSeam({ getIntegration }),
-    });
-    tab.update = () => {
-      tab.getSettingDefinitions();
-    };
-    tab.getSettingDefinitions();
-    await flush(12);
-    expect(codexRows(tab)[0]?.desc).toContain("Not installed");
-
-    adoptCodexSnapshot({
-      state: {
-        codex: {
-          integration: {
-            ...INSTALLED,
-            hooks: { state: "installed", lastEventAt: null, installedSince: null },
-          },
-        },
-      },
-    } as never);
-    await flush(12);
-    expect(codexRows(tab)[0]?.desc).toContain("Installed, but no events have arrived");
-    tab.hide();
-  });
-
-  it("Test 6: fetches once per display, never during its own update(), and a rejection settles on unavailable", async () => {
-    const getIntegration = vi.fn().mockRejectedValue(new Error("down"));
-    const tab = new CommandCenterSettingTab({} as never, {} as never, {
-      ...createHost(),
-      codex: codexSeam({ getIntegration }),
-    });
-    // Obsidian's update() re-reads getSettingDefinitions(); the stub's does not.
-    tab.update = () => {
-      tab.getSettingDefinitions();
-    };
-
-    tab.getSettingDefinitions();
-    await flush(12);
-
-    expect(getIntegration).toHaveBeenCalledTimes(1);
-    expect(codexRows(tab)[0]?.desc).toBe(
-      "Status unavailable — the companion service didn't respond.",
-    );
-  });
-
-  it("Test 4: the copy rows write the fixed repository-relative strings and post the locked Notices", async () => {
-    const copyText = vi.fn().mockResolvedValue(undefined);
-    const host = { ...createHost(), codex: codexSeam({ copyText }) };
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-    const rows = codexRows(tab);
-
-    rows[1]?.action?.({} as never, 1);
-    rows[2]?.action?.({} as never, 2);
-    rows[4]?.action?.({} as never, 4);
-    await flush();
-
-    expect(copyText.mock.calls).toEqual([
-      ["./scripts/codex-hooks/install.sh"],
-      ["./scripts/codex-hooks/uninstall.sh"],
-      ["node scripts/codex/install-user-kit.mjs"],
-    ]);
-    expect(host.notices).toEqual([
-      "Install step copied. Run it in Terminal.",
-      "Uninstall step copied. Run it in Terminal.",
-      "Install step copied. Run it in Terminal.",
-    ]);
-  });
-
-  it("Test 4: a refused clipboard write posts the copy-failed Notice and not the success one", async () => {
-    const copyText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
-    const host = { ...createHost(), codex: codexSeam({ copyText }) };
-    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
-
-    codexRows(tab)[1]?.action?.({} as never, 1);
-    await flush();
-
-    expect(host.notices).toEqual([CLAUDE_COPY_FAILED_NOTICE]);
-  });
-
-  it("Test 4: with no Codex seam a copy row is a no-op", async () => {
+describe("Task 3, Test 3: Open settings", () => {
+  it("requests the visual section, selects Settings and reveals the view, in that order", () => {
     const host = createHost();
     const tab = new CommandCenterSettingTab({} as never, {} as never, host);
 
-    codexRows(tab)[1]?.action?.({} as never, 1);
-    codexRows(tab)[5]?.action?.({} as never, 5);
-    await flush();
+    tab.getSettingDefinitions()[1]?.action?.({} as never, 1);
 
-    expect(host.notices).toEqual([]);
+    // By the time the view is revealed both requests are already waiting for it.
+    expect(host.calls).toEqual(["reveal(section=visual,destination=settings)"]);
+    expect(navigationRequest.value?.destination).toBe("settings");
   });
 
-  it("Test 5: the Launcher row's action calls the injected launcher-settings seam", () => {
-    const openLauncherSettings = vi.fn();
-    const tab = new CommandCenterSettingTab({} as never, {} as never, {
-      ...createHost(),
-      codex: codexSeam({ openLauncherSettings }),
-    });
-    codexRows(tab)[5]?.action?.({} as never, 5);
-    expect(openLauncherSettings).toHaveBeenCalledTimes(1);
+  it("is repeatable: a second press asks again", () => {
+    const host = createHost();
+    const tab = new CommandCenterSettingTab({} as never, {} as never, host);
+    const action = tab.getSettingDefinitions()[1]?.action;
+
+    action?.({} as never, 1);
+    takeSettingsSectionRequest();
+    navigationRequest.value = null;
+    action?.({} as never, 1);
+
+    expect(host.calls).toHaveLength(2);
+  });
+});
+
+describe("Task 3, Test 4: nothing else lives in the tab", () => {
+  const tabSource = readFileSync(join(HERE, "settings-tab.ts"), "utf8");
+  const code = tabSource.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  it("the tab host type has no claude, codex, approvals, tasks or delete-usage member", () => {
+    const hostType = /export interface SettingsTabHost[\s\S]*?\n\}/.exec(code)?.[0] ?? "";
+    expect(hostType).not.toBe("");
+    for (const member of ["claude", "codex", "approvals", "tasks", "openDeleteUsageModal"]) {
+      expect(hostType, member).not.toMatch(new RegExp(`\\b${member}\\b`));
+    }
   });
 
-  it("Test 7: the transcript analysis description gains the Codex sentence and nothing else changes", () => {
-    const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
-    const items = tab.getSettingDefinitions()[1].items;
-    expect(items[4].desc).toBe(
-      "Count tokens from Claude Code's local transcripts. Only counts, model names and timestamps " +
-        "are stored — never prompts, replies or file contents. Hook telemetry keeps working when this is off. " +
-        "This also covers Codex session titles, previews and token activity.",
+  it("holds no Claude, Codex, approvals or tasks row, status fetch or copy command", () => {
+    expect(code).not.toMatch(
+      /getIntegration|copyText|rebuildTaskIndex|sendTestApproval|deleteUsageAnalytics|setTranscriptAnalysis|buildCodexGroup|CodexSettingsState|type:\s*"group"/,
     );
-    expect(items[4].control).toMatchObject({ type: "toggle", key: TRANSCRIPT_ANALYSIS_KEY });
   });
 
-  it("Test 7: the delete row's description names Claude Code and Codex", () => {
+  it("the Codex group builder and its state class are gone from codex-settings.ts", () => {
+    const codex = readFileSync(join(HERE, "codex-settings.ts"), "utf8");
+    expect(codex).not.toContain("buildCodexGroup");
+    expect(codex).not.toContain("CodexSettingsState");
+    // The status texts the destination reads are kept.
+    expect(codex).toContain("export function codexHookStatusText");
+    expect(codex).toContain("export function codexBridgeStatusText");
+  });
+
+  it("the tab declares only the reduced-motion and pointer controls", () => {
+    expect(
+      [...code.matchAll(/type:\s*"(dropdown|toggle|slider|text|button)"/g)].map((m) => m[1]),
+    ).toEqual(["dropdown"]);
+  });
+});
+
+describe("Task 3, Test 5: the tab is Obsidian chrome", () => {
+  const tabSource = readFileSync(join(HERE, "settings-tab.ts"), "utf8");
+  const code = tabSource.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  it("uses no --ccc-* token and no command-center class", () => {
+    expect(code).not.toContain("--ccc-");
+    expect(code).not.toMatch(/\bccc-|command-center["'`]/);
+    expect(code).not.toMatch(/\bclassName\b|\.cls\b|addClass|createDiv|createEl/);
+  });
+
+  it("the definitions carry no markup or class, only plain strings", () => {
     const tab = new CommandCenterSettingTab({} as never, {} as never, createHost());
-    const item = tab.getSettingDefinitions()[1].items[5];
-    expect(item.name).toBe(CLAUDE_DELETE_USAGE_NAME);
-    expect(item.desc).toBe(
-      "Removes stored token counts, cost estimates, plan usage history and coverage records for Claude Code and Codex. Session history stays.",
+    const text = JSON.stringify(tab.getSettingDefinitions(), (_key, value: unknown) =>
+      typeof value === "function" ? "fn" : value,
     );
+    expect(text).not.toMatch(/ccc-|<[a-z]/);
   });
 });

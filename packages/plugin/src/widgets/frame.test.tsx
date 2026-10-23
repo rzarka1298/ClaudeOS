@@ -694,7 +694,7 @@ describe("setup-state copy, unavailable reason and body quick-action (D-53, SESS
     expect(screen.getByText("Claude Code hooks aren't installed")).toBeTruthy();
     expect(
       screen.getByText(
-        "Install the optional hook package to see your Claude Code sessions here. Obsidian settings → Claude command center → Claude shows the command to run.",
+        "Install the optional hook package to see your Claude Code sessions here. The integrations section in Settings shows the command to run.",
       ),
     ).toBeTruthy();
 

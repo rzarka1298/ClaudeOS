@@ -2,17 +2,17 @@ import type { CodexIntegrationStatus } from "@ccc/domain/codex-integration.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
 
 /**
- * The "Codex" group of the Obsidian settings tab (05.1 UI-SPEC S4-a, plan
- * 05.1-19; D-12, D-19, D-30; CODEX-06). Seven rows in a locked order: hook
- * status, copy install step, copy uninstall step, Antigravity terminal bridge
- * status, copy bridge install step, Launcher, and the Codex notify note.
+ * The locked Codex copy and status texts (05.1 UI-SPEC S4-a, plan 05.1-19; D-12, D-19, D-30;
+ * CODEX-06), read by the Integrations section of the Settings destination.
  *
- * Like the Claude group, this is Obsidian chrome: native rows, no design token,
- * sentence case. The dashboard INSTALLS NOTHING (D-12): the three action rows
- * only write a fixed repository-relative string to the clipboard, and the
- * notify row says plainly that Codex's notify slot is never touched (D-19).
- * No row renders an absolute or home path; the one permitted slash in a status
- * row is `/hooks`, Codex's own screen name.
+ * The native Obsidian settings tab used to build a seven-row "Codex" group from these; plan 08-18
+ * moved every row into the destination and deleted the group builder and its state class, so what
+ * remains is the text itself: names, descriptions, the three fixed repository-relative steps, the
+ * copy notices and the two status sentences. Nothing here is Obsidian chrome or a design token.
+ * The dashboard INSTALLS NOTHING (D-12): a copy row only writes one of the fixed strings below to
+ * the clipboard, and the notify row says plainly that Codex's notify slot is never touched (D-19).
+ * No text renders an absolute or home path; the one permitted slash in a status text is `/hooks`,
+ * Codex's own screen name.
  */
 
 export const CODEX_GROUP_HEADING = "Codex";
@@ -67,7 +67,6 @@ export const CODEX_LAUNCHER_NAME = "Launcher";
 export const CODEX_LAUNCHER_DESC =
   "Antigravity terminal is the default. It falls back to Terminal when the bridge isn't installed. " +
   "A Terminal setup you already saved stays as it is until you save a new one.";
-export const CODEX_OPEN_LAUNCHER_LABEL = "Open launcher settings";
 
 // Row 7 -- the notify note.
 export const CODEX_NOTIFY_NAME = "Codex notify setting";
@@ -75,15 +74,13 @@ export const CODEX_NOTIFY_DESC =
   "Left untouched. This app never takes over Codex's notify setting.";
 
 /**
- * Everything the Codex group needs from the wiring (D-30), behind one typed
- * seam like the Claude one: production builds it in `main.ts`, tests pass plain
- * functions.
+ * Everything the Codex rows need from the wiring (D-30), behind one typed seam like the Claude
+ * one: production builds it in `main.ts`, tests pass plain functions. The Launchers hand-off is a
+ * deep link (`requestSettingsSection("launchers")`), not a host member.
  */
 export interface SettingsCodexSeam {
   readonly getIntegration: () => Promise<CodexIntegrationStatus>;
   readonly copyText: (text: string) => Promise<void>;
-  /** Focuses Settings → Launchers in the command center view (the existing launchers hand-off). */
-  readonly openLauncherSettings: () => void;
 }
 
 /** The status the rows render: the service's answer, or one of the two states before one exists. */
@@ -121,156 +118,5 @@ export function codexBridgeStatusText(status: CodexStatusInput, nowMs: number): 
       return CODEX_BRIDGE_OUTDATED_TEXT;
     case "different-folder":
       return CODEX_BRIDGE_DIFFERENT_FOLDER_TEXT;
-  }
-}
-
-export interface CodexGroupInput {
-  readonly status: CodexStatusInput;
-  readonly nowMs: number;
-  /** Copies `text` to the clipboard and posts `notice` (or the copy-failed Notice). The group never installs anything. */
-  readonly copy: (text: string, notice: string) => void;
-  readonly openLauncherSettings: () => void;
-}
-
-/**
- * The seven-row group definition. A tuple cast (not an array literal) keeps each
- * row's own literal shape distinct, exactly like the Claude group: rows 1, 4 and
- * 7 have no `action` or `control` (Obsidian's `SettingDefinitionEmpty`), rows 2,
- * 3, 5 and 6 have an `action` only.
- */
-export function buildCodexGroup(input: CodexGroupInput) {
-  const { status, nowMs, copy, openLauncherSettings } = input;
-  const hooksItem = { name: CODEX_HOOKS_NAME, desc: codexHookStatusText(status, nowMs) };
-  const copyInstallItem = {
-    name: CODEX_COPY_INSTALL_NAME,
-    desc: CODEX_COPY_INSTALL_DESC,
-    action: (_el: HTMLElement, _index: number) => {
-      copy(CODEX_HOOKS_INSTALL_STEP, CODEX_INSTALL_COPIED_NOTICE);
-    },
-  };
-  const copyUninstallItem = {
-    name: CODEX_COPY_UNINSTALL_NAME,
-    desc: CODEX_COPY_UNINSTALL_DESC,
-    action: (_el: HTMLElement, _index: number) => {
-      copy(CODEX_HOOKS_UNINSTALL_STEP, CODEX_UNINSTALL_COPIED_NOTICE);
-    },
-  };
-  const bridgeItem = { name: CODEX_BRIDGE_NAME, desc: codexBridgeStatusText(status, nowMs) };
-  const copyBridgeItem = {
-    name: CODEX_COPY_BRIDGE_NAME,
-    desc: CODEX_COPY_BRIDGE_DESC,
-    action: (_el: HTMLElement, _index: number) => {
-      copy(CODEX_BRIDGE_INSTALL_STEP, CODEX_INSTALL_COPIED_NOTICE);
-    },
-  };
-  const launcherItem = {
-    name: CODEX_LAUNCHER_NAME,
-    desc: CODEX_LAUNCHER_DESC,
-    // The declarative action row has no separate button label, so the action's
-    // own name stays findable through Obsidian's settings search.
-    aliases: [CODEX_OPEN_LAUNCHER_LABEL],
-    action: (_el: HTMLElement, _index: number) => {
-      openLauncherSettings();
-    },
-  };
-  const notifyItem = { name: CODEX_NOTIFY_NAME, desc: CODEX_NOTIFY_DESC };
-  return {
-    type: "group" as const,
-    heading: CODEX_GROUP_HEADING,
-    items: [
-      hooksItem,
-      copyInstallItem,
-      copyUninstallItem,
-      bridgeItem,
-      copyBridgeItem,
-      launcherItem,
-      notifyItem,
-    ] as [
-      typeof hooksItem,
-      typeof copyInstallItem,
-      typeof copyUninstallItem,
-      typeof bridgeItem,
-      typeof copyBridgeItem,
-      typeof launcherItem,
-      typeof notifyItem,
-    ],
-  };
-}
-
-/**
- * The Codex status and its fetch rule, extracted so the tab reuses the Claude
- * group's behaviour without duplicating it: the status is read when the tab is
- * shown, the last known status stays on screen while a refetch is in flight
- * (only the very first load reads "Checking…"), a display during a fetch starts
- * no second one, and a rejected fetch settles on a definite `"unavailable"`.
- * The tab's own re-render never calls {@link CodexSettingsState.load}.
- */
-export class CodexSettingsState {
-  status: CodexStatusInput = "checking";
-  private inFlight = false;
-  private reloadQueued = false;
-  /** Bumped by every adopted update; a read that began before the latest bump is stale. */
-  private adoptedVersion = 0;
-  private readonly getIntegration: (() => Promise<CodexIntegrationStatus>) | undefined;
-  private readonly onChange: () => void;
-
-  constructor(
-    getIntegration: (() => Promise<CodexIntegrationStatus>) | undefined,
-    onChange: () => void,
-  ) {
-    this.getIntegration = getIntegration;
-    this.onChange = onChange;
-  }
-
-  /** Takes a status the service pushed (snapshot replay); it supersedes any read in flight. */
-  adopt(status: CodexIntegrationStatus): void {
-    this.adoptedVersion += 1;
-    this.status = status;
-    this.onChange();
-  }
-
-  /** A re-read that is never dropped: one in flight is followed by a fresh one. */
-  refresh(): void {
-    if (this.inFlight) {
-      this.reloadQueued = true;
-      return;
-    }
-    this.load();
-  }
-
-  /** Starts a read unless one is already in flight or no service seam is wired. */
-  load(): void {
-    if (this.inFlight || this.getIntegration === undefined) return;
-    this.inFlight = true;
-    const getIntegration = this.getIntegration;
-    const startedAt = this.adoptedVersion;
-    // `new Promise` also turns a synchronous throw in the seam into a rejection.
-    new Promise<CodexIntegrationStatus>((resolve) => {
-      resolve(getIntegration());
-    }).then(
-      (status) => {
-        this.inFlight = false;
-        // An update adopted while this read ran is newer than its answer.
-        if (startedAt === this.adoptedVersion) {
-          this.status = status;
-          this.onChange();
-        }
-        this.runQueuedReload();
-      },
-      () => {
-        this.inFlight = false;
-        if (startedAt === this.adoptedVersion) {
-          this.status = "unavailable";
-          this.onChange();
-        }
-        this.runQueuedReload();
-      },
-    );
-  }
-
-  private runQueuedReload(): void {
-    if (!this.reloadQueued) return;
-    this.reloadQueued = false;
-    this.load();
   }
 }

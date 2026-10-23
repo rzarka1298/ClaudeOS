@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, within } from "@testing-library/preact";
 import type { WorkspaceLeaf } from "obsidian";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "./connection-state.js";
 import ClaudeCommandCenterPlugin from "./main.js";
 import { resetProjectsState } from "./projects/projects-state.js";
@@ -10,8 +10,8 @@ import {
   Scope as StubScope,
 } from "./test-support/obsidian-stub.js";
 import { CommandCenterView, VIEW_TYPE } from "./view/command-center-view.js";
-import { requestDestination } from "./view/navigation-request.js";
-import { takeSettingsSectionRequest } from "./view/settings-sections.js";
+import { navigationRequest, requestDestination } from "./view/navigation-request.js";
+import { settingsSectionRequested, takeSettingsSectionRequest } from "./view/settings-sections.js";
 
 /**
  * The REAL `onload` (FIX2B m8): main.ts runs against the stub `Plugin`, so "the native tab and the
@@ -114,6 +114,33 @@ describe("main.ts onload builds ONE SettingsHost (plan 08-11, D-15; FIX2B m8)", 
   });
 });
 
+describe("the native tab's pointer row on the real plugin (plan 08-18, D-18, OD-1)", () => {
+  it("holds two items and Open settings requests the visual section, selects Settings and reveals the view", async () => {
+    const plugin = await loadPlugin();
+    loaded = plugin;
+    const reveal = vi.spyOn(plugin, "revealView").mockResolvedValue();
+    const tab = plugin.registrations.settingTabs[0] as {
+      getSettingDefinitions: () => { name: string; action?: () => void }[];
+    };
+    const definitions = tab.getSettingDefinitions();
+    expect(definitions.map((item) => item.name)).toEqual([
+      "Reduced motion",
+      "Command center settings",
+    ]);
+
+    takeSettingsSectionRequest();
+    navigationRequest.value = null;
+    definitions[1]?.action?.();
+
+    expect(settingsSectionRequested.value).toBe("visual");
+    const request = navigationRequest.value as { destination: string } | null;
+    expect(request?.destination).toBe("settings");
+    expect(reveal).toHaveBeenCalledTimes(1);
+    takeSettingsSectionRequest();
+    navigationRequest.value = null;
+  });
+});
+
 describe("the host carries every member the sections need, so later waves add no main.ts change", () => {
   it("has the preferences, the service seams, the clipboard, vault setup and the display inputs", async () => {
     const plugin = await loadPlugin();
@@ -131,6 +158,7 @@ describe("the host carries every member the sections need, so later waves add no
       "openDeleteUsageModal",
       "copyText",
       "runVaultSetup",
+      "revealView",
       "display",
     ]) {
       expect(host, member).toHaveProperty(member);

@@ -65,6 +65,11 @@ export interface SettingsHost extends SettingsModelHost {
    * vault` button only invokes it; the confirmation is the flow's own.
    */
   readonly runVaultSetup: () => Promise<void>;
+  /**
+   * Opens (or reveals) the command center view. The native tab's `Open settings` row uses it after
+   * it has asked for the Settings tab and the visual section (plan 08-18).
+   */
+  readonly revealView: () => void;
   readonly display: SettingsDisplayInputs;
 }
 
@@ -92,13 +97,13 @@ export function createInertSettingsHost(): SettingsHost {
     codex: {
       getIntegration: UNAVAILABLE,
       copyText: UNAVAILABLE,
-      openLauncherSettings: () => {},
     },
     approvals: { sendTestApproval: () => {}, serviceAvailable: () => false },
     tasks: { rebuildTaskIndex: UNAVAILABLE, serviceAvailable: () => false },
     openDeleteUsageModal: () => Promise.resolve(false),
     copyText: UNAVAILABLE,
     runVaultSetup: () => Promise.resolve(),
+    revealView: () => {},
     display: {
       homeDir: null,
       socketPath: null,
