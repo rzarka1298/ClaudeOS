@@ -324,7 +324,7 @@ export function WidgetFrame<T>({
             {/* No `onQuickAction` here (RR-05): while the service is unreachable
                 a body cannot emit a launch or session action at all. */}
             {state.kind === "ready" ? (
-              <Body data={state.data} size={hint} onNavigate={onNavigate} />
+              <Body data={state.data} size={hint} onNavigate={onNavigate} serviceAway />
             ) : null}
           </>
         );

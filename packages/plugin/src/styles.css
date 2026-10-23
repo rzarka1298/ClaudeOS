@@ -4250,6 +4250,48 @@ fieldset.ccc-template-rows > legend {
   font-weight: var(--ccc-weight-strong);
 }
 
+/* FIX5B (08-21 findings): the facts list inside Settings (Paths, Schedules, Security). The global
+ * `.ccc-detail-fields` rule (Phase 4 and 6 detail views) is left as it is; this re-scopes the list
+ * under the Settings frame only. The label column is bounded (a long label wraps instead of pushing
+ * the values to the right), label and first value line share a baseline, and a value's own
+ * paragraph margin no longer opens a gap above its first line. */
+.ccc-command-center .ccc-settings .ccc-detail-fields {
+  grid-template-columns: calc(var(--ccc-space-3xl) * 2.5) minmax(0, 1fr);
+  align-items: baseline;
+  row-gap: var(--ccc-space-md);
+}
+
+.ccc-command-center .ccc-settings .ccc-detail-fields dt {
+  overflow-wrap: break-word;
+}
+
+.ccc-command-center .ccc-settings .ccc-detail-fields dd > * {
+  margin: 0;
+}
+
+.ccc-command-center .ccc-settings .ccc-detail-fields dd > * + * {
+  margin-block-start: var(--ccc-space-sm);
+}
+
+/* A narrow Settings pane stacks each label above its value. */
+@container (max-width: 34rem) {
+  .ccc-command-center .ccc-settings .ccc-detail-fields {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--ccc-space-xs);
+  }
+
+  .ccc-command-center .ccc-settings .ccc-detail-fields dd + dt {
+    margin-block-start: var(--ccc-space-md);
+  }
+}
+
+/* FIX5B: an expanded Usage collectors row groups its parts under two labels; each label gets a step
+ * of space above it so it reads as the head of its group, not as the end of the button or part above.
+ * Scoped under the row so it out-ranks the row's own `p { margin: 0 }`. */
+.ccc-command-center .ccc-health-row .ccc-health-group-label {
+  margin-block-start: var(--ccc-space-md);
+}
+
 /* Phase 05.1 wave-5 visual fixes, scoped to the Codex sections and launcher
  * so no other list, card or committed baseline changes. */
 

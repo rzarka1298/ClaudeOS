@@ -537,7 +537,14 @@ describe("FIX2B: the Phase 8 section scopes its rules to classes it owns (M2, M3
   // Classes the section deliberately extends rather than introduces: the root; `.ccc-badge`
   // (a status chip IS a badge, `.ccc-badge[data-status]`); `.ccc-settings` (the Phase 7 research
   // container the Settings frame reuses, to which Phase 8 only adds a descendant focus ring).
-  const EXTENDED = new Set(["ccc-command-center", "ccc-badge", "ccc-settings"]);
+  // FIX5B: `.ccc-detail-fields` joins them: the Settings frame re-scopes the Phase 4/6 facts list
+  // (`.ccc-command-center .ccc-settings .ccc-detail-fields`) and leaves the global rule alone.
+  const EXTENDED = new Set([
+    "ccc-command-center",
+    "ccc-badge",
+    "ccc-settings",
+    "ccc-detail-fields",
+  ]);
 
   const classesIn = (selector: string): string[] =>
     [...selector.matchAll(/\.(ccc-[\w-]+)/g)].map((match) => match[1] ?? "");
@@ -593,5 +600,65 @@ describe("FIX2B: the Phase 8 section scopes its rules to classes it owns (M2, M3
     expect(
       opacities.filter((value) => value !== "1" && !/^var\(--ccc-[\w-]+\)$/.test(value)),
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FIX5B: the Settings facts list and the Diagnostics group labels (08-21 findings)
+// ---------------------------------------------------------------------------
+
+describe("FIX5B: the facts list inside Settings, and the Diagnostics group labels", () => {
+  const SETTINGS_FACTS = `${ROOT} .ccc-settings .ccc-detail-fields`;
+  const ruleFor = (selector: string, atStack: readonly string[] = []): StyleRule | undefined =>
+    RULES.find(
+      (rule) =>
+        rule.selectors.includes(selector) &&
+        rule.atStack.length === atStack.length &&
+        rule.atStack.every((entry, index) => entry === atStack[index]),
+    );
+  const valueIn = (rule: StyleRule | undefined, property: string): string | undefined =>
+    rule === undefined
+      ? undefined
+      : declarationsOf(rule)
+          .filter((declaration) => declaration.property === property)
+          .at(-1)?.value;
+
+  it("a Settings-scoped rule aligns the label and value baselines and sizes the label column", () => {
+    const rule = ruleFor(SETTINGS_FACTS);
+    expect(rule, "no Settings-scoped .ccc-detail-fields rule").toBeDefined();
+    expect(valueIn(rule, "align-items")).toBe("baseline");
+    const columns = valueIn(rule, "grid-template-columns") ?? "";
+    // A bounded label column, not `max-content` (the Paths value column started far right).
+    expect(columns).not.toContain("max-content");
+    expect(columns).toMatch(/var\(--ccc-space-3xl\)/);
+    expect(columns).toMatch(/minmax\(0, 1fr\)\s*$/);
+  });
+
+  it("the value's children carry no margin of their own, so none opens a gap above the first line", () => {
+    const children = ruleFor(`${SETTINGS_FACTS} dd > *`);
+    expect(valueIn(children, "margin")).toBe("0");
+    // Spacing between a value's own blocks is a token, applied between siblings only.
+    const siblings = ruleFor(`${SETTINGS_FACTS} dd > * + *`);
+    expect(valueIn(siblings, "margin-block-start")).toBe("var(--ccc-space-sm)");
+  });
+
+  it("a narrow Settings pane stacks the list in one column", () => {
+    const narrow = ruleFor(SETTINGS_FACTS, ["@container (max-width: 34rem)"]);
+    expect(narrow, "no narrow stacking rule").toBeDefined();
+    expect(valueIn(narrow, "grid-template-columns")).toBe("minmax(0, 1fr)");
+  });
+
+  it("the global .ccc-detail-fields rule used by the Phase 4 and 6 detail views is unchanged", () => {
+    const global = ruleFor(".ccc-detail-fields");
+    expect(valueIn(global, "grid-template-columns")).toBe("max-content 1fr");
+    expect(valueIn(global, "align-items")).toBeUndefined();
+    const globalDd = ruleFor(".ccc-detail-fields dd");
+    expect(valueIn(globalDd, "margin")).toBe("0");
+  });
+
+  it("each Diagnostics group label has token spacing above it", () => {
+    const rule = ruleFor(`${ROOT} .ccc-health-row .ccc-health-group-label`);
+    expect(rule, "no .ccc-health-group-label rule").toBeDefined();
+    expect(valueIn(rule, "margin-block-start")).toMatch(/^var\(--ccc-space-(sm|md|lg)\)$/);
   });
 });

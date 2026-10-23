@@ -247,6 +247,12 @@ describe("Task 2, Test 2: parts", () => {
       (label) => label.textContent,
     );
     expect(labels).toEqual(["Claude Code", "Codex"]);
+    // FIX5B: each group label carries the spacing class that keeps it off the button and the part above.
+    expect(
+      [...row.querySelectorAll(".ccc-section-label--muted")].every((label) =>
+        label.classList.contains("ccc-health-group-label"),
+      ),
+    ).toBe(true);
     // Group labels are not headings: the outline stays h3, h4, h5.
     expect(row.querySelectorAll("h6, [role='heading']")).toHaveLength(0);
     const partNames = [...row.querySelectorAll(".ccc-health-part .ccc-health-part-name")].map(

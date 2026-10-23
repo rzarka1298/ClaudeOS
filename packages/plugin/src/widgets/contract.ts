@@ -208,6 +208,13 @@ export interface WidgetBodyProps<T> {
     | ((destination: DestinationId, selection?: NavigationSelection) => void)
     | undefined;
   readonly onQuickAction?: ((descriptor: QuickActionDescriptor) => void) | undefined;
+  /**
+   * True only while the frame is showing the disconnected treatment (last-good values, dimmed).
+   * A body whose action needs the service (the Technology card's `Open report` loads the report
+   * from it) renders that action `aria-disabled` with a visible reason; navigation inside the
+   * plugin stays live. Absent means the service is not known to be away.
+   */
+  readonly serviceAway?: boolean | undefined;
 }
 
 /**
