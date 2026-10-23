@@ -1,7 +1,6 @@
 import type { ClaudeIntegrationStatus } from "@ccc/domain";
 import type { CodexIntegrationStatus } from "@ccc/domain/codex-integration.js";
 import type { VNode } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";
 import { codexIntegration } from "../widgets/codex-signals.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
@@ -31,6 +30,7 @@ import {
 import type { LaunchersSession } from "./launchers-settings.js";
 import { SettingRow } from "./settings-controls.js";
 import type { SettingsHost } from "./settings-host.js";
+import { useIntegrationStatus } from "./settings-integration-status.js";
 import {
   CLAUDE_COPY_FAILED_NOTICE,
   CLAUDE_COPY_INSTALL_DESC,
@@ -92,43 +92,6 @@ export interface IntegrationsSectionProps {
   readonly notify: (message: string) => void;
   /** Only its Codex health result is read, and read-only. */
   readonly launchersSession: LaunchersSession;
-}
-
-type Read<T> = T | "checking" | "unavailable";
-
-/**
- * The live value when there is one; otherwise the seam's answer, read once per time the section
- * needs one (mounted with no signal, or the service coming back with no signal). A rejected read
- * settles on `unavailable`, never on `checking` forever.
- */
-function useIntegrationStatus<T>(live: T | null, away: boolean, read: () => Promise<T>): Read<T> {
-  const [fetched, setFetched] = useState<Read<T>>("checking");
-  const readRef = useRef(read);
-  readRef.current = read;
-  const needsRead = live === null && !away;
-
-  useEffect(() => {
-    if (!needsRead) return;
-    let cancelled = false;
-    setFetched("checking");
-    // `new Promise` also turns a synchronous throw in the seam into a rejection.
-    new Promise<T>((resolve) => {
-      resolve(readRef.current());
-    }).then(
-      (status) => {
-        if (!cancelled) setFetched(status);
-      },
-      () => {
-        if (!cancelled) setFetched("unavailable");
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [needsRead]);
-
-  if (live !== null) return live;
-  return fetched;
 }
 
 /** A status row's text: a skeleton line while the first answer is awaited, else the sentence. */

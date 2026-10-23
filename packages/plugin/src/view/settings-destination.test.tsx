@@ -160,6 +160,7 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
       "-1",
       "-1",
       "-1",
+      "-1",
     ]);
     expect(items.every((item) => item.tagName === "BUTTON")).toBe(true);
     expect(items.every((item) => item.getAttribute("type") === "button")).toBe(true);
@@ -173,6 +174,7 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
       "Integrations",
       "Approvals and tasks",
       "Visual",
+      "Security",
       "Diagnostics",
     ];
     navItem("Projects").focus();
@@ -263,13 +265,14 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
     const labels = within(nav())
       .getAllByRole("button")
       .map((button) => button.textContent);
-    // Paths, Security and Schedules arrive with 08-15 Task 2 and 08-18.
+    // Paths and Schedules arrive with 08-18.
     expect(labels).toEqual([
       "Projects",
       "Launchers",
       "Integrations",
       "Approvals and tasks",
       "Visual",
+      "Security",
       "Diagnostics",
     ]);
   });

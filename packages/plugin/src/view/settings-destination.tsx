@@ -19,6 +19,7 @@ import {
   settingsSectionRequested,
   takeSettingsSectionRequest,
 } from "./settings-sections.js";
+import { SecuritySection } from "./settings-security.js";
 import { VisualSettings } from "./settings-visual.js";
 
 /**
@@ -87,6 +88,9 @@ export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionVie
     <ApprovalsTasksSettings host={host} connection={connection} notify={notify} />
   ),
   visual: ({ host, notify }) => <VisualSettings host={host} notify={notify} />,
+  security: ({ host, connection, now, notify }) => (
+    <SecuritySection host={host} connection={connection} now={now} notify={notify} />
+  ),
   diagnostics: ({ host, connection, now, notify }) => (
     <DiagnosticsSection host={host} connection={connection} now={now} notify={notify} />
   ),

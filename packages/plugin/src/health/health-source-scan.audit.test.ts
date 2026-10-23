@@ -23,7 +23,12 @@ const VIEW_FILES = [
   "diagnostics-section.tsx",
   "diagnostics-row.tsx",
   "diagnostics-copy.ts",
+  // Plan 08-15: the Security section reads the same health answer and fetches it once on open.
+  "settings-security.tsx",
 ] as const;
+
+/** The component files (the a11y floor below applies to every one of them). */
+const COMPONENT_FILES = VIEW_FILES.filter((file) => file.endsWith(".tsx"));
 
 const SOURCES: readonly (readonly [string, string])[] = [
   ...HEALTH_FILES.map(
@@ -55,7 +60,7 @@ const NETWORK = new RegExp(
 );
 
 const ALLOWED_IMPORT =
-  /^(@ccc\/domain\/diagnostics\.js|@ccc\/domain|preact|preact\/hooks|@preact\/signals|\.\/[\w-]+\.js|\.\.\/connection-state\.js|\.\.\/host-registry\.js|\.\.\/health\/(api|state)\.js|\.\.\/widgets\/(footer|relative-time)\.js)$/;
+  /^(@ccc\/domain\/(diagnostics|auth)\.js|@ccc\/domain|preact|preact\/hooks|@preact\/signals|\.\/[\w-]+\.js|\.\.\/connection-state\.js|\.\.\/host-registry\.js|\.\.\/health\/(api|state)\.js|\.\.\/widgets\/(footer|relative-time|session-signals)\.js)$/;
 
 function importSpecifiers(source: string): string[] {
   return [...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s+["']([^"']+)["']/gms)].map(
@@ -107,6 +112,8 @@ describe("no health fetch runs on a timer (D-05)", () => {
       "health/state.ts:reconnect",
       "view/diagnostics-section.tsx:gesture",
       "view/diagnostics-section.tsx:gesture",
+      // Opening Security is an owner action: the one fetch, from its mount effect.
+      "view/settings-security.tsx:gesture",
     ]);
   });
 
@@ -114,6 +121,7 @@ describe("no health fetch runs on a timer (D-05)", () => {
     for (const [name, source] of SOURCES) {
       const count = (source.match(/["']gesture["']/g) ?? []).length;
       if (name === "view/diagnostics-section.tsx") expect(count).toBe(2);
+      else if (name === "view/settings-security.tsx") expect(count).toBe(1);
       else if (name === "health/api.ts") expect(count).toBe(2);
       else expect(count, `${name} names the gesture trigger`).toBe(0);
     }
@@ -142,20 +150,14 @@ describe("no connection reason text and no raw error reaches a row (D-43, T-08-3
 });
 
 describe("controls are keyboard operable and honest about being unavailable (a11y floor 6)", () => {
-  it.each(VIEW_FILES.slice(0, 2))(
-    "%s uses no native disabled attribute and no smooth scroll",
-    (_name) => {
-      const source = sourceOf(`view/${_name}`);
-      expect(source).not.toMatch(/(?<![-\w])disabled\s*[=:]/);
-      expect(source).not.toMatch(/behavior\s*:\s*["']smooth["']/);
-    },
-  );
+  it.each(COMPONENT_FILES)("%s uses no native disabled attribute and no smooth scroll", (_name) => {
+    const source = sourceOf(`view/${_name}`);
+    expect(source).not.toMatch(/(?<![-\w])disabled\s*[=:]/);
+    expect(source).not.toMatch(/behavior\s*:\s*["']smooth["']/);
+  });
 
-  it.each(VIEW_FILES.slice(0, 2))(
-    "%s renders no link, image, frame or style attribute",
-    (_name) => {
-      const source = sourceOf(`view/${_name}`);
-      expect(source).not.toMatch(/<a\s|href=|<img|<iframe|<script|style=\{/);
-    },
-  );
+  it.each(COMPONENT_FILES)("%s renders no link, image, frame or style attribute", (_name) => {
+    const source = sourceOf(`view/${_name}`);
+    expect(source).not.toMatch(/<a\s|href=|<img|<iframe|<script|style=\{/);
+  });
 });
