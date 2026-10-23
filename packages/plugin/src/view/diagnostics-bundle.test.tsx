@@ -807,6 +807,46 @@ describe("Task 3, Test 3: with the service away the bundle is still offered from
     );
   });
 
+  it.each([{ kind: "disconnected", reason: "x" } as const, { kind: "connecting" } as const])(
+    "FIX6B: with the connection $kind, last-good launcher and transcript values are reported as unknown, not current",
+    (connection) => {
+      answered();
+      claudeIntegration.value = {
+        hooks: "not-installed",
+        hookRuntimeMissing: false,
+        disableAllHooks: null,
+        lastEventAt: null,
+        telemetry: { kind: "ok" },
+        detectedClaudeVersion: null,
+        statusLine: "not-installed",
+        statusLineReported: false,
+        transcriptAnalysis: { enabled: true },
+        spoolDropCount: 0,
+        unknownEventCount: 0,
+        cleanupPeriodDays: 30,
+      };
+      projectsSnapshot.value = {
+        projects: [],
+        launchers: { ...EMPTY_PROJECTS_SNAPSHOT.launchers, antigravity: "set-up" as const },
+      };
+      const f = fixture();
+      renderBlock(f, connection);
+      fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+      const text = screen.getByRole("region", { name: "Diagnostic bundle preview" }).textContent;
+      expect(text).toBe(
+        expectedText(f, {
+          connection: connection.kind,
+          health: null,
+          transcriptAnalysis: null,
+          launchers: null,
+        }),
+      );
+      const features = JSON.parse(text ?? "{}").features;
+      expect(features.transcriptAnalysis).toBeNull();
+      expect(features.launchers.antigravity).toBeNull();
+    },
+  );
+
   it("a failed check with the service up says the checks couldn't run and still offers the bundle", () => {
     healthPhase.value = "error";
     const f = fixture();
