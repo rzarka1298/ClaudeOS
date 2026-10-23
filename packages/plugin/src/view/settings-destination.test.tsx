@@ -159,6 +159,7 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
       "-1",
       "-1",
       "-1",
+      "-1",
     ]);
     expect(items.every((item) => item.tagName === "BUTTON")).toBe(true);
     expect(items.every((item) => item.getAttribute("type") === "button")).toBe(true);
@@ -166,7 +167,14 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
 
   it("Test 3: arrow keys move focus without activating, wrapping at both ends", () => {
     renderShell();
-    const order = ["Projects", "Launchers", "Approvals and tasks", "Visual", "Diagnostics"];
+    const order = [
+      "Projects",
+      "Launchers",
+      "Integrations",
+      "Approvals and tasks",
+      "Visual",
+      "Diagnostics",
+    ];
     navItem("Projects").focus();
     fireEvent.keyDown(navItem("Projects"), { key: "ArrowDown" });
     expect(document.activeElement).toBe(navItem("Launchers"));
@@ -255,10 +263,11 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
     const labels = within(nav())
       .getAllByRole("button")
       .map((button) => button.textContent);
-    // Integrations, Paths, Security and Schedules arrive with 08-15 and 08-18.
+    // Paths, Security and Schedules arrive with 08-15 Task 2 and 08-18.
     expect(labels).toEqual([
       "Projects",
       "Launchers",
+      "Integrations",
       "Approvals and tasks",
       "Visual",
       "Diagnostics",

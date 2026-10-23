@@ -10,6 +10,7 @@ import { type LaunchersSession, LaunchersSettings } from "./launchers-settings.j
 import { ApprovalsTasksSettings } from "./settings-approvals-tasks.js";
 import { StatusLine } from "./settings-controls.js";
 import type { SettingsHost } from "./settings-host.js";
+import { IntegrationsSection } from "./settings-integrations.js";
 import { ProjectsSettings } from "./settings-projects.js";
 import {
   SETTINGS_SECTION_LABELS,
@@ -71,6 +72,15 @@ export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionVie
       projectsActions={projectsActions}
       scanActions={scanActions}
       pickFolder={pickFolder}
+    />
+  ),
+  integrations: ({ host, connection, now, notify, launchersSession }) => (
+    <IntegrationsSection
+      host={host}
+      connection={connection}
+      now={now}
+      notify={notify}
+      launchersSession={launchersSession}
     />
   ),
   "approvals-tasks": ({ host, connection, notify }) => (
