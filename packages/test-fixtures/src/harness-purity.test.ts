@@ -59,12 +59,22 @@ const CONTRAST_SPEC_PATH = join(
   "visual",
   "contrast.spec.ts",
 );
+/** The Phase 8 matrix (plan 08-21): a sixth spec file over the same harness page, under the
+ * identical purity contract. */
+const SETTINGS_SPEC_PATH = join(
+  REPO_ROOT,
+  "packages",
+  "test-fixtures",
+  "visual",
+  "settings.spec.ts",
+);
 const SPEC_PATHS = [
   ["widgets.spec.ts", SPEC_PATH],
   ["agent-runs.spec.ts", AGENT_RUNS_SPEC_PATH],
   ["codex.spec.ts", CODEX_SPEC_PATH],
   ["research.spec.ts", RESEARCH_SPEC_PATH],
   ["contrast.spec.ts", CONTRAST_SPEC_PATH],
+  ["settings.spec.ts", SETTINGS_SPEC_PATH],
 ] as const;
 
 /** The exact set of modules the visual spec may import. */
