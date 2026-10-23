@@ -85,6 +85,8 @@ const SAVE_NOTICES: Readonly<Record<SaveOutcome["kind"], string>> = {
   "inside-vault": "That location is inside your vault. Choose a folder outside the vault.",
   "invalid-path": SAVE_FAILED,
   exists: "A file with that name already exists. Choose a new name. Nothing was written.",
+  "unsupported-location":
+    "This location can't hold the bundle safely. Choose a folder on your Mac's disk.",
   failed: SAVE_FAILED,
 };
 
@@ -204,8 +206,12 @@ export function DiagnosticBundleBlock({
         reducedMotion: host.settings.reducedMotion,
         notifyApprovals: host.settings.notifyApprovals,
       },
-      transcriptAnalysis: claudeIntegration.peek()?.transcriptAnalysis.enabled ?? null,
-      launchers: snapshot?.launchers ?? null,
+      // Both come from last-good state that survives a disconnect. Unless the service is live
+      // they are unknown (null), never old values reported as current (FIX6B).
+      transcriptAnalysis: live
+        ? (claudeIntegration.peek()?.transcriptAnalysis.enabled ?? null)
+        : null,
+      launchers: live ? (snapshot?.launchers ?? null) : null,
       diagnostics: diagnostics.peek(),
     };
     return buildBundle(

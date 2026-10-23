@@ -114,7 +114,13 @@ export function ProjectsSettings({
         </>
       )}
       {!loading && !failed && (
-        <ScanFolders state={state} actions={scanActions} now={now} announce={notify} />
+        <ScanFolders
+          state={state}
+          actions={scanActions}
+          now={now}
+          announce={notify}
+          unavailable={away ? { reasonId } : undefined}
+        />
       )}
       <button
         type="button"

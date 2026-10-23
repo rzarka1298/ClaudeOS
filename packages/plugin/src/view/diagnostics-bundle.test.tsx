@@ -27,7 +27,7 @@ import {
   currentRuntimeFacts,
   type VerifyAndSerialise,
 } from "../health/bundle-input.js";
-import { saveBundle, saveDialogAvailable } from "../health/export.js";
+import { nodeExportFileSystem, saveBundle, saveDialogAvailable } from "../health/export.js";
 import { bundleExport, configureBundleExport } from "../health/export-port.js";
 import {
   clearHealth,
@@ -435,6 +435,31 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
   });
 
+  it("FIX6B: a location with no hard links says it cannot hold the bundle, writes nothing, and the Save gate is released", async () => {
+    configureBundleExport({
+      saveDialogAvailable,
+      save: (text, vaultBase, now) =>
+        saveBundle(text, vaultBase, now, {
+          ...nodeExportFileSystem,
+          link: () => Promise.reject(Object.assign(new Error("exFAT"), { code: "EPERM" })),
+        }),
+    });
+    choose(join(outside, "b.json"));
+    const f = vaultFixture();
+    openPreview(f);
+    await pressSave(f);
+    expect(f.notify).toHaveBeenLastCalledWith(
+      "This location can't hold the bundle safely. Choose a folder on your Mac's disk.",
+    );
+    expect(readdirSync(outside)).toEqual([]);
+    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
+    const save = screen.getByRole("button", { name: "Save bundle" });
+    await waitFor(() => expect(save.getAttribute("aria-busy")).toBeNull());
+    // The gate is free again: a second press reaches the port.
+    await pressSave(f);
+    expect(f.notify.mock.calls.length).toBe(2);
+  });
+
   it("Test 3: a path inside the vault is refused with the fixed sentence and nothing is written", async () => {
     choose(join(vault, "diagnostics.json"));
     const f = vaultFixture();
@@ -806,6 +831,50 @@ describe("Task 3, Test 3: with the service away the bundle is still offered from
       expectedText(f, { connection: "disconnected", health: null }),
     );
   });
+
+  it.each([{ kind: "disconnected", reason: "x" } as const, { kind: "connecting" } as const])(
+    "FIX6B: with the connection $kind, last-good launcher and transcript values are reported as unknown, not current",
+    (connection) => {
+      answered();
+      claudeIntegration.value = {
+        hooks: "not-installed",
+        hookRuntimeMissing: false,
+        disableAllHooks: null,
+        lastEventAt: null,
+        telemetry: { kind: "ok" },
+        detectedClaudeVersion: null,
+        statusLine: "not-installed",
+        statusLineReported: false,
+        transcriptAnalysis: { enabled: true },
+        spoolDropCount: 0,
+        unknownEventCount: 0,
+        cleanupPeriodDays: 30,
+      };
+      projectsSnapshot.value = {
+        projects: [],
+        launchers: { ...EMPTY_PROJECTS_SNAPSHOT.launchers, antigravity: "set-up" as const },
+      };
+      const f = fixture();
+      renderBlock(f, connection);
+      fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+      const text = screen.getByRole("region", { name: "Diagnostic bundle preview" }).textContent;
+      expect(text).toBe(
+        expectedText(f, {
+          connection: connection.kind,
+          health: null,
+          transcriptAnalysis: null,
+          launchers: null,
+        }),
+      );
+      const features = (
+        JSON.parse(text ?? "{}") as {
+          features: { transcriptAnalysis: unknown; launchers: { antigravity: unknown } };
+        }
+      ).features;
+      expect(features.transcriptAnalysis).toBeNull();
+      expect(features.launchers.antigravity).toBeNull();
+    },
+  );
 
   it("a failed check with the service up says the checks couldn't run and still offers the bundle", () => {
     healthPhase.value = "error";
