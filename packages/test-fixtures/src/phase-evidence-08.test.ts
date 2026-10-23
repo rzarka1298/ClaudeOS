@@ -33,7 +33,13 @@ describe("guard (Test 1)", () => {
       return;
     }
     expect(phaseName, "the phase directory").toBeDefined();
-    for (const name of ["08-THREAT-EVIDENCE.md", "08-UAT.md", "08-VALIDATION.md"]) {
+    for (const name of [
+      "08-THREAT-EVIDENCE.md",
+      "08-UAT.md",
+      "08-MERGE-GATES.md",
+      "08-VALIDATION.md",
+      "08-UAT-AUDIT.md",
+    ]) {
       expect(existsSync(join(dir, name)), name).toBe(true);
     }
   });
@@ -301,10 +307,6 @@ run("evidence is real (Tests 3 of Task 2)", () => {
   it("cites files that exist and contain the quoted text, and test files whose quoted title is live", () => {
     let checked = 0;
     for (const row of rows()) {
-      if (row.id === "T-08-56") {
-        // This test file is the evidence for its own row; it exists because this test is running.
-        continue;
-      }
       checked += checkCites(row.id, row.cites);
     }
     expect(checked).toBeGreaterThan(200);
@@ -608,5 +610,475 @@ run("probe safety (Test 5 of Task 2)", () => {
         join(REPO_ROOT, "packages/service/src/diagnostics/diagnostics-source-scan.audit.test.ts"),
       ),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Task 3: the merge-gate runbook, the validation map and the regenerated audit
+
+const gates = read("08-MERGE-GATES.md");
+const validation = read("08-VALIDATION.md");
+const audit = read("08-UAT-AUDIT.md");
+
+function packageScripts(path: string): Record<string, string> {
+  return (
+    JSON.parse(readFileSync(join(REPO_ROOT, path), "utf8")) as { scripts: Record<string, string> }
+  ).scripts;
+}
+
+/** The spec file base names a spec map declares, read as text (the e2e package is a leaf). */
+function specNames(mapFile: string): string[] {
+  const source = readFileSync(join(REPO_ROOT, "packages", "e2e", "src", mapFile), "utf8");
+  return [...source.matchAll(/specPath\("([a-z0-9-]+)"\)/g)].map((m) => m[1] as string);
+}
+
+/** The `--spec` base names on the one runbook line that runs the given phase script. */
+function runLineSpecs(phase: "07" | "08"): string[] {
+  const line = gates
+    .split("\n")
+    .find((l) => l.includes("packages/e2e/dist/cli.js run") && l.includes(`${phase}-UAT.md`));
+  expect(line, `the run command for phase ${phase}`).toBeDefined();
+  return [
+    ...(line as string).matchAll(/--spec "\$PWD\/packages\/e2e\/specs\/([a-z0-9-]+)\.e2e\.ts"/g),
+  ].map((m) => m[1] as string);
+}
+
+run("merge-gate runbook (Task 3, Tests 1 to 3)", () => {
+  const ORDER = [
+    "Post-wave gates",
+    "Full unfiltered test run",
+    "Next-free value re-checks",
+    "Container visual comparison",
+    "SLICE-02 audit",
+    "Automated runs at the same final head",
+    "Look verdicts",
+    "Report and ratification",
+    "Judge panel",
+    "Codex blocking judge",
+    "Owner sitting",
+    "Strict audit after the sitting",
+    "Merge and publish",
+    "Closing checklist",
+  ];
+
+  it("orders the sections as the plan requires", () => {
+    const positions = ORDER.map((title, index) => gates.indexOf(`## ${index + 1}. ${title}`));
+    for (const [index, position] of positions.entries()) {
+      expect(position, ORDER[index]).toBeGreaterThan(-1);
+    }
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+  });
+
+  it("makes both automated runs at one clean head after the last product commit, with separate --spec lists", () => {
+    const shared = section(gates, "6\\. Automated runs at the same final head");
+    expect(shared).toMatch(/same final head/);
+    expect(shared).toMatch(/after the last product commit/);
+    expect(shared).toMatch(/baselines/);
+    expect(shared).toMatch(/clean/);
+    expect(shared).toMatch(/staleness/i);
+    expect(shared).toContain("packages/e2e/src/staleness.ts");
+    expect(existsSync(join(REPO_ROOT, "packages/e2e/src/staleness.ts"))).toBe(true);
+    // Phase 7's four research specs and Phase 8's five, each list the map declares, no overlap.
+    const seven = runLineSpecs("07");
+    const eight = runLineSpecs("08");
+    expect([...seven].sort()).toEqual([...specNames("spec-map-07.ts")].sort());
+    expect([...eight].sort()).toEqual([...specNames("spec-map-08.ts")].sort());
+    expect(seven).toHaveLength(4);
+    expect(eight).toHaveLength(5);
+    expect(seven.filter((name) => eight.includes(name))).toEqual([]);
+    for (const name of [...seven, ...eight]) {
+      expect(existsSync(join(REPO_ROOT, "packages", "e2e", "specs", `${name}.e2e.ts`)), name).toBe(
+        true,
+      );
+    }
+    // Each run has its own screenshots folder and its own report.
+    expect(gates).toContain("ccc-phase7-shots");
+    expect(gates).toContain("ccc-phase8-shots");
+    expect(gates).toContain("07-UAT-AUTO-REPORT.md");
+    expect(gates).toContain("08-UAT-AUTO-REPORT.md");
+  });
+
+  it("names only commands, scripts, runner subcommands and flags that exist", () => {
+    const scripts = packageScripts("package.json");
+    const e2eScripts = packageScripts("packages/e2e/package.json");
+    let checked = 0;
+    for (const match of gates.matchAll(/pnpm run ([a-z][a-z0-9:-]*)/g)) {
+      expect(scripts[match[1] as string], match[0]).toBeDefined();
+      checked += 1;
+    }
+    for (const match of gates.matchAll(/pnpm --filter @ccc\/e2e run ([a-z][a-z0-9:-]*)/g)) {
+      expect(e2eScripts[match[1] as string], match[0]).toBeDefined();
+      checked += 1;
+    }
+    for (const match of gates.matchAll(/\b(?:sh|node) (scripts\/[A-Za-z0-9_./-]+)/g)) {
+      expect(existsSync(join(REPO_ROOT, match[1] as string)), match[0]).toBe(true);
+      checked += 1;
+    }
+    const turbo = JSON.parse(readFileSync(join(REPO_ROOT, "turbo.json"), "utf8")) as {
+      tasks: Record<string, unknown>;
+    };
+    for (const match of gates.matchAll(/turbo run ((?:[a-z:]+ ?)+?)(?= --|`|$| &&)/gm)) {
+      for (const task of (match[1] as string).trim().split(/\s+/)) {
+        expect(turbo.tasks[task], `turbo task ${task}`).toBeDefined();
+        checked += 1;
+      }
+    }
+    const cli = readFileSync(join(REPO_ROOT, "packages", "e2e", "src", "cli.ts"), "utf8");
+    const cliArgs = readFileSync(join(REPO_ROOT, "packages", "e2e", "src", "cli-args.ts"), "utf8");
+    const knownFlag = (name: string): boolean =>
+      cliArgs.includes(`"${name}"`) || new RegExp(`\\b${name}: \\{ type:`).test(cliArgs);
+    for (const line of gates.split("\n").filter((l) => l.includes("packages/e2e/dist/cli.js"))) {
+      const command = /packages\/e2e\/dist\/cli\.js ([a-z-]+)/.exec(line)?.[1] as string;
+      const key = command.includes("-") ? `"${command}"` : command;
+      expect(cli, `runner command ${command}`).toContain(key);
+      if (command === "look") {
+        const sub = /cli\.js look (list|record)\b/.exec(line)?.[1] as string;
+        expect(cliArgs, `look ${sub}`).toContain(`look ${sub}`);
+      }
+      for (const flag of line.match(/--[a-z][a-z-]*/g) ?? []) {
+        expect(knownFlag(flag.slice(2)), `${command} ${flag}`).toBe(true);
+        checked += 1;
+      }
+    }
+    // The audit is run as `pnpm run uat:audit` and `pnpm run uat:audit --strict`; its flags are the
+    // runner's own audit flags, and a `--` before the flag is a usage error (shown in the text).
+    for (const line of gates.split("\n").filter((l) => /pnpm run uat:audit/.test(l))) {
+      for (const flag of line.match(/(?<=\s)--[a-z][a-z-]*/g) ?? []) {
+        expect(knownFlag(flag.slice(2)), `uat:audit ${flag}`).toBe(true);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(40);
+  });
+
+  it("names every gate the final run of this plan uses", () => {
+    for (const gate of [
+      "ci:format",
+      "ci:lint",
+      "ci:boundaries",
+      "ci:backstop",
+      "ci:obsidianmd",
+      "ci:privacy",
+      "ci:images",
+      "ci:typecheck",
+    ]) {
+      expect(gates, gate).toContain(`pnpm run ${gate}`);
+    }
+    expect(gates).toContain("sh scripts/ci/visual-in-container.sh");
+    expect(gates).toContain("pnpm run uat:audit");
+  });
+
+  it("states the policies the plan requires", () => {
+    expect(gates).toMatch(/full unfiltered run is the post-merge gate/);
+    expect(gates).toMatch(/live owner items must be recorded before phase closure/);
+    expect(gates).toMatch(/never used to execute plans marked high risk/i);
+    expect(gates).toMatch(/80 percent of the weekly allowance/);
+    expect(gates).toMatch(/blind dual review and debate/);
+    expect(gates).toMatch(/accept auto-results of run/);
+    expect(gates).toMatch(/OD-6/);
+    expect(gates).toMatch(/Phase 7 items 22 to 24/);
+    expect(gates).toMatch(/Phase 8 owner items 34 to 39/);
+    for (const judge of [
+      "gsd-verifier",
+      "code-review",
+      "prd-compliance-review",
+      "gsd-security-auditor",
+    ]) {
+      expect(gates, judge).toContain(judge);
+    }
+    expect(gates).toContain("08-THREAT-EVIDENCE.md");
+    expect(gates).toContain("08-UAT-AUTO-REPORT.md");
+    expect(gates).toContain("08-UAT-AUDIT.md");
+    expect(gates).toContain("ADR 0031");
+    // The audit with the strict flag runs after the owner sitting, in the form that works.
+    expect(gates).toMatch(/pnpm run uat:audit --strict/);
+    expect(gates).toMatch(/uat:audit -- --strict/);
+    expect(gates).toMatch(/usage error/);
+    const strict = section(gates, "12\\. Strict audit after the sitting");
+    expect(strict).toMatch(/pnpm run uat:audit --strict/);
+    expect(strict).toMatch(/OD-7/);
+    expect(strict).toMatch(/OD-8/);
+    // Next-free values: this phase added ADR 0031 and backstop rule 18 and no migration.
+    const nextFree = section(gates, "3\\. Next-free value re-checks");
+    expect(nextFree).toMatch(/0031/);
+    expect(nextFree).toMatch(/rule 18/);
+    expect(nextFree).toMatch(/no migration/);
+  });
+
+  it("lists the high-risk plans by reading each plan's front matter, and Codex never executes them", () => {
+    const high = planFiles()
+      .filter((name) => /^risk: high$/m.test(readFileSync(join(dir, name), "utf8")))
+      .map((name) => name.slice(0, 5));
+    expect(high.length).toBeGreaterThan(0);
+    const listed = /High-risk plans[^:]*: ([^\n]+)/.exec(gates)?.[1] ?? "";
+    for (const plan of high) expect(listed, plan).toContain(plan);
+    const named = [...listed.matchAll(/08-\d\d/g)].map((m) => m[0]);
+    expect(named.sort()).toEqual([...high].sort());
+    for (const name of planFiles()) {
+      expect(readFileSync(join(dir, name), "utf8"), name).toMatch(/^\s*codex_execute: never$/m);
+    }
+  });
+
+  it("gives the closing checklist its owner, audit, evidence, validation and service lines", () => {
+    const closing = section(gates, "14\\. Closing checklist");
+    for (const word of [
+      "08-UAT.md",
+      "07-UAT.md",
+      "08-UAT-AUDIT.md",
+      "08-THREAT-EVIDENCE.md",
+      "08-VALIDATION.md",
+      "service restored",
+      "SLICE-01",
+      "SLICE-02",
+      "DIAG-04",
+    ]) {
+      expect(closing, word).toContain(word);
+    }
+    expect(closing.match(/^- \[ \]/gm)?.length ?? 0).toBeGreaterThanOrEqual(8);
+  });
+});
+
+run("validation map (Task 3, Test 4)", () => {
+  const front = /^---\n([\s\S]*?)\n---/.exec(validation)?.[1] ?? "";
+  const mapSection = section(validation, "Per-Task Verification Map");
+
+  interface MapRow {
+    readonly plan: string;
+    readonly task: number;
+    readonly commands: string[];
+    readonly exists: string;
+    readonly status: string;
+  }
+
+  function mapRows(): MapRow[] {
+    const out: MapRow[] = [];
+    for (const line of mapSection.split("\n")) {
+      const cells = cellsOf(line);
+      const id = /^(08-\d\d)-T(\d+)$/.exec(cells[1] ?? "");
+      if (id === null) continue;
+      out.push({
+        plan: id[1] as string,
+        task: Number(id[2]),
+        commands: [...(cells[8] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1] as string),
+        exists: cells[9] ?? "",
+        status: cells[10] ?? "",
+      });
+    }
+    return out;
+  }
+
+  const GREEN = "✅ green";
+  const MERGE_GATE = "⬜ merge gate";
+
+  /** Test files a command names under `--filter @ccc/<pkg> exec vitest run ...` that do not exist. */
+  function missingFiles(commands: string[]): string[] {
+    const missing: string[] = [];
+    for (const command of commands) {
+      for (const match of command.matchAll(
+        /--filter @ccc\/([a-z0-9-]+) exec vitest run ([^&;]*)/g,
+      )) {
+        for (const path of (match[2] as string)
+          .split(/\s+/)
+          .filter((p) => /\.test\.tsx?$/.test(p))) {
+          if (!existsSync(join(REPO_ROOT, "packages", match[1] as string, path)))
+            missing.push(path);
+        }
+      }
+    }
+    return missing;
+  }
+
+  it("has one row per task of every 08-NN plan, with a command, an existing file and a status", () => {
+    const rows = mapRows();
+    for (const file of planFiles()) {
+      const plan = file.slice(0, 5);
+      const tasks = (readFileSync(join(dir, file), "utf8").match(/^\s*<task type=/gm) ?? []).length;
+      expect(tasks, plan).toBeGreaterThan(0);
+      const mine = rows.filter((row) => row.plan === plan);
+      expect(
+        mine.map((row) => row.task),
+        plan,
+      ).toEqual(Array.from({ length: tasks }, (_, i) => i + 1));
+    }
+    expect(rows.length).toBe(69);
+    for (const row of rows) {
+      expect(row.commands.length, `${row.plan} T${row.task}`).toBeGreaterThan(0);
+      expect([GREEN, MERGE_GATE], `${row.plan} T${row.task}`).toContain(row.status);
+      expect(row.exists, `${row.plan} T${row.task}`).toContain("✅");
+    }
+  });
+
+  it("carries each task's first automated command from its plan, and only the container compare is a merge gate", () => {
+    const rows = mapRows();
+    const flat = (text: string): string => text.replace(/\s+/g, " ").trim();
+    for (const file of planFiles()) {
+      const plan = file.slice(0, 5);
+      const blocks = [
+        ...readFileSync(join(dir, file), "utf8").matchAll(/<task type=[^>]*>([\s\S]*?)<\/task>/g),
+      ];
+      for (const [index, block] of blocks.entries()) {
+        const planned = [
+          ...(block[1] as string).matchAll(/<automated>([\s\S]*?)<\/automated>/g),
+        ].map((m) => flat(m[1] as string));
+        const row = rows.find((r) => r.plan === plan && r.task === index + 1);
+        expect(planned.length, `${plan} T${index + 1}`).toBeGreaterThan(0);
+        expect(
+          (row?.commands ?? []).map((c) => flat(c)),
+          `${plan} T${index + 1}`,
+        ).toContain(planned[0]);
+      }
+    }
+    const open = rows.filter((row) => row.status !== GREEN);
+    expect(open.map((row) => `${row.plan}-T${row.task}`)).toEqual(["08-21-T3"]);
+    for (const row of open) expect(row.commands.join(" ")).toContain("visual-in-container");
+  });
+
+  it("names only test files that exist in the package the command filters to", () => {
+    let checked = 0;
+    for (const row of mapRows()) {
+      expect(missingFiles(row.commands), `${row.plan} T${row.task}`).toEqual([]);
+      for (const command of row.commands) {
+        checked += [...command.matchAll(/--filter @ccc\/([a-z0-9-]+) exec vitest run ([^&;]*)/g)]
+          .length;
+      }
+    }
+    expect(checked).toBeGreaterThan(60);
+  });
+
+  it("sets nyquist_compliant and wave_0_complete true only when no row is MISSING", () => {
+    const missing =
+      mapRows().some(
+        (row) => missingFiles(row.commands).length > 0 || /MISSING/.test(row.status),
+      ) || /\bMISSING\b/.test(section(validation, "Wave 0 Requirements"));
+    const nyquist = /^nyquist_compliant: (true|false)$/m.exec(front)?.[1];
+    const wave0 = /^wave_0_complete: (true|false)$/m.exec(front)?.[1];
+    expect(["true", "false"]).toContain(nyquist);
+    expect(["true", "false"]).toContain(wave0);
+    expect(nyquist).toBe(missing ? "false" : "true");
+    expect(wave0).toBe(missing ? "false" : "true");
+  });
+
+  it("fills the Wave 0 table with files that exist", () => {
+    const wave0 = section(validation, "Wave 0 Requirements");
+    const rows = wave0.split("\n").filter((line) => /^\| W0-\d/.test(line));
+    expect(rows.length).toBe(23);
+    const paths = [...wave0.matchAll(/`((?:packages|scripts|docs|\.planning)\/[^`\s]+)`/g)].map(
+      (m) => m[1],
+    );
+    expect(paths.length).toBeGreaterThan(60);
+    for (const path of paths) expect(existsSync(join(REPO_ROOT, path as string)), path).toBe(true);
+    for (const row of rows) expect(row, row).toMatch(/✅ filled/);
+  });
+
+  it("keeps the sign-off honest: the container compare row and the final-head runs are named", () => {
+    const signOff = section(validation, "Validation Sign-Off");
+    expect(signOff).toContain("08-MERGE-GATES.md");
+    expect(signOff).toMatch(/container compare/i);
+    expect(validation).toMatch(/Validated at head [0-9a-f]{8}/);
+    const head = /Validated at head ([0-9a-f]{8})/.exec(validation)?.[1] as string;
+    expect(commitExists(head), head).toBe(true);
+  });
+});
+
+run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
+  const front = /^---\n([\s\S]*?)\n---/.exec(audit)?.[1] ?? "";
+  const num = (key: string): number => Number(new RegExp(`^${key}: (\\d+)$`, "m").exec(front)?.[1]);
+  const closed = /^strict-clean: true$/m.test(front);
+
+  interface PhaseRow {
+    readonly phase: string;
+    readonly recorded: string;
+    readonly status: string;
+  }
+
+  function phaseRows(): PhaseRow[] {
+    const out: PhaseRow[] = [];
+    for (const line of section(audit, "Phases").split("\n")) {
+      const cells = cellsOf(line);
+      if (!/^\d\d(\.\d)?$/.test(cells[1] ?? "")) continue;
+      out.push({ phase: cells[1] as string, recorded: cells[3] ?? "", status: cells[4] ?? "" });
+    }
+    return out;
+  }
+
+  it("covers the ten milestone phases and agrees with the Phase 8 script's item count", () => {
+    expect(phaseRows().map((r) => r.phase)).toEqual([
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "05.1",
+      "05.2",
+      "06",
+      "07",
+      "08",
+    ]);
+    expect(num("phases")).toBe(10);
+    expect(num("not-recorded")).toBe(0);
+    const total = Number(/^total: (\d+)$/m.exec(section(read("08-UAT.md"), "Summary"))?.[1]);
+    expect(total).toBe(39);
+    expect(
+      phaseRows()
+        .find((r) => r.phase === "08")
+        ?.recorded.endsWith(`/${total}`),
+    ).toBe(true);
+    expect(
+      phaseRows()
+        .find((r) => r.phase === "07")
+        ?.recorded.endsWith("/24"),
+    ).toBe(true);
+  });
+
+  it("records phases 01 to 06 as recorded or recorded with exceptions, and 07 and 08 as pending the live UAT", () => {
+    for (const row of phaseRows().filter((r) => !["07", "08"].includes(r.phase))) {
+      expect(["recorded", "recorded-with-exceptions"], row.phase).toContain(row.status);
+    }
+    for (const phase of ["07", "08"]) {
+      const row = phaseRows().find((r) => r.phase === phase);
+      if (closed) expect(["recorded", "recorded-with-exceptions"], phase).toContain(row?.status);
+      else {
+        expect(row?.status, phase).toBe("pending-live-uat");
+        expect(row?.recorded, phase).toMatch(/^0\//);
+      }
+    }
+    if (!closed) expect(num("pending-live-uat")).toBe(2);
+    expect(num("recorded") + num("recorded-with-exceptions") + num("pending-live-uat")).toBe(10);
+  });
+
+  it("lists the OD-7 exceptions awaiting the owner, and settles them only with a date once closed", () => {
+    const exceptions = section(audit, "Exceptions")
+      .split("\n")
+      .map(cellsOf)
+      .filter((cells) => /^\d\d(\.\d)?-/.test(cells[1] ?? ""));
+    expect(exceptions.length).toBe(num("exceptions"));
+    expect(exceptions.length).toBe(9);
+    for (const cells of exceptions) {
+      expect(cells[4], cells[1]).toBe("OD-7");
+      if (closed) expect(cells[5], cells[1]).toMatch(/\d{4}-\d{2}-\d{2}/);
+      else expect(cells[5], cells[1]).toBe("pending");
+    }
+    if (!closed) expect(num("exceptions-accepted")).toBe(0);
+  });
+
+  it("preserves the D-47 amendment and the owner's statement block", () => {
+    const amendments = section(audit, "Amendments");
+    expect(amendments).toContain("07-UAT item 20");
+    expect(amendments).toContain("D-47");
+    expect(amendments).toContain("08-19");
+    const statement = section(audit, "Milestone statement");
+    expect(statement).toMatch(/OD-7/);
+    expect(statement).toMatch(/OD-8/);
+    expect(statement).toMatch(/Agents never fill this block/);
+    if (!closed) expect(statement.match(/: pending$/gm)?.length).toBe(2);
+    // The owner region runs from the Amendments heading to the end of the file.
+    expect(audit.indexOf("## Amendments")).toBeGreaterThan(audit.indexOf("## Defects"));
+    expect(audit.indexOf("## Milestone statement")).toBeGreaterThan(audit.indexOf("## Amendments"));
+  });
+
+  it("records a head that exists and a generation date", () => {
+    const head = /^git-head: ([0-9a-f]{40})$/m.exec(front)?.[1] as string;
+    expect(commitExists(head), head).toBe(true);
+    expect(front).toMatch(/^generated: \d{4}-\d{2}-\d{2}$/m);
   });
 });
