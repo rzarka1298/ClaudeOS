@@ -67,11 +67,23 @@ on every macOS install — nothing to bundle, nothing to compile.
   or printed; stdin, stdout and stderr are ignored. Exit 0 is `present`, exit 44 is `absent`,
   and anything else (another exit, a timeout, a kill, a spawn failure) is `error`, never a guess.
   The account passes the same safe-identifier check as the other calls and may not start with a
-  dash; the lookup is killed with SIGKILL after 1.5 seconds. It runs only on an owner gesture
-  (opening Diagnostics or pressing its re-check control), never on a timer, so a one-time access
-  dialog could only appear while the owner is looking at the screen. Automated tests use a mocked
-  `execa` and never touch the login Keychain; the first real-keychain run is confirmed prompt-free
-  by one owner UAT item (08-UAT item 36), and the sandbox runner uses a stub for the auto items.
+  dash; the lookup is killed with SIGKILL after 1.5 seconds. It runs only on an owner gesture:
+  opening Diagnostics, Security or Paths, pressing Run checks again in Diagnostics, or pressing it
+  in the diagnostic-bundle block. It never runs on a reconnect (a launchd restart, a wake from
+  sleep) or on a timer, so a one-time access dialog could only appear while the owner is looking
+  at the screen. A reconnect answers from memory with the last gesture's answer only while that
+  answer is under five minutes old (`HEALTH_STALE_AFTER_MS`), and `not checked` otherwise. Unit
+  tests use a mocked `execa` and never spawn the real `security`. The first real-keychain run is
+  confirmed prompt-free by one owner UAT item (08-UAT item 36).
+  *Correction (Phase 8 FIX6A, 2026-10-23):* this text used to say that the sandbox runner uses a
+  stub for the automated items, and that the check runs on opening Diagnostics or pressing its
+  re-check control only. Neither was accurate. The automated runs do real attribute-only lookups
+  (no `-w`, no `-g`) of a nonexistent `ccc-uat-*-nokey` account against the owner's login
+  keychain; the lookup finds nothing and reads nothing. Automated item 36 also creates one
+  ledgered `ccc-uat-*-research` item with a placeholder value, looks it up, and deletes it; the
+  ledger removes it on teardown if the run stops early. The login keychain must therefore be
+  unlocked, which is normal while the owner is logged in, during an automated run. None of the
+  owner's own Keychain items is looked up, read or changed by an automated run.
   `SecretStore` is unchanged: the service wraps `hasSecret` in a closure (08-12).
 - Secrets never reach the operational SQLite store, the managed vault, a dotfile, or a log line —
   the only path to disk is through `security-cli.ts`'s own Keychain calls. A marker-injection
