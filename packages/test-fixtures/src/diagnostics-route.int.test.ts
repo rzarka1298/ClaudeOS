@@ -10,11 +10,7 @@ import {
   SUBSYSTEM_IDS,
   VAULT_SETUP_PATH,
 } from "@ccc/domain";
-import {
-  createAuthenticatedClient,
-  createSocketApiClient,
-  getDiagnosticsHealth,
-} from "@ccc/service-api-client";
+import { createAuthenticatedClient, createSocketApiClient } from "@ccc/service-api-client";
 import { afterEach, describe, expect, it } from "vitest";
 import { authedRequest, handshake } from "./approval-int-support.js";
 import { type DrillContext, pollHealth, withDrillService } from "./diagnostics-drill-kit.js";
@@ -48,7 +44,7 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
 
       // Before any owner gesture a reconnect never asks the Keychain about the research key
       // (Amendment A1): the scheduler reads unknown / research-key-not-checked and so does the key.
-      const reconnect = await getDiagnosticsHealth(client, "reconnect");
+      const reconnect = await context.health("reconnect");
       expect(reconnect.keychain.researchKey).toBe("unknown");
       expect(reconnect.rows[3]).toMatchObject({ id: "scheduler", status: "unknown" });
       const reconnectKey = (
@@ -57,15 +53,11 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
       expect(reconnectKey?.reasonCode).toBe("research-key-not-checked");
       expect(context.researchKeySpawns()).toEqual([]);
 
-      const health = await getDiagnosticsHealth(client, "gesture");
+      const health = await context.health("gesture");
 
-      // The client already parsed it; the raw call proves the wire body parses on its own too.
-      const raw = await client.request<unknown>({
-        method: "GET",
-        path: `${DIAGNOSTICS_HEALTH_PATH}?trigger=gesture`,
-      });
-      expect(raw.status).toBe(200);
-      expect(DiagnosticsHealthResponseSchema.safeParse(raw.body).success).toBe(true);
+      // The kit parsed it with the strict schema; the raw call proves the wire body parses on its own too.
+      const rawText = await context.rawHealth("gesture");
+      expect(DiagnosticsHealthResponseSchema.safeParse(JSON.parse(rawText)).success).toBe(true);
 
       expect(health.rows.map((row) => row.id)).toEqual(
         SUBSYSTEM_IDS.filter((id) => id !== "service"),
@@ -116,9 +108,8 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
       expect(health.vaultFingerprint).toBeNull();
 
       // No absolute path of the run folder or the owner's home folder anywhere in the body.
-      const wire = JSON.stringify(raw.body);
-      expect(wire).not.toContain(dir);
-      expect(wire).not.toContain(homedir());
+      expect(rawText).not.toContain(dir);
+      expect(rawText).not.toContain(homedir());
 
       // The gesture asked the Keychain about the nonexistent test account, exactly once per run of
       // the probes (the scheduler row and keychain.researchKey share one read), and made no
@@ -156,7 +147,7 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
   });
 
   it("answers the uniform 401 without a token and treats every trigger value as a plain read", async () => {
-    await withService(async ({ socketPath }) => {
+    await withService(async ({ socketPath, context }) => {
       const bare = createSocketApiClient({ socketPath });
       const unauthenticated = await bare.request<unknown>({
         method: "GET",
@@ -166,7 +157,7 @@ describe("Test 1 (tracer, real process): the strict health answer", () => {
 
       const client = createAuthenticatedClient({ socketPath });
       for (const trigger of ["gesture", "reconnect"] as const) {
-        const health = await getDiagnosticsHealth(client, trigger);
+        const health = await context.health(trigger);
         expect(health.rows).toHaveLength(5);
       }
       const odd = await client.request<unknown>({
@@ -185,11 +176,12 @@ describe("Test 6 (real process): the vault row after a throwaway vault is set up
   });
 
   it("reads vault-ready with a display path and a salted fingerprint, and never the root", async () => {
-    await withService(async ({ socketPath }) => {
+    await withService(async ({ socketPath, context }) => {
       const base = join(homedir(), ".ccc-test");
       mkdirSync(base, { recursive: true });
       const vaultRoot = mkdtempSync(join(base, "dv-"));
       extraDirs.push(vaultRoot);
+      context.forbid(vaultRoot, "the vault path");
       mkdirSync(join(vaultRoot, ".obsidian"), { recursive: true });
 
       const token = await handshake(socketPath);
@@ -200,8 +192,7 @@ describe("Test 6 (real process): the vault row after a throwaway vault is set up
       });
       expect(setup.status).toBe(200);
 
-      const client = createAuthenticatedClient({ socketPath });
-      const health = await getDiagnosticsHealth(client, "gesture");
+      const health = await context.health("gesture");
       expect(health.rows[0]).toMatchObject({
         id: "vault",
         status: "ok",
@@ -218,17 +209,17 @@ describe("Test 6 (real process): the vault row after a throwaway vault is set up
         .slice(0, 16);
       expect(fingerprint?.digest).toBe(digest);
 
-      const raw = await client.request<unknown>({ method: "GET", path: DIAGNOSTICS_HEALTH_PATH });
-      expect(JSON.stringify(raw.body)).not.toContain(vaultRoot);
+      expect(await context.rawHealth("gesture")).not.toContain(vaultRoot);
     });
   });
 
   it("reads vault-root-missing once the root is removed", async () => {
-    await withService(async ({ socketPath }) => {
+    await withService(async ({ socketPath, context }) => {
       const base = join(homedir(), ".ccc-test");
       mkdirSync(base, { recursive: true });
       const vaultRoot = mkdtempSync(join(base, "dv-"));
       extraDirs.push(vaultRoot);
+      context.forbid(vaultRoot, "the vault path");
       mkdirSync(join(vaultRoot, ".obsidian"), { recursive: true });
       const token = await handshake(socketPath);
       await authedRequest<unknown>(socketPath, token, {
@@ -238,10 +229,7 @@ describe("Test 6 (real process): the vault row after a throwaway vault is set up
       });
       rmSync(vaultRoot, { recursive: true, force: true });
 
-      const health = await getDiagnosticsHealth(
-        createAuthenticatedClient({ socketPath }),
-        "gesture",
-      );
+      const health = await context.health("gesture");
       expect(health.rows[0]).toMatchObject({ status: "failing", reasonCode: "vault-root-missing" });
       expect(health.vaultFingerprint).not.toBeNull();
     });

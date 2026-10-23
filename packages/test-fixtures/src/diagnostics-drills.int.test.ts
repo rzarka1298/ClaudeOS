@@ -10,11 +10,18 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { type DiagnosticsHealthResponse, LAUNCHERS_SAVE_PATH, VAULT_SETUP_PATH } from "@ccc/domain";
+import {
+  type DiagnosticsHealthResponse,
+  LAUNCHERS_SAVE_PATH,
+  SNAPSHOT_PATH,
+  VAULT_SETUP_PATH,
+} from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import { authedRequest, handshake } from "./approval-int-support.js";
 import {
   type DrillContext,
+  findLeaks,
+  logProblems,
   makeScratchDir,
   networkPreloadSource,
   pollHealth,
@@ -35,6 +42,10 @@ import {
  * the expected reason appears (never a long fixed sleep). Every drill ends by asserting that the
  * service made no non-loopback connection (W2): a test-only preload, written into the run root at
  * run time and passed through `NODE_OPTIONS=--require`, records them in a file in the run root.
+ *
+ * Plan 08-12 Task 3 (D-42, D-43; T-08-32) rides on the same drills: the drill kit scans every health
+ * body and the service log at the end of EVERY drill for the run root, the vault path, the scratch
+ * Claude config path, the home folder and any errno text, and fails the drill if it finds one.
  */
 
 const DRILL_TIMEOUT_MS = 90_000;
@@ -59,6 +70,21 @@ function partsOf(row: Row): readonly Part[] {
 
 function partOf(row: Row, partId: string): Part | undefined {
   return partsOf(row).find((part) => part.partId === partId);
+}
+
+/** A fake Codex in the run root: a script that records each run and prints a version. Never the machine's. */
+function fakeCodexWorld(dir: string): void {
+  const bin = join(dir, "fake-bin");
+  mkdirSync(bin, { recursive: true });
+  const log = join(dir, "fake-bin", "runs.log");
+  writeFileSync(join(bin, "codex"), `#!/bin/sh\necho ran >> '${log}'\necho 'codex-cli 0.1.0'\n`);
+  chmodSync(join(bin, "codex"), 0o755);
+}
+
+/** One dashboard snapshot, which starts the one-time Codex install detection. */
+async function takeSnapshot(context: DrillContext): Promise<void> {
+  const token = await handshake(context.socketPath);
+  await authedRequest<unknown>(context.socketPath, token, { method: "GET", path: SNAPSHOT_PATH });
 }
 
 /** W2: nothing the service did left the machine. */
@@ -110,6 +136,8 @@ describe("Test 1 (vault): removing the vault folder reads vault-root-missing, re
       await withDrillService(async (context) => {
         const vaultRoot = makeScratchDir("dv-");
         const away = `${vaultRoot}-away`;
+        context.forbid(vaultRoot, "the vault path");
+        context.forbid(away, "the moved vault path");
         try {
           mkdirSync(join(vaultRoot, ".obsidian"), { recursive: true });
           const token = await handshake(context.socketPath);
@@ -389,6 +417,204 @@ describe("Test 5 (launchers): a saved executable, then a missing one, and nothin
         expect(launched).toEqual([]);
         expectOffline(context);
       });
+    },
+    DRILL_TIMEOUT_MS,
+  );
+});
+
+describe("Task 3 Test 1/2: the leak scanner is not vacuous", () => {
+  const forbidden = new Map<string, string>([
+    ["/run/root-example", "the run root"],
+    ["/vault/example", "the vault path"],
+    ["/claude/example", "the Claude config path"],
+    ["/home/example", "the home folder"],
+  ]);
+
+  it("flags each forbidden path, each errno name and each errno phrase in a body, by label", () => {
+    expect(findLeaks('{"a":"ok"}', forbidden)).toEqual([]);
+    expect(findLeaks('{"p":"/run/root-example/x"}', forbidden)).toEqual(["the run root"]);
+    expect(findLeaks('{"p":"/vault/example"}', forbidden)).toEqual(["the vault path"]);
+    expect(findLeaks('{"p":"/claude/example/settings.json"}', forbidden)).toEqual([
+      "the Claude config path",
+    ]);
+    expect(findLeaks('{"p":"/home/example"}', forbidden)).toEqual(["the home folder"]);
+    for (const name of ["ENOENT", "EACCES", "ENOTDIR", "EPERM", "EISDIR"]) {
+      expect(findLeaks(`{"reason":"${name}"}`, forbidden), name).toEqual(["an errno name"]);
+    }
+    for (const phrase of [
+      "No such file or directory",
+      "permission denied",
+      "Not a directory",
+      "Operation not permitted",
+    ]) {
+      expect(findLeaks(`{"reason":"${phrase}"}`, forbidden), phrase).toEqual(["an errno message"]);
+    }
+    // A closed reason code is not an errno.
+    expect(findLeaks('{"reasonCode":"vault-root-unreadable"}', forbidden)).toEqual([]);
+  });
+
+  it("flags a leak in a log line, tolerates the Phase 1 listening line, and limits a diagnostics line to a code and an error class name", () => {
+    const line = (fields: Record<string, unknown>): string =>
+      `${JSON.stringify({ level: 40, time: 1, pid: 2, hostname: "h", ...fields })}\n`;
+    expect(
+      logProblems(line({ msg: "listening", socketPath: "/run/root-example/svc.sock" }), forbidden),
+    ).toEqual([]);
+    expect(logProblems(line({ msg: "x", path: "/run/root-example/x" }), forbidden)).toEqual([
+      "a log line holds the run root",
+    ]);
+    expect(logProblems(line({ msg: "x", reason: "ENOENT" }), forbidden)).toEqual([
+      "a log line holds an errno name",
+    ]);
+    const ok = line({
+      msg: "diagnostics probe did not answer",
+      subsystem: "launchers",
+      code: "probe-error",
+      errorName: "SyntaxError",
+    });
+    expect(logProblems(ok, forbidden)).toEqual([]);
+    const extra = line({
+      msg: "diagnostics probe did not answer",
+      subsystem: "launchers",
+      code: "probe-error",
+      message: "harmless words",
+    });
+    expect(logProblems(extra, forbidden)).toEqual(["a diagnostics log line carries message"]);
+    expect(logProblems("not json\n", forbidden)).toEqual(["a log line that is not JSON"]);
+  });
+});
+
+describe("Task 3 Test 1/2: errno-bearing breaks read their own reasons and leak nothing", () => {
+  it(
+    "an unreadable, a read-only and a not-a-folder vault root; the modes are restored before the folder is removed",
+    async () => {
+      await withDrillService(async (context) => {
+        const vaultRoot = makeScratchDir("dv-");
+        context.forbid(vaultRoot, "the vault path");
+        try {
+          mkdirSync(join(vaultRoot, ".obsidian"), { recursive: true });
+          const token = await handshake(context.socketPath);
+          const setup = await authedRequest<unknown>(context.socketPath, token, {
+            method: "POST",
+            path: VAULT_SETUP_PATH,
+            body: { vaultRoot },
+          });
+          expect(setup.status).toBe(200);
+          await pollHealth(
+            context,
+            (health) => rowById(health, "vault").reasonCode === "vault-ready",
+            { trigger: "reconnect" },
+          );
+
+          // Read-only: the owner can read and enter it but not write.
+          chmodSync(vaultRoot, 0o500);
+          const readOnly = await pollHealth(
+            context,
+            (health) => rowById(health, "vault").reasonCode === "vault-root-not-writable",
+            { trigger: "reconnect" },
+          );
+          expect(rowById(readOnly, "vault")).toMatchObject({ status: "failing" });
+
+          // Unreadable: no permission bits at all.
+          chmodSync(vaultRoot, 0o000);
+          const unreadable = await pollHealth(
+            context,
+            (health) => rowById(health, "vault").reasonCode === "vault-root-unreadable",
+            { trigger: "reconnect" },
+          );
+          expect(rowById(unreadable, "vault")).toMatchObject({ status: "failing" });
+        } finally {
+          // Pitfall 7: a folder left at mode 000 cannot be cleaned up.
+          chmodSync(vaultRoot, 0o755);
+        }
+
+        // Not a folder: the vault root replaced by a plain file.
+        const moved = `${vaultRoot}-folder`;
+        try {
+          renameSync(vaultRoot, moved);
+          writeFileSync(vaultRoot, "not a folder");
+          const notFolder = await pollHealth(
+            context,
+            (health) => rowById(health, "vault").reasonCode === "vault-root-not-directory",
+            { trigger: "reconnect" },
+          );
+          expect(rowById(notFolder, "vault")).toMatchObject({ status: "failing" });
+        } finally {
+          rmSync(vaultRoot, { force: true });
+          removeScratchDir(moved);
+          removeScratchDir(vaultRoot);
+        }
+        expectOffline(context);
+        // The kit scans every body and the log for the paths and errno text when this callback returns.
+      });
+    },
+    DRILL_TIMEOUT_MS,
+  );
+});
+
+describe("Task 3 Test 3: the Codex isolation variables decide the Codex parts, not the machine", () => {
+  const codexParts = (health: DiagnosticsHealthResponse): Record<string, string | undefined> => ({
+    install: partOf(rowById(health, "collectors"), "codex-install")?.reasonCode,
+    hooks: partOf(rowById(health, "collectors"), "codex-hooks")?.reasonCode,
+    bridge: partOf(rowById(health, "collectors"), "codex-bridge")?.reasonCode,
+  });
+
+  it(
+    "with the harness isolation (candidates disabled, empty Codex and bridge folders in the run root) a Codex that IS on a candidate path is not seen",
+    async () => {
+      await withDrillService(
+        async (context) => {
+          await takeSnapshot(context);
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          const health = await context.health("reconnect");
+          expect(codexParts(health)).toEqual({
+            install: "codex-not-installed",
+            hooks: "codex-hooks-not-installed",
+            bridge: "codex-bridge-not-installed",
+          });
+          // The candidate directory the service was NOT allowed to use holds a runnable fake Codex,
+          // and it never ran: the variable, not the machine, decided.
+          expect(existsSync(join(context.dir, "fake-bin", "runs.log"))).toBe(false);
+          // The isolation folders the harness points the service at are inside the run root and empty.
+          for (const name of ["codex-home-empty", "state-home-empty"]) {
+            expect(existsSync(join(context.dir, name))).toBe(true);
+          }
+          expectOffline(context);
+        },
+        {
+          prepare: fakeCodexWorld,
+          env: (dir) => ({ CCC_CODEX_CANDIDATES_DIR: join(dir, "fake-bin") }),
+        },
+      );
+    },
+    DRILL_TIMEOUT_MS,
+  );
+
+  it(
+    "pointing the same variables at the fake Codex makes the install part read codex-installed (the control)",
+    async () => {
+      await withDrillService(
+        async (context) => {
+          await takeSnapshot(context);
+          const health = await pollHealth(
+            context,
+            (candidate) =>
+              partOf(rowById(candidate, "collectors"), "codex-install")?.reasonCode ===
+              "codex-installed",
+            { trigger: "reconnect" },
+          );
+          expect(codexParts(health).install).toBe("codex-installed");
+          // The fake ran: it is a script of ours in the run root that appends one line and prints a version.
+          expect(existsSync(join(context.dir, "fake-bin", "runs.log"))).toBe(true);
+          expectOffline(context);
+        },
+        {
+          prepare: fakeCodexWorld,
+          env: (dir) => ({
+            CCC_CODEX_CANDIDATES_DISABLED: "0",
+            CCC_CODEX_CANDIDATES_DIR: join(dir, "fake-bin"),
+          }),
+        },
+      );
     },
     DRILL_TIMEOUT_MS,
   );

@@ -2,8 +2,12 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DIAGNOSTICS_HEALTH_PATH, type DiagnosticsHealthResponse } from "@ccc/domain";
-import { createAuthenticatedClient, getDiagnosticsHealth } from "@ccc/service-api-client";
+import {
+  DIAGNOSTICS_HEALTH_PATH,
+  type DiagnosticsHealthResponse,
+  DiagnosticsHealthResponseSchema,
+} from "@ccc/domain";
+import { createAuthenticatedClient } from "@ccc/service-api-client";
 import { setUpServiceEnvironment, tearDownServiceEnvironment } from "./approval-int-support.js";
 import { startServiceForTest, type TestServiceHandle } from "./service-harness.js";
 import { withTempSocketDir } from "./socket-fixture.js";
@@ -107,6 +111,71 @@ export function readRecordedEvents(logPath: string): RecordedEvent[] {
     .map((line) => JSON.parse(line) as RecordedEvent);
 }
 
+/**
+ * Errno names and their message phrases (plan 08-12 Task 3; D-43, T-08-32). A health body or a
+ * diagnostics log line may carry a closed reason code; it must never carry what the operating
+ * system said.
+ */
+const ERRNO_NAMES =
+  /\bE(NOENT|ACCES|NOTDIR|ISDIR|PERM|XDEV|MFILE|NFILE|LOOP|NAMETOOLONG|NOTEMPTY|EXIST|IO|BUSY|ROFS|TIMEDOUT|CONNREFUSED|ADDRINUSE|PIPE|AGAIN|INVAL)\b/;
+const ERRNO_PHRASES =
+  /no such file or directory|permission denied|not a directory|is a directory|operation not permitted|too many open files/i;
+
+/**
+ * What in `text` must not be there: any forbidden string (a path, by label), an errno name or an
+ * errno phrase. Answers LABELS, never the matched text, so a failing assertion cannot itself print
+ * the value. Pure: the non-vacuity tests call it on synthetic text.
+ */
+export function findLeaks(text: string, forbidden: ReadonlyMap<string, string>): string[] {
+  const hits: string[] = [];
+  for (const [value, label] of forbidden) {
+    if (value.length > 0 && text.includes(value)) hits.push(label);
+  }
+  if (ERRNO_NAMES.test(text)) hits.push("an errno name");
+  if (ERRNO_PHRASES.test(text)) hits.push("an errno message");
+  return hits;
+}
+
+/** The keys a diagnostics log line may carry (pino's own plus the closed probe fields). */
+const DIAGNOSTICS_LOG_KEYS = new Set([
+  "level",
+  "time",
+  "pid",
+  "hostname",
+  "msg",
+  "subsystem",
+  "code",
+  "errorName",
+]);
+const DIAGNOSTICS_LOG_MESSAGE = "diagnostics probe did not answer";
+
+/**
+ * The problems in a service log: the forbidden strings and errno text anywhere in it except the one
+ * Phase 1 startup line that names the socket (`"listening"`, which is outside the diagnostics
+ * folder), and, for the diagnostics lines, any key beyond a code and an error class name.
+ */
+export function logProblems(logText: string, forbidden: ReadonlyMap<string, string>): string[] {
+  const problems: string[] = [];
+  for (const line of logText.split("\n")) {
+    if (line.length === 0) continue;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      problems.push("a log line that is not JSON");
+      continue;
+    }
+    if (parsed.msg === "listening") continue;
+    for (const hit of findLeaks(line, forbidden)) problems.push(`a log line holds ${hit}`);
+    if (parsed.msg === DIAGNOSTICS_LOG_MESSAGE) {
+      for (const key of Object.keys(parsed)) {
+        if (!DIAGNOSTICS_LOG_KEYS.has(key)) problems.push(`a diagnostics log line carries ${key}`);
+      }
+    }
+  }
+  return problems;
+}
+
 export interface DrillContext {
   /** The temporary run root: the runtime folder, the socket, the scratch Claude config and the Codex folders live here. */
   readonly dir: string;
@@ -131,11 +200,19 @@ export interface DrillContext {
   outbound(): RecordedEvent[];
   /** Child processes started with `security` as the binary and the research account in argv. */
   researchKeySpawns(): RecordedEvent[];
+  /** Adds a string (a path the test created) that no health body or diagnostics log line may hold. */
+  forbid(value: string, label: string): void;
+  /** Every raw health body this context has seen. */
+  bodies(): readonly string[];
+  /** The leak problems so far in the bodies and the log (empty when clean). */
+  leaks(): string[];
 }
 
 export interface DrillOptions {
-  /** Extra environment for the service. */
-  readonly env?: Record<string, string>;
+  /** Extra environment for the service; a function receives the run root. */
+  readonly env?: Record<string, string> | ((dir: string) => Record<string, string>);
+  /** False turns off the automatic leak scan at the end of the run (default true). */
+  readonly leakScan?: boolean;
   /** Prepares the run folder before the service starts (a fake world). */
   readonly prepare?: (dir: string) => void | Promise<void>;
 }
@@ -171,11 +248,36 @@ export async function withDrillService<T>(
           CCC_ENABLE_TEST_OVERRIDES: "1",
           CCC_RESEARCH_KEY_ACCOUNT: researchAccount,
           NODE_OPTIONS: `--require=${preload}`,
-          ...options.env,
+          ...(typeof options.env === "function" ? options.env(dir) : options.env),
         },
       });
       const client = createAuthenticatedClient({ socketPath });
       const events = (): RecordedEvent[] => readRecordedEvents(recordPath);
+      const bodies: string[] = [];
+      // What must never appear in a health body or a diagnostics log line: the run root and
+      // everything under it (the runtime folder, the socket, the scratch Claude config, the Codex
+      // isolation folders), the owner's home folder, and anything the test adds.
+      const forbidden = new Map<string, string>([
+        [dir, "the run root"],
+        [claudeDir, "the Claude config path"],
+        [homedir(), "the home folder"],
+      ]);
+      const wire = async (trigger: "gesture" | "reconnect"): Promise<string> => {
+        const raw = await client.request<unknown>({
+          method: "GET",
+          path: `${DIAGNOSTICS_HEALTH_PATH}?trigger=${trigger}`,
+        });
+        const body = JSON.stringify(raw.body);
+        bodies.push(body);
+        return body;
+      };
+      const readLog = (): string => {
+        try {
+          return readFileSync(join(dir, "logs", "service.log"), "utf8");
+        } catch {
+          return "";
+        }
+      };
       const context: DrillContext = {
         dir,
         socketPath,
@@ -185,14 +287,10 @@ export async function withDrillService<T>(
         recordPath,
         researchAccount,
         service,
-        health: (trigger = "gesture") => getDiagnosticsHealth(client, trigger),
-        rawHealth: async (trigger = "gesture") => {
-          const raw = await client.request<unknown>({
-            method: "GET",
-            path: `${DIAGNOSTICS_HEALTH_PATH}?trigger=${trigger}`,
-          });
-          return JSON.stringify(raw.body);
-        },
+        // The raw body is kept for the leak scan and parsed with the same strict schema the client uses.
+        health: async (trigger = "gesture") =>
+          DiagnosticsHealthResponseSchema.parse(JSON.parse(await wire(trigger))),
+        rawHealth: (trigger = "gesture") => wire(trigger),
         events,
         outbound: () =>
           events().filter((event) => event.kind === "connect" || event.kind === "lookup"),
@@ -203,9 +301,27 @@ export async function withDrillService<T>(
               event.file.endsWith("/security") &&
               event.args.includes(researchAccount),
           ),
+        forbid: (value, label) => {
+          forbidden.set(value, label);
+        },
+        bodies: () => bodies,
+        leaks: () => [
+          ...bodies.flatMap((body) =>
+            findLeaks(body, forbidden).map((hit) => `a body holds ${hit}`),
+          ),
+          ...logProblems(readLog(), forbidden),
+        ],
       };
       try {
-        return await fn(context);
+        const result = await fn(context);
+        if (options.leakScan !== false) {
+          // A scan over nothing proves nothing: a drill that never asked for health is a mistake.
+          if (bodies.length === 0) throw new Error("the leak scan saw no health body");
+          const problems = context.leaks();
+          if (problems.length > 0)
+            throw new Error(`leaks found: ${[...new Set(problems)].join("; ")}`);
+        }
+        return result;
       } finally {
         await service.kill();
       }
