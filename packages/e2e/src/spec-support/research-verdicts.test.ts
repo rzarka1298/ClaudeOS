@@ -1633,42 +1633,99 @@ describe("checkReuse (07-UAT item 13)", () => {
   });
 });
 
-type Card = { title: string; presentation: string | null; heading: string; body: string };
+type Card = {
+  title: string;
+  presentation: string | null;
+  note: string | null;
+  intel: { title: string } | null;
+  footer: { freshness: string | null; freshnessLabel: string | null; partial: string | null };
+};
 
-describe("checkOverviewCards (07-UAT item 20)", () => {
-  const cards = [
-    {
-      title: "Today",
-      presentation: "permission-required",
-      heading: "Google Calendar and Gmail isn't connected",
-      body: "Connect Google Calendar and Gmail to see today here.",
+describe("checkOverviewCards (07-UAT item 20, amended by Phase 8 SLICE-01, D-47)", () => {
+  const today: Card = {
+    title: "Today",
+    presentation: "ready",
+    note: "∅ Google Calendar and Gmail: not part of this version.",
+    intel: null,
+    footer: {
+      freshness: "live",
+      freshnessLabel: "Live",
+      partial: "Partial — Google Calendar and Gmail aren't part of this version",
     },
-    {
-      title: "Technology and market intelligence",
-      presentation: "unavailable",
-      heading: "No source yet",
-      body: "",
-    },
-  ];
+  };
+  const intel: Card = {
+    title: "Technology and market intelligence",
+    presentation: "ready",
+    note: null,
+    intel: { title: "Long fixture report" },
+    footer: { freshness: "cached", freshnessLabel: "Cached", partial: null },
+  };
+  const cards = [today, intel];
 
-  it("accepts the Today card as the permission-required card and tech-intel as unavailable", () => {
+  it("accepts Today as a service-fed card with the not-in-version note and Technology showing the report as Cached", () => {
     expect(checkOverviewCards(cards)).toEqual([]);
   });
 
-  it("names a Today card that became ready, a missing card and a tech-intel card with data", () => {
-    expect(
-      checkOverviewCards([{ ...(cards[0] as Card), presentation: "ready" }, cards[1] as Card]),
-    ).toContain("the Today card is ready, not permission-required");
-    expect(checkOverviewCards([cards[1] as Card])).toContain("there is no Today card");
-    expect(checkOverviewCards([cards[0] as Card])).toContain(
+  it("fails the old Today card: permission-required for Google Calendar and Gmail", () => {
+    const old: Card = {
+      ...today,
+      presentation: "permission-required",
+      note: null,
+      footer: { freshness: null, freshnessLabel: null, partial: null },
+    };
+    const problems = checkOverviewCards([old, intel]);
+    expect(problems).toContain("the Today card is permission-required, not service-fed");
+    expect(problems).toContain(
+      "the Today card does not carry the note that Google Calendar and Gmail are not part of this version",
+    );
+  });
+
+  it("fails the old technology card: unavailable, with no report", () => {
+    const old: Card = {
+      ...intel,
+      presentation: "unavailable",
+      intel: null,
+      footer: { freshness: null, freshnessLabel: null, partial: null },
+    };
+    expect(checkOverviewCards([today, old])).toContain(
+      "the technology and market intelligence card is unavailable, not ready with the latest report",
+    );
+  });
+
+  it("names a missing card, a Today card without the Partial badge and a Technology card with no report", () => {
+    expect(checkOverviewCards([intel])).toContain("there is no Today card");
+    expect(checkOverviewCards([today])).toContain(
       "there is no technology and market intelligence card",
     );
     expect(
-      checkOverviewCards([cards[0] as Card, { ...(cards[1] as Card), presentation: "ready" }]),
-    ).toContain("the technology and market intelligence card is ready, not unavailable");
-    expect(
-      checkOverviewCards([{ ...(cards[0] as Card), heading: "Something else" }, cards[1] as Card]),
-    ).toContain("the Today card does not name Google Calendar and Gmail");
+      checkOverviewCards([{ ...today, footer: { ...today.footer, partial: null } }, intel]),
+    ).toContain("the Today card does not carry the Partial badge");
+    expect(checkOverviewCards([today, { ...intel, intel: null }])).toContain(
+      "the technology and market intelligence card shows no report",
+    );
+  });
+
+  it("requires Cached on the report, never Live", () => {
+    const live: Card = {
+      ...intel,
+      footer: { freshness: "live", freshnessLabel: "Live", partial: null },
+    };
+    expect(checkOverviewCards([today, live])).toContain(
+      "the technology and market intelligence card freshness is Live, not Cached",
+    );
+  });
+
+  it("accepts a Today card whose feeds are stale or that has nothing to list", () => {
+    expect(checkOverviewCards([{ ...today, presentation: "stale" }, intel])).toEqual([]);
+    expect(checkOverviewCards([{ ...today, presentation: "empty" }, intel])).toEqual([]);
+  });
+
+  it("names a Today card that is loading, in error or disconnected", () => {
+    for (const presentation of ["loading", "error", "disconnected"]) {
+      expect(checkOverviewCards([{ ...today, presentation }, intel])).toContain(
+        `the Today card is ${presentation}, not ready`,
+      );
+    }
   });
 });
 
