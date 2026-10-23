@@ -953,6 +953,42 @@ describe("Task 3, Test 4: disconnection", () => {
     expect(document.body.textContent).not.toContain("secretperson");
   });
 
+  it("keeps the scheduler's fixed line on its cleared row, and no last run, part or checked time", async () => {
+    // The fixed line is a fact about this version (UI-SPEC: "always"), not a last-good value; the
+    // last successful and failed run are the last values, and they go with the held answer.
+    configure(() =>
+      Promise.resolve(
+        fixtureResponse({
+          scheduler: partsRow(
+            "scheduler",
+            schedulerParts({
+              lastRun: [
+                "run-all-sources-failed",
+                { setupAction: GO_RESEARCH, facts: { lastFailureAt: "2026-10-22T08:00:00.000Z" } },
+              ],
+              key: "research-key-present",
+            }),
+          ),
+        }),
+      ),
+    );
+    const view = renderSection();
+    await settle();
+    expect(rowNamed("Scheduler").textContent).toContain("Last failed run");
+
+    view.rerenderWith({ kind: "disconnected", reason: "gone" });
+    await settle();
+    const scheduler = rowNamed("Scheduler");
+    expect(scheduler.querySelector(".ccc-health-detail")?.textContent).toBe(
+      "Manual trigger only in this version. Nothing runs on a timer.",
+    );
+    expect(scheduler.textContent).not.toContain("Last failed run");
+    expect(scheduler.textContent).not.toContain("Last successful run");
+    expect(scheduler.querySelector(".ccc-health-part")).toBeNull();
+    expect(scheduler.querySelector("time")).toBeNull();
+    expect(scheduler.textContent).toContain("Not checked");
+  });
+
   it("moves focus to the Diagnostics heading when the focused control disappears with its row", async () => {
     configure();
     const view = renderSection({ host: hostWith({ runVaultSetup: () => new Promise(() => {}) }) });

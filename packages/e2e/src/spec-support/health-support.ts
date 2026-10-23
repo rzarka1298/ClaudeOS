@@ -654,6 +654,18 @@ export async function withRestore<T>(
 }
 
 /**
+ * The restore of any step that stops the service: starts it again only when it is down, so a step
+ * that failed after stopping it (or before starting it again) cannot leave every later case with no
+ * socket (the cascade of the first Phase 8 run, FIX7).
+ */
+export async function ensureServiceRunning(service: {
+  readonly isRunning: () => boolean;
+  readonly startService: () => Promise<void>;
+}): Promise<void> {
+  if (!service.isRunning()) await service.startService();
+}
+
+/**
  * The calls that change a sandbox file, folder, mode, setting or Keychain item. The health drills
  * spec may make each one only inside `withRestore(...)` or `withMode(...)` (D-09, T-08-50).
  */
@@ -845,7 +857,8 @@ function problemsOfReason(
  * Item 23, with the service stopped (D-03, D-43): the Companion service reads Failing "The plugin
  * can't reach the companion service."; every other row reads Unknown "Can't be checked while the
  * companion service isn't running." with no last value (no detail, no checked time, no parts) and
- * no error text anywhere in the section.
+ * no error text anywhere in the section. The one detail a cleared row keeps is the Scheduler's fixed
+ * line, which says nothing about a run.
  */
 export function checkServiceStopped(read: HealthRead): string[] {
   const settled = checkSettled(read);
@@ -862,7 +875,10 @@ export function checkServiceStopped(read: HealthRead): string[] {
       continue;
     }
     problems.push(...problemsOfReason(row, { status: "unknown", reason: "service-not-running" }));
-    if (row.detail !== null || row.checkedAt !== null || row.parts.length > 0) {
+    // The Scheduler's fixed line is a fact about this version, shown "always" (UI-SPEC); the
+    // last successful and failed run that can follow it are the last values.
+    const allowedDetail = id === "scheduler" ? HEALTH_TEXT.schedulerFixedLine : null;
+    if (row.detail !== allowedDetail || row.checkedAt !== null || row.parts.length > 0) {
       problems.push(`${name} still shows a last value`);
     }
   }

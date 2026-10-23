@@ -141,6 +141,8 @@ export interface ResearchEnvironment {
   readonly client: AuthenticatedSocketApiClient;
   /** Stops the service (graceful, then forced) and starts it again with the chosen variables. */
   restart(options?: { summariser?: boolean }): Promise<void>;
+  /** Whether the sandbox service is up now (false after {@link stopService}). */
+  isRunning(): boolean;
   /** Stops the service only. */
   stopService(): Promise<void>;
   /** Starts the service again after {@link stopService}. */
@@ -181,6 +183,7 @@ export async function startResearchEnvironment(
       await fixture.stop();
       await start(next.summariser ?? true);
     },
+    isRunning: () => fixture.isRunning(),
     stopService: () => fixture.stop(),
     startService: (next = {}) => start(next.summariser ?? true),
     stop: () => fixture.stop(),

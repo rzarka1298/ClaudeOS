@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { realClaudeConfigDir, realRuntimeDir, realStorePath } from "../isolation-guards.js";
 import { REPO_ROOT } from "../repo-paths.js";
@@ -24,6 +25,7 @@ import {
   DRILL_TIMEOUT_MS,
   type DrillRunner,
   hookInstallerArgv,
+  INSTALLER_CLAUDE_VERSION_LINE,
   makeDirInRunRoot,
   makeSecondVault,
   readTextInRunRoot,
@@ -437,6 +439,17 @@ describe("writeSpoolDrops (Test 3)", () => {
 });
 
 describe("runHookInstaller (Test 4)", () => {
+  it("the fake claude's version line is one the installer accepts (FIX7: item 25 was refused as too old)", async () => {
+    const lib = (await import(
+      pathToFileURL(join(REPO_ROOT, "scripts", "claude-hooks", "lib.mjs")).href
+    )) as {
+      isSupportedClaudeVersion: (version: string) => boolean;
+    };
+    const version = /^(\d+\.\d+\.\d+) \(Claude Code\)$/.exec(INSTALLER_CLAUDE_VERSION_LINE)?.[1];
+    expect(version).toBeDefined();
+    expect(lib.isSupportedClaudeVersion(version as string)).toBe(true);
+  });
+
   it("builds the argv of the repository installer with scratch config and runtime folders", () => {
     const argv = hookInstallerArgv(paths, undefined, deps());
     const installer = join(REPO_ROOT, "scripts", "claude-hooks", "install.mjs");

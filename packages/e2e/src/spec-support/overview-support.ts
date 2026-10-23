@@ -1168,7 +1168,8 @@ export interface CompleteDeps {
     readonly overdue: readonly { readonly taskId: string }[];
   }>;
   readonly readNotes: () => readonly NoteFile[];
-  readonly writeNote: (name: string, text: string) => void;
+  /** Overwrites one task note, named by its vault-relative path (the service lists every scope). */
+  readonly writeNote: (path: string, text: string) => void;
   readonly poll?: Pick<PollOptions, "timeoutMs" | "intervalMs" | "sleep" | "now">;
 }
 
@@ -1178,6 +1179,7 @@ const COMPLETE_ROUNDS = 8;
  * Marks every task the service lists as due today or overdue done, round by round (the feed is
  * capped), waiting each round until the service no longer lists the ones just written. Returns how
  * many notes it completed. Writes go through `writeNote`, which the spec binds to the sandbox vault.
+ * `readNotes` must cover every scope: the service lists workspace tasks as well as global ones.
  */
 export async function completeDueAndOverdue(deps: CompleteDeps): Promise<number> {
   let total = 0;
@@ -1189,7 +1191,7 @@ export async function completeDueAndOverdue(deps: CompleteDeps): Promise<number>
     for (const id of ids) {
       const note = noteById(files, id);
       if (note === undefined) throw new Error("The service lists a task that has no note to edit.");
-      deps.writeNote(note.name, markDoneText(note.text, deps.nowIso));
+      deps.writeNote(note.path, markDoneText(note.text, deps.nowIso));
       total += 1;
     }
     await pollUntil(
