@@ -417,13 +417,19 @@ run("setup and safety (Test 5)", () => {
     for (const line of text.split("\n")) {
       if (!/pnpm run dev:service/.test(line)) continue;
       seen += 1;
-      expect(line, line).not.toMatch(/CCC_ENABLE_TEST_OVERRIDES|CCC_RESEARCH_|CCC_APPROVAL_|CCC_CODEX_/);
+      expect(line, line).not.toMatch(
+        /CCC_ENABLE_TEST_OVERRIDES|CCC_RESEARCH_|CCC_APPROVAL_|CCC_CODEX_/,
+      );
       expect(line, line).toMatch(/CCC_RUNTIME_DIR=\/Users\/USERNAME\//);
     }
     expect(seen).toBeGreaterThan(0);
     // No command in the script sets a test-only variable of any phase.
-    expect(text).not.toMatch(/(CCC_ENABLE_TEST_OVERRIDES|CCC_RESEARCH_\w+|CCC_CODEX_\w+|CCC_CLAUDE_\w+)=/);
-    expect(text).not.toMatch(/^\s*`?(export )?CCC_(ENABLE_TEST_OVERRIDES|RESEARCH_|APPROVAL_|CODEX_)/m);
+    expect(text).not.toMatch(
+      /(CCC_ENABLE_TEST_OVERRIDES|CCC_RESEARCH_\w+|CCC_CODEX_\w+|CCC_CLAUDE_\w+)=/,
+    );
+    expect(text).not.toMatch(
+      /^\s*`?(export )?CCC_(ENABLE_TEST_OVERRIDES|RESEARCH_|APPROVAL_|CODEX_)/m,
+    );
   });
 
   it("reads the key from standard input only and never puts a key on a command line", () => {
@@ -444,7 +450,9 @@ run("setup and safety (Test 5)", () => {
     ]) {
       expect(setup, name).toContain(name);
     }
-    expect(teardown).toContain("scripts/claude-hooks/uninstall.sh --runtime-dir /Users/USERNAME/.ccc-uat-phase8");
+    expect(teardown).toContain(
+      "scripts/claude-hooks/uninstall.sh --runtime-dir /Users/USERNAME/.ccc-uat-phase8",
+    );
     // The app never installs hooks (D-08); the owner runs the script for item 38 only.
     expect(setup).toMatch(/item 38 only/);
     // The hooks come out before the runtime folder they point at is removed.
