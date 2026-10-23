@@ -59,9 +59,30 @@ function show(value: unknown): string {
   }
 }
 
+const SESSION_LOST =
+  /invalid session id|session deleted as the browser has closed|not connected to DevTools|no such window|target window already closed|chrome not reachable|session not created/i;
+
+/**
+ * True for the errors a closed or crashed Obsidian produces from the driver: the browser session is
+ * gone, so no later wait can succeed (FIX8). Anything else is an ordinary failure.
+ */
+export function isSessionLostError(error: unknown): boolean {
+  if (error === undefined || error === null) return false;
+  const text = error instanceof Error ? error.message : String(error);
+  return SESSION_LOST.test(text);
+}
+
+/** The first line of an error message, for a one-line report. */
+function firstLine(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.split("\n")[0] ?? text;
+}
+
 /**
  * Polls `check` until it returns a truthy value and resolves with it. A throwing check counts as
- * "not ready yet". On timeout it rejects with the describe text and the last observed value.
+ * "not ready yet", except when the browser session is gone (Obsidian closed): that rejects at once
+ * with a clear message, because waiting longer cannot help (FIX8). On timeout it rejects with the
+ * describe text and the last observed value.
  */
 export async function pollUntil<T>(
   check: () => T | Promise<T>,
@@ -77,6 +98,11 @@ export async function pollUntil<T>(
       if (value) return value as NonNullable<T>;
       last = show(value);
     } catch (error) {
+      if (isSessionLostError(error)) {
+        throw new Error(
+          `Obsidian closed while waiting for ${options.describe} (${firstLine(error)}). The driver session is gone, so nothing further in this file can run.`,
+        );
+      }
       last = `threw: ${error instanceof Error ? error.message : String(error)}`;
     }
     if (now() - start >= options.timeoutMs) {

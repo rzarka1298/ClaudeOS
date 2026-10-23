@@ -15,7 +15,7 @@ import {
   VAULT_REASON_STATUS,
   verifyBundle,
 } from "@ccc/domain";
-import { type DriverBrowser, type PollOptions, pollUntil } from "../driver.js";
+import { type DriverBrowser, isSessionLostError, type PollOptions, pollUntil } from "../driver.js";
 import type { RunRootPaths } from "../run-root.js";
 import {
   HEALTH_ATTRS,
@@ -1025,10 +1025,16 @@ export interface CheckClock {
    * or after the run's end, so a gap measured from it is never too short.
    */
   lastPressAt: number;
+  /**
+   * When the last look that did NOT yet show that answer began (FIX8). The run finished after that
+   * look, so no cache entry for the answer is older than `now - answerNotSeenAt`: it bounds the
+   * entry's age from above, where `lastPressAt` bounds it from below.
+   */
+  answerNotSeenAt?: number;
 }
 
 export function newCheckClock(): CheckClock {
-  return { lastPressAt: 0 };
+  return { lastPressAt: 0, answerNotSeenAt: 0 };
 }
 
 /**
@@ -1059,8 +1065,12 @@ export async function recheck(
       ),
     { ...WAIT.short, describe: "the Run checks again button" },
   );
+  // The press happened before this: the run cannot have finished earlier.
+  let lookBegan = now();
   return pollUntil(
     async () => {
+      const began = lookBegan;
+      lookBegan = now();
       const read = await readHealth(browser);
       const done =
         read.mounted &&
@@ -1072,10 +1082,142 @@ export async function recheck(
       if (!done) return null;
       // The page shows the new answer: the service's cache entry is at most this old.
       clock.lastPressAt = now();
+      // The previous look began before the run finished (the press itself is the first bound).
+      clock.answerNotSeenAt = began;
       return read;
     },
     { ...(options.wait ?? WAIT.connect), describe: "Diagnostics to show a newer answer" },
   );
+}
+
+/**
+ * Waits for the finished check after a press that was made elsewhere (the item 30 double press),
+ * and records on `clock` both bounds of the answer's age: when it was seen, and when the last look
+ * that had not yet seen it began (FIX8). Returns the settled section.
+ */
+export async function waitForCheckedAnswer(
+  browser: HealthBrowser,
+  clock: CheckClock,
+  check: (read: HealthRead) => string[],
+  options: { wait?: WaitOptions; now?: () => number; pressedAt?: number } = {},
+): Promise<HealthRead> {
+  const now = options.now ?? Date.now;
+  let lookBegan = options.pressedAt ?? now();
+  let last: string[] = ["the section was never read"];
+  try {
+    return await pollUntil(
+      async () => {
+        const began = lookBegan;
+        lookBegan = now();
+        const read = await readHealth(browser);
+        last = check(read);
+        if (last.length > 0) return null;
+        clock.lastPressAt = now();
+        clock.answerNotSeenAt = began;
+        return read;
+      },
+      {
+        ...(options.wait ?? { timeoutMs: 30_000, intervalMs: 100 }),
+        describe: "the finished check",
+      },
+    );
+  } catch (error) {
+    if (isSessionLostError(error)) throw error;
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; the section last showed: ${last.join("; ")}`,
+    );
+  }
+}
+
+/** How long the service keeps an answer for a later request (the same as its own TTL). */
+export const CACHE_WINDOW_MS = 2_000;
+/** Margin below the window for clock reads that are not at the instant of the request. */
+const CACHE_SLACK_MS = 100;
+
+export type ReopenVerdict = "must-be-cached" | "window-may-be-missed";
+
+/**
+ * Whether a reopening that did not read Cached is a finding or a late arrival. The cache entry was
+ * made after the last look that had not seen the answer (`answerNotSeenAt`), and the request
+ * reached the service before the reopening settled (`reopenSettledAt`). If that span is inside the
+ * window the entry was alive for the whole span, so the reopening had to read Cached. Beyond it the
+ * request may have arrived after the window closed, which says nothing about the cache.
+ */
+export function classifyReopenTiming(timing: {
+  answerNotSeenAt: number;
+  reopenSettledAt: number;
+}): ReopenVerdict {
+  return timing.reopenSettledAt - timing.answerNotSeenAt <= CACHE_WINDOW_MS - CACHE_SLACK_MS
+    ? "must-be-cached"
+    : "window-may-be-missed";
+}
+
+export interface CachedReopenResult {
+  /** Empty when a reopening within the window read Cached; otherwise what was wrong. */
+  readonly problems: string[];
+  readonly attempts: number;
+  /** Milliseconds from the last look without the answer to the settled reopening, per attempt. */
+  readonly spansMs: number[];
+}
+
+/**
+ * Item 30's reopening check with a bounded retry for slow environments (FIX8). It reopens at once
+ * and checks `checkCachedReopen`. A reopening that read anything but Cached INSIDE the window is a
+ * finding and fails with no retry: that assertion is not loosened. One that settled too late to be
+ * sure of the window (the machine stalled between the answer and the reopen) is retried by pressing
+ * Run checks again once the old answer has aged out and reopening again, up to `maxAttempts`.
+ */
+export async function reopenCachedWithRetry(
+  browser: HealthBrowser,
+  clock: CheckClock,
+  first: HealthRead,
+  options: {
+    maxAttempts?: number;
+    now?: () => number;
+    reopenWait?: WaitOptions;
+    recheckWait?: WaitOptions;
+  } = {},
+): Promise<CachedReopenResult> {
+  const maxAttempts = options.maxAttempts ?? 3;
+  const now = options.now ?? Date.now;
+  const spansMs: number[] = [];
+  let answer = first;
+  for (let attempt = 1; ; attempt += 1) {
+    const notSeenAt = clock.answerNotSeenAt ?? clock.lastPressAt;
+    const second = await reopenDiagnostics(browser, options.reopenWait);
+    const settledAt = now();
+    const span = settledAt - notSeenAt;
+    spansMs.push(span);
+    const problems = checkCachedReopen(answer, second);
+    if (problems.length === 0) return { problems, attempts: attempt, spansMs };
+    if (
+      classifyReopenTiming({ answerNotSeenAt: notSeenAt, reopenSettledAt: settledAt }) ===
+      "must-be-cached"
+    ) {
+      return {
+        problems: [
+          `the reopening came ${span} ms after the answer, inside the answer cache window, yet it did not read Cached`,
+          ...problems,
+        ],
+        attempts: attempt,
+        spansMs,
+      };
+    }
+    if (attempt >= maxAttempts) {
+      return {
+        problems: [
+          `the reopening missed the answer cache window in all ${maxAttempts} attempts (${spansMs.join(", ")} ms after the answer)`,
+          ...problems,
+        ],
+        attempts: attempt,
+        spansMs,
+      };
+    }
+    answer = await recheck(browser, clock, {
+      now,
+      ...(options.recheckWait === undefined ? {} : { wait: options.recheckWait }),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1533,6 +1675,71 @@ export async function pressBundleButton(browser: HealthBrowser, label: string): 
     () => browser.executeObsidian(rendererClick, `.${HEALTH_CLASSES.healthToolbar} button`, label),
     { ...WAIT.short, describe: `the "${label}" control` },
   );
+}
+
+export interface CopyBundleOps {
+  /** The offered block the first press is made on. */
+  readonly block: BundleRead;
+  /** Brings the page back to an offered block (the page reloaded under a press) and reads it. */
+  readonly reoffer: () => Promise<BundleRead>;
+  /** Clears the clipboard spy and presses Copy bundle. */
+  readonly press: () => Promise<void>;
+  /** The last text the clipboard spy recorded, or undefined when nothing was written. */
+  readonly clipboard: () => Promise<string | undefined>;
+  /** Whether the status line reads the copied notice. */
+  readonly noticeShown: () => Promise<boolean>;
+  readonly maxAttempts?: number;
+  /** How long a press gets to write the clipboard before it counts as having done nothing. */
+  readonly clipboardWait?: WaitOptions;
+  readonly noticeWait?: WaitOptions;
+}
+
+/**
+ * Presses Copy bundle and returns the copied text with the block that was on the page for the press
+ * (FIX8, item 31). The press can land on a page that is reloading: the research environment restarts
+ * the service and the plugin reconnects a moment later, which rebuilds Diagnostics and closes the
+ * preview, and a press on the old button then does nothing at all (nothing copied, no notice). That
+ * case, and only that case, is retried: the block is offered again and pressed again, up to
+ * `maxAttempts`. A press that did write the clipboard must show the copied notice, with no retry:
+ * the assertion that Copy shows its notice is not loosened.
+ */
+export async function copyBundleWithRetry(
+  ops: CopyBundleOps,
+): Promise<{ block: BundleRead; text: string; attempts: number }> {
+  const maxAttempts = ops.maxAttempts ?? 3;
+  let block = ops.block;
+  for (let attempt = 1; ; attempt += 1) {
+    await ops.press();
+    let text: string | undefined;
+    try {
+      text = await pollUntil(() => ops.clipboard(), {
+        ...(ops.clipboardWait ?? { timeoutMs: 3_000, intervalMs: 100 }),
+        describe: "Copy bundle to write the clipboard",
+      });
+    } catch (error) {
+      if (
+        isSessionLostError(error) ||
+        !(error instanceof Error) ||
+        !/^Timed out/.test(error.message)
+      ) {
+        throw error;
+      }
+      text = undefined;
+    }
+    if (text !== undefined) {
+      await pollUntil(() => ops.noticeShown(), {
+        ...(ops.noticeWait ?? { timeoutMs: 15_000, intervalMs: 100 }),
+        describe: "the copied notice (Copy bundle had already written the clipboard)",
+      });
+      return { block, text, attempts: attempt };
+    }
+    if (attempt >= maxAttempts) {
+      throw new Error(
+        `Copy bundle did nothing in ${maxAttempts} attempts: no clipboard write and no notice each time.`,
+      );
+    }
+    block = await ops.reoffer();
+  }
 }
 
 /** Closed: the block is there with its toggle alone: no preview, no Copy, no Save. */

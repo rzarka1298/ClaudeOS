@@ -27,6 +27,8 @@ import {
   checkSchedulerLine,
   checkServiceRestored,
   checkServiceStopped,
+  classifyReopenTiming,
+  copyBundleWithRetry,
   diagnosticsClickPath,
   drillFiles,
   ensureServiceRunning,
@@ -45,6 +47,7 @@ import {
   openDiagnostics,
   partOf,
   recheck,
+  reopenCachedWithRetry,
   reopenClickPath,
   reopenDiagnostics,
   rowOf,
@@ -1150,6 +1153,183 @@ describe("reopenDiagnostics, waitForLive and recheck", () => {
     const started = Date.now();
     await recheck(stub.browser, clock, { gapMs: 120, wait: { timeoutMs: 5_000, intervalMs: 1 } });
     expect(Date.now() - started).toBeGreaterThanOrEqual(100);
+  });
+});
+
+describe("classifyReopenTiming and reopenCachedWithRetry (FIX8, item 30)", () => {
+  it("a reopening settled well inside the cache window must have been cached", () => {
+    expect(classifyReopenTiming({ answerNotSeenAt: 1_000, reopenSettledAt: 2_500 })).toBe(
+      "must-be-cached",
+    );
+    expect(classifyReopenTiming({ answerNotSeenAt: 1_000, reopenSettledAt: 2_900 })).toBe(
+      "must-be-cached",
+    );
+  });
+
+  it("a reopening that may have landed after the two-second window is not a verdict on the cache", () => {
+    expect(classifyReopenTiming({ answerNotSeenAt: 1_000, reopenSettledAt: 3_000 })).toBe(
+      "window-may-be-missed",
+    );
+    expect(classifyReopenTiming({ answerNotSeenAt: 1_000, reopenSettledAt: 9_000 })).toBe(
+      "window-may-be-missed",
+    );
+  });
+
+  const cachedRead = ((): HealthRead => {
+    const marker = '<li class="ccc-health-row"';
+    const [head, ...rows] = BASE_HTML.split(marker);
+    const changed = rows.map((row) => {
+      if (/data-subsystem="service"/.test(row)) return row;
+      return row
+        .replace(/data-badge="live"/g, 'data-badge="cached"')
+        .replace(
+          /<span class="ccc-badge-label">Live<\/span>/g,
+          '<span class="ccc-badge-label">Cached</span>',
+        );
+    });
+    return readHealthFrom([head, ...changed].join(marker));
+  })();
+  const liveRead = fresh;
+
+  /**
+   * A browser whose clock `t` moves by `step` for every look at it, whose reopen shows what
+   * `reopens` says in turn, and which counts the Run checks again presses.
+   */
+  function timed(reopens: HealthRead[], step: number) {
+    /** The reopening shows the checked time of the answer it follows (the cache keeps it). */
+    const state = { t: 100_000, presses: 0, reopened: 0, answered: 0 };
+    const answers = [1, 2, 3, 4].map(
+      (n) =>
+        ({
+          ...fresh,
+          toolbarGeneratedAt: `2026-10-23T10:00:${String(30 + n)}.000Z`,
+        }) as HealthRead,
+    );
+    const browser = {
+      executeObsidianCommand: async () => undefined,
+      executeObsidian: async (_fn: unknown, ...args: unknown[]) => {
+        if (args[1] === "Run checks again") state.presses += 1;
+        if (args[1] === "Diagnostics") state.reopened += 1;
+        return true;
+      },
+      execute: async () => {
+        if (state.presses > state.answered) {
+          state.answered = state.presses;
+          return answers[state.answered - 1];
+        }
+        if (state.reopened > 0) {
+          const read = reopens[Math.min(state.reopened - 1, reopens.length - 1)] as HealthRead;
+          const shown = answers[Math.max(0, state.answered - 1)];
+          return state.answered > 0 && read !== liveRead
+            ? ({ ...read, toolbarGeneratedAt: shown?.toolbarGeneratedAt } as HealthRead)
+            : read;
+        }
+        return answers[Math.max(0, state.answered - 1)] ?? fresh;
+      },
+    } as unknown as HealthBrowser;
+    const now = () => {
+      state.t += step;
+      return state.t;
+    };
+    return { browser, state, now };
+  }
+  const wait = { timeoutMs: 5_000, intervalMs: 1 };
+
+  it("passes at once when the reopening is cached, with no further press", async () => {
+    const { browser, state, now } = timed([cachedRead], 10);
+    const clock = { lastPressAt: 100_000, answerNotSeenAt: 99_990 };
+    const result = await reopenCachedWithRetry(browser, clock, fresh, { now, reopenWait: wait });
+    expect(result.problems).toEqual([]);
+    expect(result.attempts).toBe(1);
+    expect(state.presses).toBe(0);
+  });
+
+  it("never loosens the assertion: a Live reopening inside the window fails at once, with no retry", async () => {
+    const { browser, state, now } = timed([liveRead], 10);
+    const clock = { lastPressAt: 100_000, answerNotSeenAt: 99_990 };
+    const result = await reopenCachedWithRetry(browser, clock, fresh, { now, reopenWait: wait });
+    expect(result.attempts).toBe(1);
+    expect(state.presses).toBe(0);
+    expect(result.problems.join(" ")).toContain("Cached");
+    expect(result.problems.join(" ")).toMatch(/inside the answer cache window/);
+  });
+
+  it("retries the press-then-reopen sequence when the reopening was too slow to be in the window", async () => {
+    // Every look at the clock costs 1.2 s, so the first reopening settles after the window.
+    const { browser, state, now } = timed([liveRead, cachedRead], 1_200);
+    const clock = { lastPressAt: 100_000, answerNotSeenAt: 99_000 };
+    const result = await reopenCachedWithRetry(browser, clock, fresh, { now, reopenWait: wait });
+    expect(state.presses).toBe(1);
+    expect(result.attempts).toBe(2);
+  });
+
+  it("gives up after the bounded number of attempts and says every attempt was too slow", async () => {
+    const { browser, state, now } = timed([liveRead], 1_200);
+    const clock = { lastPressAt: 100_000, answerNotSeenAt: 99_000 };
+    const result = await reopenCachedWithRetry(browser, clock, fresh, {
+      now,
+      reopenWait: wait,
+      maxAttempts: 3,
+    });
+    expect(result.attempts).toBe(3);
+    expect(state.presses).toBe(2);
+    expect(result.problems.join(" ")).toMatch(/all 3 attempts/);
+  });
+});
+
+describe("copyBundleWithRetry (FIX8, item 31)", () => {
+  const block = (name: string) => ({ name }) as unknown as BundleRead;
+  const quick = { timeoutMs: 40, intervalMs: 1 };
+
+  function scenario(script: Array<{ clipboard?: string; notice?: boolean }>) {
+    const state = { presses: 0, reoffers: 0 };
+    const ops = {
+      block: block("first"),
+      reoffer: async () => {
+        state.reoffers += 1;
+        return block(`again-${state.reoffers}`);
+      },
+      press: async () => {
+        state.presses += 1;
+      },
+      clipboard: async () => script[Math.min(state.presses, script.length) - 1]?.clipboard,
+      noticeShown: async () => script[Math.min(state.presses, script.length) - 1]?.notice === true,
+      clipboardWait: quick,
+      noticeWait: quick,
+    };
+    return { state, ops };
+  }
+
+  it("returns the text and the block that was pressed when the first press worked", async () => {
+    const { state, ops } = scenario([{ clipboard: "{}", notice: true }]);
+    const result = await copyBundleWithRetry(ops);
+    expect(result.text).toBe("{}");
+    expect(result.attempts).toBe(1);
+    expect((result.block as unknown as { name: string }).name).toBe("first");
+    expect(state.reoffers).toBe(0);
+  });
+
+  it("when the page reloaded under the press (nothing copied), offers the block again and presses again", async () => {
+    const { state, ops } = scenario([{}, { clipboard: '{"a":1}', notice: true }]);
+    const result = await copyBundleWithRetry(ops);
+    expect(result.attempts).toBe(2);
+    expect(state.reoffers).toBe(1);
+    // The text belongs to the block that was on the page for the press that worked.
+    expect((result.block as unknown as { name: string }).name).toBe("again-1");
+  });
+
+  it("gives up after the bounded attempts with a message that says nothing was copied", async () => {
+    const { state, ops } = scenario([{}]);
+    await expect(copyBundleWithRetry({ ...ops, maxAttempts: 3 })).rejects.toThrow(
+      /did nothing in 3 attempts/,
+    );
+    expect(state.presses).toBe(3);
+  });
+
+  it("never loosens the notice: text on the clipboard without the copied notice fails, with no retry", async () => {
+    const { state, ops } = scenario([{ clipboard: "{}", notice: false }]);
+    await expect(copyBundleWithRetry(ops)).rejects.toThrow(/copied notice/);
+    expect(state.presses).toBe(1);
   });
 });
 
