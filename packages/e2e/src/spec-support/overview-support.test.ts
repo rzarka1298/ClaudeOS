@@ -1,22 +1,45 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { Key } from "webdriverio";
 import { REPO_ROOT } from "../repo-paths.js";
 import { pathsForRoot } from "../run-root.js";
 import { OVERVIEW_TEXT } from "./overview-copy.js";
 import {
+  assertNoLauncherSaved,
   cardByTitle,
+  checkCalendarGmail,
+  checkDisconnected,
+  checkFailureLine,
+  checkLaunchOutcome,
+  checkNextOpen,
+  checkNoFailures,
+  checkNoFixtureOnCards,
+  checkRecovered,
   checkSliceCards,
+  checkTechEmpty,
+  checkTechLatest,
+  completeDueAndOverdue,
+  ENTER_KEY,
   FIXTURE_MARKERS,
   findFixtureMarkers,
+  findLauncherProcesses,
+  LAUNCHER_ROWS_SQL,
+  markDoneText,
   OVERVIEW_DOM_CONFIG,
+  type OverviewBrowser,
   type OverviewCard,
+  pressLaunchControl,
+  scanBuiltPlugin,
   seedSlice,
   sliceProjectFolder,
+  upcomingTaskRequest,
 } from "./overview-support.js";
+import { checkStatusChangeDiff } from "./tasks-support.js";
 
 /**
  * Plan 08-19 Task 1: the renderer reader of the Overview cards, run the way wdio runs it (compiled
@@ -342,5 +365,596 @@ describe("seedSlice (sandbox only)", () => {
     });
     await expect(seedSlice(base)).rejects.toThrow(/protected/);
     expect(calls.some((call) => call.startsWith("session"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 08-19 Task 2: items 2 to 8
+
+/** Applies `change` to the one card of `html` whose heading id is `id` (a section is `<section ...>` to its end). */
+function mapCard(html: string, id: string, change: (card: string) => string): string {
+  return html
+    .split(/(?=<section class="ccc-card")/)
+    .map((part) => (part.includes(`id="${id}"`) ? change(part) : part))
+    .join("");
+}
+
+const TODAY = "t-today";
+const INTEL = "t-intel";
+const PROJECTS = "t-projects";
+
+function disconnect(card: string): string {
+  return card
+    .replace('data-presentation="ready"', 'data-presentation="disconnected"')
+    .replace(
+      /<div class="ccc-card-body"([^>]*)>/,
+      '<div class="ccc-card-body"$1 data-dimmed="true"><p class="ccc-state-heading">Service disconnected</p><p class="ccc-state-body">Showing the last values received 2 minutes ago. They may be out of date.</p>',
+    )
+    .replace(/data-badge="(?:live|cached)"/, 'data-badge="unavailable"')
+    .replace(
+      /<span class="ccc-badge-label">(?:Live|Cached)<\/span>/,
+      '<span class="ccc-badge-label">Unavailable</span>',
+    );
+}
+
+describe("checkCalendarGmail (item 2)", () => {
+  it("passes on a Today card that names both sources as not part of this version", () => {
+    expect(checkCalendarGmail(readCards(BASE_HTML))).toEqual([]);
+  });
+
+  it("requires the Partial chip, the note and both source rows", () => {
+    const noChip = mapCard(BASE_HTML, TODAY, (card) =>
+      card.replace(/<span class="ccc-badge" data-badge="partial">[\s\S]*?<\/span><\/span>/, ""),
+    );
+    expect(checkCalendarGmail(readCards(noChip)).join("|")).toContain("Partial");
+    const noNote = mapCard(BASE_HTML, TODAY, (card) =>
+      card.replace(/<p class="ccc-today-note">[\s\S]*?<\/p>/, ""),
+    );
+    expect(checkCalendarGmail(readCards(noNote)).join("|")).toContain("note");
+    const noRow = mapCard(BASE_HTML, TODAY, (card) =>
+      card.replace('<li class="ccc-source-row">Gmail — not part of this version</li>', ""),
+    );
+    expect(checkCalendarGmail(readCards(noRow)).join("|")).toContain("Gmail");
+  });
+
+  it("refuses 'no response' for either source, and any calendar count of zero", () => {
+    const missing = mapCard(BASE_HTML, TODAY, (card) =>
+      card.replace("Google Calendar — not part of this version", "Google Calendar — no response"),
+    );
+    expect(checkCalendarGmail(readCards(missing)).join("|")).toContain("Google Calendar");
+    const zero = mapCard(BASE_HTML, TODAY, (card) =>
+      card.replace(
+        '<p class="ccc-state-body">No automation failures.</p>',
+        '<p class="ccc-state-body">Nothing else on the calendar today.</p>',
+      ),
+    );
+    expect(checkCalendarGmail(readCards(zero)).join("|")).toContain("calendar");
+  });
+
+  it("refuses a Today card that is the old permission-required card", () => {
+    const old = mapCard(BASE_HTML, TODAY, (card) =>
+      card.replace('data-presentation="ready"', 'data-presentation="permission-required"'),
+    );
+    expect(checkCalendarGmail(readCards(old)).join("|")).toContain("permission-required");
+  });
+});
+
+const NEXT_OPEN_INNER =
+  '<h4 class="ccc-today-section">Due today</h4><p class="ccc-state-body">Nothing is due today.</p>' +
+  '<h4 class="ccc-today-section" data-focal="true">Next open task</h4><ul class="ccc-list"><li class="ccc-list-row">' +
+  '<button type="button" class="ccc-list-primary ccc-clamp-2 ccc-session-row-link" title="Plan the invented trip" aria-label="Open task: Plan the invented trip, Next due Oct 30">Plan the invented trip</button>' +
+  '<p class="ccc-list-meta">Next due Oct 30</p></li></ul>';
+
+function withToday(inner: string): string {
+  return mapCard(BASE_HTML, TODAY, (card) =>
+    card.replace(
+      /(<div class="ccc-card-body">\s*)<h4 class="ccc-today-section" data-focal="true">Due today<\/h4>[\s\S]*?(<h4 class="ccc-today-section">Automation<\/h4>)/,
+      `$1${inner}$2`,
+    ),
+  );
+}
+
+describe("checkNextOpen (item 3)", () => {
+  it("passes when nothing is due and a Next open task row labelled Next due opens a task", () => {
+    expect(checkNextOpen(readCards(withToday(NEXT_OPEN_INNER)))).toEqual([]);
+  });
+
+  it("accepts the undated label", () => {
+    const undated = withToday(
+      NEXT_OPEN_INNER.replaceAll("Next due Oct 30", "Most recent open task"),
+    );
+    expect(checkNextOpen(readCards(undated))).toEqual([]);
+  });
+
+  it("refuses a Today card that still lists due or overdue rows", () => {
+    expect(checkNextOpen(readCards(BASE_HTML)).join("|")).toContain("Nothing is due today");
+  });
+
+  it("refuses a missing next-open row, a wrong label and a row that is not a task control", () => {
+    const none = withToday(
+      '<h4 class="ccc-today-section">Due today</h4><p class="ccc-state-body">Nothing is due today.</p>',
+    );
+    expect(checkNextOpen(readCards(none)).join("|")).toContain("Next open task");
+    const wrong = withToday(NEXT_OPEN_INNER.replaceAll("Next due Oct 30", "Due Oct 30"));
+    expect(checkNextOpen(readCards(wrong)).join("|")).toContain("label");
+    const notTask = withToday(NEXT_OPEN_INNER.replace("Open task: ", "Look at: "));
+    expect(checkNextOpen(readCards(notTask)).join("|")).toContain("task");
+  });
+});
+
+const TECH_EMPTY = (card: string): string =>
+  card
+    .replace('data-presentation="ready"', 'data-presentation="empty"')
+    .replace(
+      /<div class="ccc-card-body" tabindex="0">\s*<div class="ccc-intel-latest">[\s\S]*?<\/div>\s*<\/div>/,
+      '<div class="ccc-card-body"><p class="ccc-state-heading">No reports yet</p><p class="ccc-state-body">Press Run now in the research view to write the first cited report.</p><button type="button" class="ccc-list-more">Open the research view</button></div>',
+    );
+
+describe("checkTechEmpty and checkTechLatest (item 4)", () => {
+  const row = { title: "Developer tooling and open-source releases", sourceCount: 3, itemCount: 6 };
+
+  it("passes the empty state and refuses a card that already holds a report", () => {
+    expect(checkTechEmpty(readCards(mapCard(BASE_HTML, INTEL, TECH_EMPTY)))).toEqual([]);
+    expect(checkTechEmpty(readCards(BASE_HTML)).join("|")).toContain(OVERVIEW_TEXT.noReportsYet);
+  });
+
+  it("passes the latest report as Cached with its title, counts, AI line and Open report", () => {
+    expect(checkTechLatest(readCards(BASE_HTML), row)).toEqual([]);
+  });
+
+  it("refuses a Live badge, a wrong title, wrong counts and a missing AI line", () => {
+    const live = mapCard(BASE_HTML, INTEL, (card) =>
+      card
+        .replace('data-badge="cached"', 'data-badge="live"')
+        .replace(
+          '<span class="ccc-badge-label">Cached</span>',
+          '<span class="ccc-badge-label">Live</span>',
+        ),
+    );
+    expect(checkTechLatest(readCards(live), row).join("|")).toContain("Cached");
+    expect(
+      checkTechLatest(readCards(BASE_HTML), { ...row, title: "Another title" }).join("|"),
+    ).toContain("title");
+    expect(checkTechLatest(readCards(BASE_HTML), { ...row, sourceCount: 5 }).join("|")).toContain(
+      "counts",
+    );
+    const noAi = mapCard(BASE_HTML, INTEL, (card) =>
+      card.replace(
+        '<p class="ccc-list-meta">AI-generated summary. Not verified by a person.</p>',
+        "",
+      ),
+    );
+    expect(checkTechLatest(readCards(noAi), row).join("|")).toContain("AI-generated");
+  });
+
+  it("names the Open report control by its report", () => {
+    const unnamed = mapCard(BASE_HTML, INTEL, (card) =>
+      card.replace(' aria-label="Open report: Developer tooling and open-source releases"', ""),
+    );
+    expect(checkTechLatest(readCards(unnamed), row).join("|")).toContain("Open report");
+  });
+});
+
+const FAILURE_LINE =
+  '<p class="ccc-state-body"><span class="ccc-error-glyph" aria-hidden="true">✕</span> Research run failed 2 minutes ago: no source could be fetched.</p><button type="button" class="ccc-list-more">Open the research view</button>';
+
+describe("checkFailureLine and checkNoFailures (item 5)", () => {
+  const failed = mapCard(BASE_HTML, TODAY, (card) =>
+    card.replace('<p class="ccc-state-body">No automation failures.</p>', FAILURE_LINE),
+  );
+
+  it("passes a Today card that shows the failed run with its reason and a way to the research view", () => {
+    expect(checkFailureLine(readCards(failed))).toEqual([]);
+  });
+
+  it("refuses a Today card without the failure line, or with a line that has no reason", () => {
+    expect(checkFailureLine(readCards(BASE_HTML)).join("|")).toContain(OVERVIEW_TEXT.failedStem);
+    const noReason = failed.replace(": no source could be fetched.", ".");
+    expect(checkFailureLine(readCards(noReason)).join("|")).toContain("reason");
+  });
+
+  it("passes the cleared card and refuses one that still shows a failure", () => {
+    expect(checkNoFailures(readCards(BASE_HTML))).toEqual([]);
+    expect(checkNoFailures(readCards(failed)).join("|")).toContain("still");
+    const neither = mapCard(BASE_HTML, TODAY, (card) =>
+      card.replace('<p class="ccc-state-body">No automation failures.</p>', ""),
+    );
+    expect(checkNoFailures(readCards(neither)).join("|")).toContain(OVERVIEW_TEXT.noFailures);
+  });
+});
+
+describe("checkDisconnected and checkRecovered (item 7)", () => {
+  const down = mapCard(mapCard(BASE_HTML, TODAY, disconnect), INTEL, disconnect);
+
+  it("passes Today and Technology both dimmed, disconnected and Unavailable", () => {
+    expect(checkDisconnected(readCards(down))).toEqual([]);
+  });
+
+  it("names a card that stayed live, was not dimmed, or kept a freshness other than Unavailable", () => {
+    expect(checkDisconnected(readCards(BASE_HTML)).join("|")).toContain(OVERVIEW_TEXT.todayTitle);
+    const undimmed = down.replaceAll(' data-dimmed="true"', "");
+    expect(checkDisconnected(readCards(undimmed)).join("|")).toContain("dimmed");
+    const stillLive = mapCard(down, TODAY, (card) =>
+      card
+        .replace('data-badge="unavailable"', 'data-badge="live"')
+        .replace(
+          '<span class="ccc-badge-label">Unavailable</span>',
+          '<span class="ccc-badge-label">Live</span>',
+        ),
+    );
+    expect(checkDisconnected(readCards(stillLive)).join("|")).toContain(
+      OVERVIEW_TEXT.freshnessUnavailable,
+    );
+  });
+
+  it("passes the recovered page and refuses one that is still disconnected", () => {
+    expect(checkRecovered(readCards(BASE_HTML))).toEqual([]);
+    expect(checkRecovered(readCards(down)).join("|")).toContain("disconnected");
+  });
+});
+
+describe("checkLaunchOutcome (item 6)", () => {
+  const outcome = mapCard(BASE_HTML, PROJECTS, (card) =>
+    card.replace(
+      '<p role="status" class="ccc-launch-status"></p>',
+      '<p role="status" class="ccc-launch-status" data-tone="error"><span class="ccc-error-glyph" aria-hidden="true">▲</span>Antigravity isn\'t set up yet.<br>Set it up in Settings → Launchers, then try again.</p>',
+    ),
+  );
+
+  it("passes the typed not-set-up outcome for the pressed launcher", () => {
+    expect(checkLaunchOutcome(readCards(outcome), "antigravity")).toEqual([]);
+  });
+
+  it("refuses an empty status line, a success line and the service-unreachable outcome", () => {
+    expect(checkLaunchOutcome(readCards(BASE_HTML), "antigravity").join("|")).toContain("status");
+    const success = outcome.replace("Antigravity isn't set up yet.", "Opened in Antigravity");
+    expect(checkLaunchOutcome(readCards(success), "antigravity").join("|")).toContain("set up");
+    const down = outcome.replace(
+      "Antigravity isn't set up yet.",
+      "Couldn't reach the command center service.",
+    );
+    expect(checkLaunchOutcome(readCards(down), "antigravity").join("|")).toContain("service");
+  });
+});
+
+describe("assertNoLauncherSaved and pressLaunchControl (T-08-48, D-46)", () => {
+  const LABEL = "Open uat-slice-project in Antigravity";
+  const outcomeCards = readCards(
+    mapCard(BASE_HTML, PROJECTS, (card) =>
+      card.replace(
+        '<p role="status" class="ccc-launch-status"></p>',
+        '<p role="status" class="ccc-launch-status">▲Antigravity isn\'t set up yet.Set it up in Settings → Launchers, then try again.</p>',
+      ),
+    ),
+  );
+
+  it("reads launcher rows with one fixed read-only statement", () => {
+    expect(LAUNCHER_ROWS_SQL).toBe("select launcher_id from launcher_config order by launcher_id;");
+  });
+
+  it("accepts no rows, or rows for other launchers, and refuses the pressed launcher's row", () => {
+    expect(() => assertNoLauncherSaved([], "antigravity")).not.toThrow();
+    expect(() =>
+      assertNoLauncherSaved([{ launcher_id: "claude-desktop" }], "antigravity"),
+    ).not.toThrow();
+    expect(() => assertNoLauncherSaved([{ launcher_id: "antigravity" }], "antigravity")).toThrow(
+      /launcher is saved/,
+    );
+    expect(() => assertNoLauncherSaved([{ launcher_id: "claude-code" }], "claude-code")).toThrow(
+      /launcher is saved/,
+    );
+  });
+
+  it("refuses an answer it cannot read, rather than assume no launcher is saved", () => {
+    expect(() => assertNoLauncherSaved(undefined as never, "antigravity")).toThrow(/read/);
+    expect(() => assertNoLauncherSaved([{ id: "x" }], "antigravity")).toThrow(/read/);
+    expect(() => assertNoLauncherSaved([null], "antigravity")).toThrow(/read/);
+  });
+
+  function fakeBrowser(scripted: {
+    cards: OverviewCard[];
+    activeLabel?: string | null;
+    found?: boolean;
+  }): { browser: OverviewBrowser; keys: unknown[]; executed: string[] } {
+    const keys: unknown[] = [];
+    const executed: string[] = [];
+    const browser = {
+      execute: async (fn: { name: string }) => {
+        executed.push(fn.name);
+        if (fn.name === "rendererReadOverviewCards") return scripted.cards;
+        if (fn.name === "rendererFocusControl") {
+          return { found: scripted.found ?? true, activeLabel: scripted.activeLabel ?? LABEL };
+        }
+        throw new Error(`unexpected renderer function ${fn.name}`);
+      },
+      keys: async (value: unknown) => {
+        keys.push(value);
+      },
+      executeObsidian: async () => true,
+      executeObsidianCommand: async () => undefined,
+    } as unknown as OverviewBrowser;
+    return { browser, keys, executed };
+  }
+
+  const FAST = { timeoutMs: 50, intervalMs: 1 };
+
+  it("refuses to touch the page at all when the launcher is saved (the helper cannot run)", async () => {
+    const { browser, keys, executed } = fakeBrowser({ cards: outcomeCards });
+    await expect(
+      pressLaunchControl(browser, {
+        projectName: "uat-slice-project",
+        action: "antigravity",
+        readLauncherRows: async () => [{ launcher_id: "antigravity" }],
+        poll: FAST,
+      }),
+    ).rejects.toThrow(/launcher is saved/);
+    expect(keys).toEqual([]);
+    expect(executed).toEqual([]);
+  });
+
+  it("refuses when the store cannot be read", async () => {
+    const { browser, keys } = fakeBrowser({ cards: outcomeCards });
+    await expect(
+      pressLaunchControl(browser, {
+        projectName: "uat-slice-project",
+        action: "antigravity",
+        readLauncherRows: async () => {
+          throw new Error("copy failed");
+        },
+        poll: FAST,
+      }),
+    ).rejects.toThrow(/copy failed/);
+    expect(keys).toEqual([]);
+  });
+
+  it("focuses the named control, presses Enter once and returns the typed outcome", async () => {
+    const { browser, keys } = fakeBrowser({ cards: outcomeCards });
+    const result = await pressLaunchControl(browser, {
+      projectName: "uat-slice-project",
+      action: "antigravity",
+      readLauncherRows: async () => [],
+      poll: FAST,
+    });
+    expect(keys).toEqual([Key.Enter]);
+    expect(ENTER_KEY).toBe(Key.Enter);
+    expect(result.label).toBe(LABEL);
+    expect(result.status).toContain("isn't set up yet");
+  });
+
+  it("does not press when focus did not land on the named control", async () => {
+    const { browser, keys } = fakeBrowser({ cards: outcomeCards, activeLabel: "Something else" });
+    await expect(
+      pressLaunchControl(browser, {
+        projectName: "uat-slice-project",
+        action: "antigravity",
+        readLauncherRows: async () => [],
+        poll: FAST,
+      }),
+    ).rejects.toThrow(/focus/);
+    expect(keys).toEqual([]);
+  });
+
+  it("does not press a control that is missing or disabled", async () => {
+    const disabled = readCards(
+      mapCard(BASE_HTML, PROJECTS, (card) =>
+        card.replace(
+          'aria-label="Open uat-slice-project in Antigravity" tabindex="0"',
+          'aria-label="Open uat-slice-project in Antigravity" aria-disabled="true" tabindex="0"',
+        ),
+      ),
+    );
+    const { browser, keys } = fakeBrowser({ cards: disabled });
+    await expect(
+      pressLaunchControl(browser, {
+        projectName: "uat-slice-project",
+        action: "antigravity",
+        readLauncherRows: async () => [],
+        poll: FAST,
+      }),
+    ).rejects.toThrow(/launch control/);
+    expect(keys).toEqual([]);
+  });
+
+  it("fails with the last status text when no typed outcome appears", async () => {
+    const { browser } = fakeBrowser({ cards: readCards(BASE_HTML) });
+    await expect(
+      pressLaunchControl(browser, {
+        projectName: "uat-slice-project",
+        action: "antigravity",
+        readLauncherRows: async () => [],
+        poll: FAST,
+      }),
+    ).rejects.toThrow(/outcome/);
+  });
+
+  it("only knows the two launchers that need a saved configuration (never Finder or GitHub)", async () => {
+    const { browser, keys } = fakeBrowser({ cards: outcomeCards });
+    await expect(
+      pressLaunchControl(browser, {
+        projectName: "uat-slice-project",
+        action: "finder" as never,
+        readLauncherRows: async () => [],
+        poll: FAST,
+      }),
+    ).rejects.toThrow(/not a launcher/);
+    expect(keys).toEqual([]);
+  });
+});
+
+describe("findLauncherProcesses", () => {
+  const node = (command: string) => ({ pid: 100, ppid: 1, command });
+
+  it("finds programs that open an app, a Finder window, a terminal or a browser", () => {
+    const found = findLauncherProcesses([
+      node("/usr/bin/open -b com.example.app /tmp/x"),
+      node("/usr/bin/osascript -e tell"),
+      node("/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"),
+      node("/usr/bin/git status --porcelain"),
+      node("/usr/bin/security find-generic-password -a x"),
+    ]);
+    expect(found.map((entry) => entry.command.split(" ")[0])).toEqual([
+      "/usr/bin/open",
+      "/usr/bin/osascript",
+      "/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+    ]);
+  });
+
+  it("finds nothing among harmless descendants", () => {
+    expect(findLauncherProcesses([node("/usr/bin/git rev-parse HEAD")])).toEqual([]);
+    expect(findLauncherProcesses([])).toEqual([]);
+  });
+});
+
+describe("scanBuiltPlugin (item 8)", () => {
+  const folders: string[] = [];
+  afterEach(() => {
+    for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
+  });
+
+  function runRootWith(mainJs: string | null): { runRoot: string; stage: string } {
+    const runRoot = mkdtempSync(join(tmpdir(), "ccc-uat."));
+    folders.push(runRoot);
+    const stage = join(runRoot, "plugin-stage");
+    mkdirSync(stage, { recursive: true });
+    if (mainJs !== null) writeFileSync(join(stage, "main.js"), mainJs);
+    return { runRoot, stage };
+  }
+
+  it("reads main.js of the staged copy and reports no marker for clean code", () => {
+    const { runRoot, stage } = runRootWith("var a = 1; // service data only");
+    expect(scanBuiltPlugin(stage, runRoot)).toEqual({ bytes: 31, markers: [] });
+  });
+
+  it("reports a fixture marker by name only", () => {
+    const first = FIXTURE_MARKERS[0];
+    const { runRoot, stage } = runRootWith(`var t = "${first?.text}";`);
+    const result = scanBuiltPlugin(stage, runRoot);
+    expect(result.markers).toEqual([first?.name]);
+    expect(JSON.stringify(result)).not.toContain(first?.text ?? "unreachable");
+  });
+
+  it("refuses a stage folder outside the run root, a missing main.js and a linked main.js", () => {
+    const { runRoot } = runRootWith("x");
+    const outside = mkdtempSync(join(tmpdir(), "ccc-outside."));
+    folders.push(outside);
+    writeFileSync(join(outside, "main.js"), "x");
+    expect(() => scanBuiltPlugin(outside, runRoot)).toThrow(/run root/);
+    const empty = runRootWith(null);
+    expect(() => scanBuiltPlugin(empty.stage, empty.runRoot)).toThrow(/main\.js/);
+    const linked = runRootWith(null);
+    writeFileSync(join(outside, "real.js"), "x");
+    symlinkSync(join(outside, "real.js"), join(linked.stage, "main.js"));
+    expect(() => scanBuiltPlugin(linked.stage, linked.runRoot)).toThrow(/link/);
+  });
+});
+
+describe("checkNoFixtureOnCards (item 8)", () => {
+  it("passes the real-looking cards", () => {
+    expect(checkNoFixtureOnCards(readCards(BASE_HTML))).toEqual([]);
+  });
+
+  it("names a fixture marker that reached a card", () => {
+    const first = FIXTURE_MARKERS[1];
+    const dirty = BASE_HTML.replaceAll("Sort the synthetic backlog", first?.text ?? "");
+    const problems = checkNoFixtureOnCards(readCards(dirty));
+    expect(problems.join("|")).toContain(first?.name);
+    expect(problems.join("|")).not.toContain(first?.text ?? "unreachable");
+  });
+});
+
+describe("completing the tasks due today and overdue (item 3)", () => {
+  const NOW = "2026-10-23T12:00:00.000Z";
+  const NOTE = [
+    "---",
+    "id: abc",
+    "scope: global",
+    "updated: '2026-10-08T06:57:00.000Z'",
+    "title: 'A task'",
+    "status: ready",
+    "due: 2026-10-05",
+    "tags:",
+    "  - ops",
+    "---",
+    "Synthetic task 1.",
+    "",
+  ].join("\n");
+
+  it("marks a note done by changing only status, updated and completed", () => {
+    const done = markDoneText(NOTE, NOW);
+    expect(checkStatusChangeDiff(NOTE, done, { expectStatus: "done" })).toEqual({ ok: true });
+    expect(done).toContain("status: done");
+  });
+
+  it("refuses text that is not a task note", () => {
+    expect(() => markDoneText("no front matter", NOW)).toThrow(/front matter/);
+    expect(() => markDoneText(NOTE.replace("status: ready\n", ""), NOW)).toThrow(/status/);
+  });
+
+  it("keeps the due line byte for byte", () => {
+    const done = markDoneText(NOTE, NOW);
+    expect(done.split("\n").find((line) => line.startsWith("due:"))).toBe("due: 2026-10-05");
+  });
+
+  function world(ids: string[]) {
+    const notes = new Map(ids.map((id) => [`${id}.md`, NOTE.replace("id: abc", `id: ${id}`)]));
+    const writes: string[] = [];
+    const open = new Set(ids);
+    return {
+      writes,
+      deps: {
+        zone: "UTC",
+        nowIso: NOW,
+        dueToday: async () => ({
+          due: [],
+          overdue: [...open].map((taskId) => ({ taskId, title: "t" })),
+        }),
+        readNotes: () =>
+          [...notes.entries()].map(([name, text]) => ({
+            path: `global/tasks/${name}`,
+            name,
+            text,
+          })),
+        writeNote: (name: string, text: string) => {
+          writes.push(name);
+          notes.set(name, text);
+          open.delete(name.replace(/\.md$/, ""));
+        },
+        poll: { timeoutMs: 50, intervalMs: 1 },
+      },
+    };
+  }
+
+  it("completes every row the service lists, round by round, until none is left", async () => {
+    const { deps, writes } = world(["a1", "b2", "c3"]);
+    const total = await completeDueAndOverdue(deps);
+    expect(total).toBe(3);
+    expect(writes.sort()).toEqual(["a1.md", "b2.md", "c3.md"]);
+  });
+
+  it("returns zero when nothing is due", async () => {
+    const { deps, writes } = world([]);
+    expect(await completeDueAndOverdue(deps)).toBe(0);
+    expect(writes).toEqual([]);
+  });
+
+  it("stops with a message when a listed task has no note it can edit", async () => {
+    const { deps } = world(["a1"]);
+    const stuck = {
+      ...deps,
+      dueToday: async () => ({ due: [], overdue: [{ taskId: "missing", title: "t" }] }),
+    };
+    await expect(completeDueAndOverdue(stuck)).rejects.toThrow(/no note/);
+  });
+});
+
+describe("the upcoming task request (item 3)", () => {
+  it("is a ready task due a week after the machine's today, in the owner's zone", () => {
+    const request = upcomingTaskRequest("UTC", Date.parse("2026-10-23T12:00:00Z"));
+    expect(request).toEqual({
+      title: "Slice proof upcoming task",
+      intent: "ready",
+      zone: "UTC",
+      dueDate: "2026-10-30",
+    });
   });
 });

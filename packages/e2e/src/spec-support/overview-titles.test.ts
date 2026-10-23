@@ -14,8 +14,7 @@ import { extractSpecTitles } from "../tag-lint.js";
 
 const SPEC = "packages/e2e/specs/overview-slice.e2e.ts";
 
-/** The items whose cases the spec holds so far (Task 1 adds item 1; Tasks 2 grows the list to 1..8). */
-const PLANNED_SO_FAR = [1] as const;
+/** All eight slice items (Task 1 added item 1, Task 2 items 2 to 8). */
 const ALL_ITEMS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 function titles(): string[] {
@@ -29,8 +28,12 @@ function numbersOf(list: readonly string[]): number[] {
 }
 
 describe("overview slice spec titles", () => {
-  it("holds exactly its planned items so far, once each", () => {
-    expect(numbersOf(titles()).sort((a, b) => a - b)).toEqual([...PLANNED_SO_FAR]);
+  it("holds exactly the titles [08-UAT#01] to [08-UAT#08], once each", () => {
+    expect(numbersOf(titles()).sort((a, b) => a - b)).toEqual([...ALL_ITEMS]);
+  });
+
+  it("holds no title for any other item", () => {
+    expect(titles().filter((title) => !/^\[08-UAT#0[1-8]\] /.test(title))).toEqual([]);
   });
 
   it("maps every item 1 to 8 of the Phase 8 item plan to this spec file", () => {
