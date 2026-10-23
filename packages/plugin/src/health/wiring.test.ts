@@ -50,7 +50,7 @@ describe("wireHealth", () => {
   });
 
   it("maps a client error onto the closed vocabulary and never forwards its message", async () => {
-    const coded = Object.assign(new Error("connect ENOENT /Users/someone/x"), {
+    const coded = Object.assign(new Error("connect ENOENT /Users/username/x"), {
       code: "timeout",
       status: 0,
     });
@@ -61,7 +61,7 @@ describe("wireHealth", () => {
     });
 
     registry.disposeAll();
-    wireHealth(registry, { getHealth: () => Promise.reject(new Error("/Users/someone/y")) });
+    wireHealth(registry, { getHealth: () => Promise.reject(new Error("/Users/username/y")) });
     await expect(healthApi().get("gesture")).rejects.toMatchObject({
       code: "internal",
       message: "internal",
@@ -69,7 +69,7 @@ describe("wireHealth", () => {
     // A code outside the closed set is not trusted either.
     registry.disposeAll();
     wireHealth(registry, {
-      getHealth: () => Promise.reject(Object.assign(new Error("x"), { code: "/Users/someone/z" })),
+      getHealth: () => Promise.reject(Object.assign(new Error("x"), { code: "/Users/username/z" })),
     });
     await expect(healthApi().get("gesture")).rejects.toMatchObject({ code: "internal" });
   });

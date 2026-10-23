@@ -48,7 +48,7 @@ const ROW_NAMES = [
   "App launchers",
 ];
 
-const PATHY = "connect ENOENT /Users/secretperson/Library/ccc/service.sock";
+const PATHY = "connect ENOENT /Users/username/Library/ccc/service.sock";
 
 type Fetch = (trigger: "gesture" | "reconnect") => Promise<ReturnType<typeof fixtureResponse>>;
 
@@ -418,7 +418,7 @@ describe("Task 2, Test 3: setup actions do exactly three things", () => {
   });
 
   it("posts a fixed failure line, and no command text, when the clipboard refuses", async () => {
-    const copyText = vi.fn(() => Promise.reject(new Error("/Users/someone/denied")));
+    const copyText = vi.fn(() => Promise.reject(new Error("/Users/username/denied")));
     configure();
     const { notify } = renderSection({ host: hostWith({ copyText }) });
     await settle();
@@ -546,16 +546,16 @@ describe("Task 2, Test 4: the summary", () => {
   });
 
   it("reads All six subsystems are working with only a working chip", async () => {
-    const response = await allOkHealthFor("/Users/example/Vaults/Example");
+    const response = await allOkHealthFor("/Users/username/Vaults/Example");
     configure(() => Promise.resolve(response));
-    renderSection({ host: hostWithVaultPath("/Users/example/Vaults/Example") });
+    renderSection({ host: hostWithVaultPath("/Users/username/Vaults/Example") });
     await settle();
     expect(summaryText()).toBe("All six subsystems are working. ✓ 6 working");
   });
 });
 
 describe("Task 2, Test 5: the vault overlay", () => {
-  const BASE = "/Users/example/Vaults/Example";
+  const BASE = "/Users/username/Vaults/Example";
 
   async function readyWith(basePathOfService: string | null) {
     const fingerprint = basePathOfService === null ? null : await fingerprintFor(basePathOfService);
@@ -821,7 +821,7 @@ describe("Task 3, Test 3: a failed fetch", () => {
     expect(chipOf(rowNamed("Vault access"))).toContain("Needs setup");
 
     get.mockImplementation(() =>
-      Promise.reject(Object.assign(new Error("/Users/x/y"), { code: "timeout" })),
+      Promise.reject(Object.assign(new Error("/Users/username/y"), { code: "timeout" })),
     );
     fireEvent.click(runButton());
     await settle();

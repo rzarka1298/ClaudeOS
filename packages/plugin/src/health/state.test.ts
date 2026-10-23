@@ -36,7 +36,7 @@ import {
  */
 
 const LIVE = { kind: "live" } as const;
-const PATHY = "connect ENOENT /Users/someone/Library/Application Support/ccc/service.sock";
+const PATHY = "connect ENOENT /Users/username/Library/Application Support/ccc/service.sock";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -275,7 +275,7 @@ describe("watchConnection (D-03)", () => {
 });
 
 describe("the vault overlay (Task 2, Test 5; D-36)", () => {
-  const BASE = "/Users/example/Vaults/Example";
+  const BASE = "/Users/username/Vaults/Example";
 
   async function readyResponse(basePath: string | null) {
     const fingerprint = basePath === null ? null : await fingerprintFor(basePath);
