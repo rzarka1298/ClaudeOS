@@ -3330,6 +3330,14 @@
   margin-top: var(--ccc-space-sm);
 }
 
+/* The empty Project shortcuts card puts the launcher setup callout directly
+ * after the `Go to the projects view` button; keep a small step between the
+ * two. Scoped to the command-center root and to that adjacency, so the
+ * callout's other placements (projects view, filled card) are untouched. */
+.ccc-command-center .ccc-empty-action + .ccc-setup-callout {
+  margin-top: var(--ccc-space-md);
+}
+
 /* S10 setup callout — a glass panel one step quieter than a card, since it is
  * guidance rather than data. */
 .ccc-setup-callout {
