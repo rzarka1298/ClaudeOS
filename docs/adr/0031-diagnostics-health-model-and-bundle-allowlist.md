@@ -83,7 +83,10 @@ name a test file. The scan strips comments with a string-aware reader, so a comm
 
 The Keychain presence check runs **only on an owner gesture**. The route takes `trigger=gesture|reconnect`; only an exact
 single `gesture` is a gesture, and the cache is keyed by trigger. A reconnect answers from the last gesture's result in
-memory, or `research-key-not-checked`.
+memory while that result is under five minutes old (`HEALTH_STALE_AFTER_MS`, the same window the plugin uses to show a row
+as `Stale`), and `research-key-not-checked` otherwise, so an old answer never reads as a fresh one (FIX6A). The diagnostic
+bundle ages each row the same way: a row whose `checkedAt` is more than that window before the bundle's `generatedAt` is
+exported `stale`, not `live`.
 
 ### 3. The service never names the vault; it sends a salted fingerprint (D-36)
 

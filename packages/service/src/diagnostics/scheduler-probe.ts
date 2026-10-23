@@ -1,4 +1,5 @@
 import {
+  HEALTH_STALE_AFTER_MS,
   type HealthTrigger,
   type ProbeOutcome,
   type ResearchStatusResponse,
@@ -17,8 +18,8 @@ import { bounded, noAnswer, type Part, partOf, rowOfParts } from "./probe-kit.js
  *
  * The key part is the only part that can start a process (`security`, attribute-only, in
  * `@ccc/keychain`). It runs only on an owner gesture. A reconnect (launchd restart, wake from
- * sleep) answers from memory: the result of the last gesture, or "not checked" if there has been
- * none since the service started ({@link createKeyPresenceCheck}). With the guarded test
+ * sleep) answers from memory: the result of the last gesture while it is under five minutes old,
+ * or "not checked" if there has been none or it is older ({@link createKeyPresenceCheck}). With the guarded test
  * transport active the key is not consulted at all (the pipeline skips it), so the part is present.
  */
 
@@ -35,23 +36,38 @@ export interface SchedulerProbePorts {
 
 /**
  * The key presence port the composition builds around `hasSecret`: a `gesture` calls
- * `hasResearchKey` and keeps the answer in memory; any other trigger never calls it and returns
- * that answer, or `not-checked` before the first gesture. A check that throws is `error`
- * (remembered); a check the signal cut short is not remembered, because its answer was discarded.
+ * `hasResearchKey` and keeps the answer in memory with the time it was made; any other trigger
+ * never calls it and returns that answer only while it is younger than
+ * {@link HEALTH_STALE_AFTER_MS} (the plugin's staleness window, one shared constant), and
+ * `not-checked` otherwise, or before the first gesture (FIX6A M1: a reconnect hours later must not
+ * show an old answer as a fresh one). The age runs on a monotonic clock, so a wall-clock jump
+ * cannot make an answer younger. A check that throws is `error` (remembered); a check the signal
+ * cut short is not remembered, because its answer was discarded.
  */
 export function createKeyPresenceCheck(deps: {
   readonly hasResearchKey: (signal: AbortSignal) => Promise<"present" | "absent" | "error">;
+  /** Monotonic milliseconds; the default is `performance.now`. Injected by tests. */
+  readonly clock?: () => number;
 }): SchedulerProbePorts["keyPresence"] {
-  let lastGesture: "present" | "absent" | "error" | null = null;
+  const clock = deps.clock ?? (() => performance.now());
+  let lastGesture: {
+    readonly result: "present" | "absent" | "error";
+    readonly atMs: number;
+  } | null = null;
   return async (trigger, signal) => {
-    if (trigger !== "gesture") return lastGesture ?? "not-checked";
+    if (trigger !== "gesture") {
+      if (lastGesture === null) return "not-checked";
+      return clock() - lastGesture.atMs <= HEALTH_STALE_AFTER_MS
+        ? lastGesture.result
+        : "not-checked";
+    }
     let result: "present" | "absent" | "error";
     try {
       result = await deps.hasResearchKey(signal);
     } catch {
       result = "error";
     }
-    if (!signal.aborted) lastGesture = result;
+    if (!signal.aborted) lastGesture = { result, atMs: clock() };
     return result;
   };
 }

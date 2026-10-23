@@ -1,5 +1,6 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { type FileHandle, open } from "node:fs/promises";
+import { raceSignal, type SingleFlight, singleFlightFor } from "../single-flight.js";
 
 /**
  * A read-only, bounded read of one small file (FIX1A MINOR 6). The service reads files it does not
@@ -76,33 +77,57 @@ export function readBoundedRegularFile(path: string, maxBytes: number): string |
   return read.kind === "text" ? read.text : null;
 }
 
+/** The one file-system call the asynchronous read makes; injected by tests. */
+export interface BoundedReadFs {
+  open(path: string, flags: number): Promise<FileHandle>;
+}
+
+const REAL_FS: BoundedReadFs = { open: (path, flags) => open(path, flags) };
+
+const flightsByFs = new WeakMap<object, SingleFlight>();
+
 /**
  * The asynchronous bounded read for the request path (FIX2A F1). Every call goes through the libuv
  * thread pool, so a path on a stalled mount holds a pool thread and not the event loop: timers
  * (the probe caps) still fire, and the caller, which races this against its abort signal, reads
  * `probe-timeout`. The descriptor is opened `O_NONBLOCK` and must be a regular file, exactly as
- * the synchronous read; a signal that has fired by the time a step finishes ends the read and the
- * handle is closed either way, so a call that completes late leaks nothing.
+ * the synchronous read; the handle is closed either way, so a call that completes late leaks
+ * nothing.
+ *
+ * At most one read per (path, cap) is outstanding (FIX6A Codex-1): a read that is stuck on a
+ * stalled mount cannot be cancelled, so a check that asked again would hold another pool thread
+ * every time. A later caller shares the pending read and handles its own `signal` (it reads
+ * `unreadable` when its signal fires); the shared read itself takes no signal, so one caller
+ * giving up never cancels another's. The entry is dropped when the read settles.
  */
-export async function readBoundedRegularFileAsync(
+export function readBoundedRegularFileAsync(
   path: string,
   maxBytes: number,
   signal?: AbortSignal,
+  fs: BoundedReadFs = REAL_FS,
+): Promise<BoundedRead> {
+  if (signal?.aborted === true) return Promise.resolve(UNREADABLE);
+  const flights = singleFlightFor(flightsByFs, fs);
+  const shared = flights.run(`${maxBytes}\u0000${path}`, () =>
+    readBoundedRegularFileOnce(path, maxBytes, fs),
+  );
+  return raceSignal(shared, signal, () => UNREADABLE);
+}
+
+async function readBoundedRegularFileOnce(
+  path: string,
+  maxBytes: number,
+  fs: BoundedReadFs,
 ): Promise<BoundedRead> {
   let handle: FileHandle | undefined;
-  // A function, not a flag: the signal can fire between the awaits below.
-  const aborted = (): boolean => signal?.aborted === true;
   try {
-    if (aborted()) return UNREADABLE;
-    handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-    if (aborted()) return UNREADABLE;
+    handle = await fs.open(path, constants.O_RDONLY | constants.O_NONBLOCK);
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > maxBytes) return UNREADABLE;
     const chunks: Buffer[] = [];
     let total = 0;
     const chunk = Buffer.allocUnsafe(Math.min(maxBytes + 1, 64 * 1024));
     for (;;) {
-      if (aborted()) return UNREADABLE;
       const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
       if (bytesRead === 0) break;
       total += bytesRead;

@@ -11,6 +11,7 @@ import {
   DiagnosticsErrorBodySchema,
   DiagnosticsHealthResponseSchema,
   type DisplayedRow,
+  HEALTH_STALE_AFTER_MS,
   HealthTriggerSchema,
   HOOK_SILENT_THRESHOLD_MS,
   HOOKS_REASON_STATUS,
@@ -1052,5 +1053,11 @@ describe("FIX1A MINOR 4: service-side reasons are separate from the plugin-overl
       "service-not-running",
       "vault-mismatch",
     ]);
+  });
+});
+
+describe("FIX6A M1: the shared health staleness window", () => {
+  it("is five minutes, one constant for the service and the plugin", () => {
+    expect(HEALTH_STALE_AFTER_MS).toBe(5 * 60 * 1000);
   });
 });

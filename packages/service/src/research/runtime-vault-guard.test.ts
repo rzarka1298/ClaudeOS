@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRuntimeVaultGuard, lexicalInsideVault } from "./runtime-vault-guard.js";
 
 // FIX3A MAJOR-1: "the runtime folder is inside the vault" is resolved ONCE, asynchronously, and
@@ -130,5 +130,127 @@ describe("createRuntimeVaultGuard", () => {
     });
     await expect(guard.refresh()).resolves.toBeUndefined();
     expect(guard.insideVault("/vault")).toBe(false);
+  });
+});
+
+describe("FIX6A opus minor 5: a failed or stuck resolution is retried, never cached for good", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a failed realpath is retried on the next refresh after the backoff, not before", async () => {
+    let clock = 1_000;
+    let failing = true;
+    const links: Record<string, string> = {
+      [RUNTIME]: "/real/vault/runtime",
+      "/vault": "/real/vault",
+    };
+    const realpath = vi.fn((path: string) =>
+      failing
+        ? Promise.reject(Object.assign(new Error("EIO"), { code: "EIO" }))
+        : Promise.resolve(links[path] ?? path),
+    );
+    const guard = createRuntimeVaultGuard({
+      runtimeDir: RUNTIME,
+      getVaultRoot: () => "/vault",
+      realpath,
+      nowMs: () => clock,
+    });
+    await guard.refresh();
+    expect(guard.insideVault("/vault")).toBe(false);
+    const afterFailure = realpath.mock.calls.length;
+
+    // Inside the backoff nothing is asked again, however often it is asked.
+    failing = false;
+    clock += 1_000;
+    await guard.refresh();
+    guard.insideVault("/vault");
+    await guard.refresh();
+    expect(realpath.mock.calls.length).toBe(afterFailure);
+    expect(guard.insideVault("/vault")).toBe(false);
+    await guard.refresh(); // let the background check that call started finish
+
+    // After the backoff the next refresh resolves it, and the real answer replaces the failure.
+    clock += 60_000;
+    await guard.refresh();
+    expect(realpath.mock.calls.length).toBeGreaterThan(afterFailure);
+    expect(guard.insideVault("/vault")).toBe(true);
+  });
+
+  it("while a resolution has failed the request answers with the lexical rule, so a folder lexically inside the vault is still protected", async () => {
+    const guard = createRuntimeVaultGuard({
+      runtimeDir: "/vault/runtime",
+      getVaultRoot: () => "/vault",
+      realpath: () => Promise.reject(new Error("EIO")),
+    });
+    await guard.refresh();
+    expect(guard.insideVault("/vault")).toBe(true);
+  });
+
+  it("a never-settling realpath does not stick the refresh: it is bounded by a timeout and the in-flight entry is cleared", async () => {
+    let clock = 0;
+    const links: Record<string, string> = {
+      [RUNTIME]: "/real/vault/runtime",
+      "/vault": "/real/vault",
+    };
+    const stuckCalls: Array<() => void> = [];
+    let stuck = true;
+    const realpath = vi.fn((path: string) =>
+      stuck
+        ? new Promise<string>((resolve) => {
+            stuckCalls.push(() => resolve(links[path] ?? path));
+          })
+        : Promise.resolve(links[path] ?? path),
+    );
+    const guard = createRuntimeVaultGuard({
+      runtimeDir: RUNTIME,
+      getVaultRoot: () => "/vault",
+      realpath,
+      nowMs: () => clock,
+      timeoutMs: 5_000,
+    });
+    const first = guard.refresh();
+    let settled = false;
+    void first.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    await first;
+    expect(settled).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(guard.insideVault("/vault")).toBe(false);
+
+    // The mount recovers (the stuck call finally answers): after the backoff a new refresh is not
+    // blocked by the earlier one.
+    stuck = false;
+    for (const answer of stuckCalls) answer();
+    await guard.refresh(); // the background check the insideVault call above started
+    clock += 120_000;
+    await guard.refresh();
+    expect(guard.insideVault("/vault")).toBe(true);
+  });
+
+  it("a stuck realpath is shared, not piled up: repeated refreshes after each timeout start no further call for that path", async () => {
+    let clock = 0;
+    const realpath = vi.fn(() => new Promise<string>(() => undefined));
+    const guard = createRuntimeVaultGuard({
+      runtimeDir: RUNTIME,
+      getVaultRoot: () => "/vault",
+      realpath,
+      nowMs: () => clock,
+      timeoutMs: 1_000,
+    });
+    for (let i = 0; i < 4; i += 1) {
+      const pending = guard.refresh();
+      await vi.advanceTimersByTimeAsync(1_001);
+      await pending;
+      clock += 120_000;
+    }
+    expect(realpath).toHaveBeenCalledTimes(1);
   });
 });

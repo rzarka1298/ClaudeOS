@@ -326,6 +326,19 @@ describe("UsageServices.refreshSettingsFacts (plan 08-04)", () => {
     expect((await services.refreshSettingsFacts()).hookRuntimeMissing).toBe(true);
   });
 
+  it("FIX6A Codex-2: an unreadable drop file does not fail the settings read; the spool facts stay rejecting so the spool part reads unknown", async () => {
+    const services = start({
+      versionProbe: fakeProber().deps,
+      poller: {
+        setStatusLineSink() {},
+        dropCount: () => 0,
+        dropFacts: () => Promise.reject(new Error("spool drop file could not be read")),
+      },
+    });
+    await expect(services.refreshSettingsFacts()).resolves.toBeDefined();
+    await expect(services.spoolFacts()).rejects.toThrow();
+  });
+
   it("FIX2A F6: the spool facts are the dropped-records file's size and mtime, read asynchronously", async () => {
     const services = start({ versionProbe: fakeProber().deps });
     expect(await services.spoolFacts()).toEqual({ count: 0, lastDropAt: null });

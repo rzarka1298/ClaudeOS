@@ -37,6 +37,7 @@ import {
   makeSecondVault,
   readTextInRunRoot,
   removeFileInRunRoot,
+  removeLauncherRow,
   renameInRunRoot,
   replaceFileInRunRoot,
   runHookInstaller,
@@ -231,7 +232,6 @@ describe("health drills", function () {
       intervalMs: 50,
       describe: "the previous answer to be older than the answer cache",
     });
-    clock.lastPressAt = Date.now();
     const presses = await browser.execute(rendererPressRunChecksTwice, HEALTH_DOM_CONFIG);
     expect(checkRunChecksPresses(presses)).toEqual([]);
 
@@ -241,6 +241,8 @@ describe("health drills", function () {
       intervalMs: 100,
     });
     expect(checkChecked(first)).toEqual([]);
+    // The service caches an answer from when its run finished, which is no later than now (FIX6A M2).
+    clock.lastPressAt = Date.now();
 
     // Reopening Diagnostics within two seconds shows the rows as Cached with the same checked time.
     const second = await reopenDiagnostics(hb, { timeoutMs: 5_000, intervalMs: 100 });
@@ -557,16 +559,32 @@ describe("health drills", function () {
 
       // A saved app that is not on this Mac reads Failing. The row is seeded into the stopped
       // sandbox store (the save route would refuse such a bundle).
-      await env.stopService();
-      await seedLauncherRow(
-        paths,
-        { launcher: "antigravity", bundleId: MISSING_BUNDLE_ID, fixtureState: "stopped" },
-        { fixture: fixtureView(() => false) },
-      );
-      await env.startService();
-      await live();
-      expect(expectPart(await checked(), "launchers", "antigravity", "bundle-not-found")).toEqual(
-        [],
+      // The row is removed again at the end (FIX6A M2), so the checks of later items do not look
+      // up an app that is not on this Mac (that lookup runs mdfind).
+      await withRestore(
+        async () => {
+          await env.stopService();
+          await removeLauncherRow(
+            paths,
+            { launcher: "antigravity", fixtureState: "stopped" },
+            { fixture: fixtureView(() => false) },
+          );
+          await env.startService();
+          await live();
+        },
+        async () => {
+          await env.stopService();
+          await seedLauncherRow(
+            paths,
+            { launcher: "antigravity", bundleId: MISSING_BUNDLE_ID, fixtureState: "stopped" },
+            { fixture: fixtureView(() => false) },
+          );
+          await env.startService();
+          await live();
+          expect(
+            expectPart(await checked(), "launchers", "antigravity", "bundle-not-found"),
+          ).toEqual([]);
+        },
       );
     } finally {
       started = findLauncherProcesses(await watch.stop());

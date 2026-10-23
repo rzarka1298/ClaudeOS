@@ -30,6 +30,7 @@ import {
   refuseOwnerLocations,
   removeEmptyDirInRunRoot,
   removeFileInRunRoot,
+  removeLauncherRow,
   renameInRunRoot,
   replaceFileInRunRoot,
   runFixedArgv,
@@ -704,6 +705,94 @@ describe("seedLauncherRow (Test 5)", () => {
           updated_at: "2000-01-01T00:00:00.000Z",
         },
       ]);
+    },
+  );
+});
+
+describe("removeLauncherRow (FIX6A M2)", () => {
+  const hasSqlite = existsSync("/usr/bin/sqlite3");
+  const DELETE_ANTIGRAVITY = "DELETE FROM launcher_config WHERE launcher_id = 'antigravity';";
+  const stopped = { isRunning: () => false };
+  const input = { launcher: "antigravity", fixtureState: "stopped" } as const;
+
+  function makeStore(): void {
+    execFileSync(SQLITE_TOOL, [
+      paths.dbPath,
+      "create table launcher_config (launcher_id text primary key, config_json text not null, tested text not null default 'false', updated_at text not null);",
+    ]);
+  }
+
+  it("runs one fixed DELETE through the sqlite3 tool with an argv array", async () => {
+    writeFileSync(paths.dbPath, "", { mode: 0o600 });
+    const calls: Array<{ file: string; args: readonly string[] }> = [];
+    const run: DrillRunner = async (file, args) => {
+      calls.push({ file, args });
+      return { stdout: "", stderr: "" };
+    };
+    await removeLauncherRow(paths, input, { ...deps(), run, fixture: stopped });
+    expect(calls).toEqual([
+      { file: SQLITE_TOOL, args: ["-bail", paths.dbPath, DELETE_ANTIGRAVITY] },
+    ]);
+  });
+
+  it("refuses unless the fixture is stopped, the launcher is an app launcher and the store is the run root's own", async () => {
+    writeFileSync(paths.dbPath, "", { mode: 0o600 });
+    const calls: unknown[] = [];
+    const run: DrillRunner = async (...args) => {
+      calls.push(args);
+      return { stdout: "", stderr: "" };
+    };
+    await expect(
+      removeLauncherRow(paths, input, { home, base, run, fixture: { isRunning: () => true } }),
+    ).rejects.toThrow(/stopped/);
+    await expect(
+      removeLauncherRow(paths, { launcher: "antigravity" } as never, {
+        home,
+        base,
+        run,
+        fixture: stopped,
+      }),
+    ).rejects.toThrow(/stopped/);
+    for (const launcher of ["claude-code", "codex", "", "x'y"]) {
+      await expect(
+        removeLauncherRow(paths, { ...input, launcher } as never, {
+          home,
+          base,
+          run,
+          fixture: stopped,
+        }),
+      ).rejects.toThrow();
+    }
+    rmSync(paths.dbPath);
+    await expect(
+      removeLauncherRow(paths, input, { home, base, run, fixture: stopped }),
+    ).rejects.toThrow(/store/i);
+    expect(calls).toEqual([]);
+  });
+
+  it.runIf(hasSqlite)(
+    "removes the seeded row from a real sandbox store copy and leaves other rows",
+    async () => {
+      makeStore();
+      await seedLauncherRow(
+        paths,
+        { launcher: "antigravity", bundleId: "com.example.not-installed", fixtureState: "stopped" },
+        { ...deps(), fixture: stopped },
+      );
+      await seedLauncherRow(
+        paths,
+        { launcher: "claude-desktop", bundleId: "com.example.other", fixtureState: "stopped" },
+        { ...deps(), fixture: stopped },
+      );
+      await removeLauncherRow(paths, input, { ...deps(), fixture: stopped });
+      const rows = JSON.parse(
+        execFileSync(
+          SQLITE_TOOL,
+          ["-readonly", "-json", paths.dbPath, "select launcher_id from launcher_config;"],
+          { encoding: "utf8" },
+        ),
+      ) as Array<Record<string, string>>;
+      expect(rows).toEqual([{ launcher_id: "claude-desktop" }]);
     },
   );
 });

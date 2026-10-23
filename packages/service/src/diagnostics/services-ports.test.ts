@@ -218,6 +218,19 @@ describe("the research key presence (Amendment A1, D-38)", () => {
     expect(response.keychain.researchKey).toBe("unknown");
   });
 
+  it("FIX6A M1: a reconnect four hours after the gesture reads the key part not-checked and keychain.researchKey unknown, with a new generatedAt", async () => {
+    const { services, fakes } = build({ key: "present" });
+    const first = await services.check("gesture");
+    expect(first.keychain.researchKey).toBe("present");
+    await vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000);
+    const again = await services.check("reconnect");
+    const keyPart = partsOf(again.rows[3] as never).find((p) => p.partId === "research-key");
+    expect(keyPart).toMatchObject({ status: "unknown", reasonCode: "research-key-not-checked" });
+    expect(again.keychain.researchKey).toBe("unknown");
+    expect(again.generatedAt).not.toBe(first.generatedAt);
+    expect(fakes.hasResearchKey).toHaveBeenCalledTimes(1);
+  });
+
   it("a key read cut short by the probe cap reads unknown, not a late answer", async () => {
     const late = vi.fn(() => new Promise<"present">(() => undefined));
     const { services } = build({

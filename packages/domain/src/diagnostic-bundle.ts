@@ -5,6 +5,7 @@ import {
   COLLECTORS_REASONS,
   type DiagnosticsHealthResponse,
   DOTTED_VERSION_PATTERN,
+  HEALTH_STALE_AFTER_MS,
   HOOKS_REASON_STATUS,
   HOOKS_REASONS,
   LAUNCHER_PART_IDS,
@@ -331,9 +332,28 @@ function launcherStatus(value: LauncherStatus | null): LauncherStatus | null {
 
 type BundleRow = DiagnosticBundle["subsystems"][number];
 
+type RowFreshness = z.infer<typeof FreshnessSchema>;
+
+/**
+ * The freshness a row is exported with: the answer's age is read against the bundle's own
+ * `generatedAt`, so a two-hour-old `live` answer is `stale` in the file (FIX6A opus minor 1), the
+ * same rule the plugin applies to what it shows. A row without a check time, or whose probe gave
+ * no answer (`unavailable`), has no answer to age and keeps its freshness.
+ */
+function agedFreshness(
+  checkedAt: string | null,
+  freshness: RowFreshness,
+  generatedAt: string | null,
+): RowFreshness {
+  if (checkedAt === null || generatedAt === null || freshness === "unavailable") return freshness;
+  const age = Date.parse(generatedAt) - Date.parse(checkedAt);
+  return age > HEALTH_STALE_AFTER_MS ? "stale" : freshness;
+}
+
 /** The row the plugin shows for the service itself: from the connection state, never from text. */
-function serviceRow(input: DiagnosticBundleInput): BundleRow {
+function serviceRow(input: DiagnosticBundleInput, generatedAt: string | null): BundleRow {
   const live = input.connection === "live";
+  const checkedAt = live ? utc(input.health?.generatedAt ?? null) : null;
   const reasonCode =
     input.connection === "live"
       ? "service-live"
@@ -344,8 +364,9 @@ function serviceRow(input: DiagnosticBundleInput): BundleRow {
     id: "service",
     status: SERVICE_REASON_STATUS[reasonCode],
     reasonCode,
-    checkedAt: live ? utc(input.health?.generatedAt ?? null) : null,
-    freshness: live && input.health !== null ? "live" : "unavailable",
+    checkedAt,
+    freshness:
+      live && input.health !== null ? agedFreshness(checkedAt, "live", generatedAt) : "unavailable",
   };
 }
 
@@ -364,23 +385,26 @@ function clearedRow(id: "vault" | "hooks" | "collectors" | "scheduler" | "launch
 function pickedRow(
   row: DiagnosticsHealthResponse["rows"][number],
   vaultCheck: DiagnosticBundleInput["vaultCheck"],
+  generatedAt: string | null,
 ): BundleRow {
+  const checkedAt = utc(row.checkedAt);
+  const freshness = agedFreshness(checkedAt, row.freshness, generatedAt);
   if (row.id === "vault" && row.reasonCode === "vault-ready" && vaultCheck !== "match") {
     const reasonCode = vaultCheck === "mismatch" ? "vault-mismatch" : "vault-check-unavailable";
     return {
       id: "vault",
       status: VAULT_REASON_STATUS[reasonCode],
       reasonCode,
-      checkedAt: utc(row.checkedAt),
-      freshness: row.freshness,
+      checkedAt,
+      freshness,
     };
   }
   const base = {
     id: row.id,
     status: row.status,
     reasonCode: row.reasonCode,
-    checkedAt: utc(row.checkedAt),
-    freshness: row.freshness,
+    checkedAt,
+    freshness,
   };
   if (!("parts" in row) || row.parts === undefined) return base as BundleRow;
   return {
@@ -424,15 +448,16 @@ export function buildDiagnosticBundle(input: DiagnosticBundleInput): DiagnosticB
   // still holds from before the disconnect is not used.
   const health = input.connection === "live" ? input.health : null;
   const diagnostics = pickedDiagnostics(input.pluginDiagnostics);
+  const generatedAt = utc(input.generatedAt);
   const subsystems: BundleRow[] = [
-    serviceRow(input),
+    serviceRow(input, generatedAt),
     ...(health === null
       ? (["vault", "hooks", "collectors", "scheduler", "launchers"] as const).map(clearedRow)
-      : health.rows.map((row) => pickedRow(row, input.vaultCheck))),
+      : health.rows.map((row) => pickedRow(row, input.vaultCheck, generatedAt))),
   ];
   return DiagnosticBundleSchema.parse({
     bundleVersion: BUNDLE_VERSION,
-    generatedAt: utc(input.generatedAt),
+    generatedAt,
     versions: {
       plugin: input.versions.plugin,
       service: health === null ? null : dotted(health.service.version),

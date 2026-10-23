@@ -11,6 +11,7 @@ import {
 import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { Logger } from "pino";
+import { createSingleFlight } from "../single-flight.js";
 import type { ClaudePipeline } from "./pipeline.js";
 
 /**
@@ -62,6 +63,8 @@ export interface SpoolPollerOptions {
    * Defaults to a {@link STARTUP_SETTLE_MS} timer.
    */
   readonly settle?: () => Promise<void>;
+  /** The one asynchronous file-system call the drop facts make; defaults to `node:fs/promises`. */
+  readonly fs?: { readonly stat: typeof stat };
 }
 
 export interface SpoolPollerStats {
@@ -96,7 +99,9 @@ export interface SpoolPoller {
   dropCount(): number;
   /**
    * The drop count and the newest drop's instant through an asynchronous `stat` (FIX2A F1: the health
-   * request path makes no synchronous file-system call). Never rejects.
+   * request path makes no synchronous file-system call). Only a missing file (ENOENT) reads as
+   * no drops; any other failure rejects (FIX6A Codex-2), so the caller reads the spool part as
+   * unknown rather than clean. The rejection carries no path.
    */
   dropFacts(): Promise<SpoolDropFacts>;
   stats(): SpoolPollerStats;
@@ -132,6 +137,10 @@ export function startSpoolPoller(options: SpoolPollerOptions): SpoolPoller {
   const { spoolPath, statusLinePath, dropPath, pipeline, logger } = options;
   let statusLineSink = options.onStatusLine;
   const settle = options.settle ?? defaultSettle;
+  const statFile = options.fs?.stat ?? stat;
+  // At most one stat of the drop file in flight (FIX6A Codex-1): a stat on a stalled mount cannot
+  // be cancelled, so a check that asked again shares it instead of holding another pool thread.
+  const dropFlights = createSingleFlight();
   let fragmentsDiscarded = 0;
   let unparsableLines = 0;
   let statusLineDropped = 0;
@@ -363,18 +372,23 @@ export function startSpoolPoller(options: SpoolPollerOptions): SpoolPoller {
         return 0;
       }
     },
-    async dropFacts() {
-      try {
-        const info = await stat(dropPath);
+    dropFacts() {
+      return dropFlights.run(dropPath, async () => {
+        let info: Awaited<ReturnType<typeof stat>>;
+        try {
+          info = await statFile(dropPath);
+        } catch (err: unknown) {
+          if (errorCode(err) === "ENOENT") return { count: 0, lastDropAt: null };
+          // EACCES, EIO and the rest: the file's state is unknown, never "no drops".
+          throw new Error("spool drop file could not be read");
+        }
         if (info.size === 0) return { count: 0, lastDropAt: null };
         const at = new Date(info.mtimeMs);
         return {
-          count: info.size,
+          count: Number(info.size),
           lastDropAt: Number.isNaN(at.getTime()) ? null : at.toISOString(),
         };
-      } catch {
-        return { count: 0, lastDropAt: null };
-      }
+      });
     },
     stats: () => ({ fragmentsDiscarded, unparsableLines, statusLineDropped }),
     setStatusLineSink(sink) {

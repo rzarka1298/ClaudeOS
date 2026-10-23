@@ -42,6 +42,13 @@ export const SUBSYSTEM_STATUSES = ["ok", "setup-needed", "degraded", "failing", 
 export type SubsystemStatus = (typeof SUBSYSTEM_STATUSES)[number];
 export const SubsystemStatusSchema = z.enum(SUBSYSTEM_STATUSES);
 
+/**
+ * After this long a health row's answer reads `stale` (UI-SPEC R-F5). The one constant for both
+ * sides: the plugin ages the rows it shows with it, and the service ages the answer it remembers
+ * from an owner gesture with it (FIX6A M1); the diagnostic bundle ages exported rows with it too.
+ */
+export const HEALTH_STALE_AFTER_MS = 5 * 60 * 1000;
+
 /** The six subsystems in their fixed display order (D-41: Codex is parts of `collectors`, not a seventh). */
 export const SUBSYSTEM_IDS = [
   "service",
