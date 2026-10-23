@@ -29,6 +29,7 @@ import {
   checkServiceStopped,
   diagnosticsClickPath,
   drillFiles,
+  ensureServiceRunning,
   expectPart,
   expectReason,
   expectRow,
@@ -555,6 +556,12 @@ function sectionWith(rows: string[]): string {
 
 const NOT_RUNNING = "Can't be checked while the companion service isn't running.";
 
+const SCHEDULER_FIXED = "Manual trigger only in this version. Nothing runs on a timer.";
+
+/**
+ * A cleared row, as the plugin draws it. The Scheduler row is the one that keeps a detail: its fixed
+ * line is a fact about this version ("always", UI-SPEC), not a last value.
+ */
 function clearedRow(subsystem: string): string {
   return rowHtml({
     subsystem,
@@ -564,6 +571,7 @@ function clearedRow(subsystem: string): string {
     reason: "service-not-running",
     text: NOT_RUNNING,
     meta: false,
+    ...(subsystem === "scheduler" ? { detail: SCHEDULER_FIXED } : {}),
   });
 }
 
@@ -607,6 +615,25 @@ describe("checkServiceStopped and checkServiceRestored (item 23)", () => {
       ),
     );
     expect(checkServiceStopped(detail).join(" ")).toContain("last value");
+  });
+
+  it("accepts the Scheduler's fixed line on the stopped look but flags a held run beside it", () => {
+    expect(checkServiceStopped(stopped)).toEqual([]);
+    for (const held of [
+      `${SCHEDULER_FIXED} Last successful run 2 hours ago.`,
+      `${SCHEDULER_FIXED} Last failed run 1 hour ago.`,
+      "Version 0.1.0 · started 5s ago",
+    ]) {
+      const kept = readHealthFrom(
+        STOPPED_HTML.replace(
+          `<p class="ccc-health-detail">${SCHEDULER_FIXED}</p>`,
+          `<p class="ccc-health-detail">${held}</p>`,
+        ),
+      );
+      expect(checkServiceStopped(kept).join(" "), held).toContain(
+        "Scheduler still shows a last value",
+      );
+    }
   });
 
   it("flags raw error text on a stopped section, naming the kind only", () => {
@@ -1513,5 +1540,39 @@ describe("hostileProjectNames and openBundlePreview (Task 3)", () => {
     const read = await openBundlePreview(browser);
     expect(calls[0]).toEqual([`.ccc-health-toolbar button`, "Show bundle preview"]);
     expect(read.preview?.text).toBe(BUNDLE_JSON);
+  });
+});
+
+describe("ensureServiceRunning (the restore of a step that stops the service)", () => {
+  function fakeService(running: boolean) {
+    const calls: string[] = [];
+    return {
+      calls,
+      isRunning: () => running,
+      startService: async () => {
+        calls.push("start");
+        running = true;
+      },
+    };
+  }
+
+  it("starts the service when the step failed with it down", async () => {
+    const service = fakeService(false);
+    await expect(
+      withRestore(
+        () => ensureServiceRunning(service),
+        async () => {
+          throw new Error("the stopped look never appeared");
+        },
+      ),
+    ).rejects.toThrow("the stopped look never appeared");
+    expect(service.calls).toEqual(["start"]);
+    expect(service.isRunning()).toBe(true);
+  });
+
+  it("leaves a running service alone", async () => {
+    const service = fakeService(true);
+    await ensureServiceRunning(service);
+    expect(service.calls).toEqual([]);
   });
 });

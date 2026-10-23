@@ -595,6 +595,13 @@ export interface HookInstallerArgv {
   env: Record<string, string>;
 }
 
+/**
+ * The version line of the fake `claude` the hook installer is pointed at. The installer refuses a
+ * Claude Code older than its `MIN_CLAUDE_VERSION` (scripts/claude-hooks/lib.mjs), so this is that
+ * minimum; a unit test fails when the installer's minimum moves past it.
+ */
+export const INSTALLER_CLAUDE_VERSION_LINE = "2.1.214 (Claude Code)";
+
 export interface HookInstallerOptions {
   /** A fake `claude` inside the run root; defaults to `<root>/fake-bin/claude` (may be absent). */
   claudeBin?: string;

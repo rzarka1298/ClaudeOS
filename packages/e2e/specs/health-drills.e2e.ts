@@ -34,6 +34,7 @@ import { loadRunContext } from "../src/spec-context.js";
 import { HEALTH_TEXT } from "../src/spec-support/health-copy.js";
 import {
   ageFileInRunRoot,
+  INSTALLER_CLAUDE_VERSION_LINE,
   makeSecondVault,
   readTextInRunRoot,
   removeFileInRunRoot,
@@ -58,6 +59,7 @@ import {
   checkServiceRestored,
   checkServiceStopped,
   drillFiles,
+  ensureServiceRunning,
   expectPart,
   expectRow,
   findRawErrorText,
@@ -102,8 +104,6 @@ import {
 const tb = asTasksBrowser(browser);
 const hb = asHealthBrowser(browser);
 
-/** A version line for the fake `claude` the hook installer is pointed at (plain text only). */
-const FAKE_CLAUDE_VERSION = "2.1.0 (Claude Code)";
 /** A bundle id no Mac has: the saved Antigravity row of the unresolvable-app drill. */
 const MISSING_BUNDLE_ID = "com.example.ccc-uat-missing-app";
 /** What the throwaway Keychain item of item 36 holds. It is never read. */
@@ -152,10 +152,37 @@ describe("health drills", function () {
   const fixtureView = (running: () => boolean) => ({ isRunning: running });
 
   it("[08-UAT#22] Fresh install: one working, five needing setup, nothing failing", async () => {
-    await opened();
-    // Wait for the settled look, then judge it: a timeout names the problems the page showed last.
-    const read = await waitForHealth(hb, checkFreshInstall, "the fresh-install look", WAIT.connect);
-    expect(checkFreshInstall(read)).toEqual([]);
+    // A real fresh install holds no research key. The runner's service carries the extractive
+    // summariser double, and with that test transport the key is never consulted, so the key part
+    // reads present and the Scheduler row would read Working (D-38). This look therefore runs on a
+    // service without the summariser: the fixture's test-override flag and its nonexistent
+    // `ccc-uat-` research account stay set, so the gesture check asks about that empty account and
+    // never the owner's key, and it reads missing, as it does on a fresh install.
+    await withRestore(
+      async () => {
+        // Back to the shared service (with the summariser double) that the later cases expect.
+        await env.restart();
+        await opened();
+        await live();
+      },
+      async () => {
+        await env.restart({ summariser: false });
+        // The new service has no first answer for the open page: open Diagnostics, wait until the
+        // plugin has reconnected, then press Run checks again (an owner gesture, like the opening
+        // check of a fresh install) and judge the look that press produces.
+        await opened();
+        await live();
+        await checked();
+        // Wait for the settled look, then judge it: a timeout names the problems the page showed last.
+        const read = await waitForHealth(
+          hb,
+          checkFreshInstall,
+          "the fresh-install look",
+          WAIT.connect,
+        );
+        expect(checkFreshInstall(read)).toEqual([]);
+      },
+    );
   });
 
   it("[08-UAT#29] Setup actions copy, navigate or run the existing vault setup", async () => {
@@ -251,15 +278,22 @@ describe("health drills", function () {
 
   it("[08-UAT#23] Service stopped and restarted", async () => {
     await opened();
-    await env.stopService();
-    const down = await waitForHealth(hb, checkServiceStopped, "the stopped look", WAIT.connect);
-    expect(checkServiceStopped(down)).toEqual([]);
+    // Whatever the assertions find, the service comes back, so one failure cannot leave every
+    // later case with no socket.
+    await withRestore(
+      () => ensureServiceRunning(env),
+      async () => {
+        await env.stopService();
+        const down = await waitForHealth(hb, checkServiceStopped, "the stopped look", WAIT.connect);
+        expect(checkServiceStopped(down)).toEqual([]);
 
-    // After a restart, Run checks again restores the rows.
-    await env.startService();
-    await live();
-    const up = await checked();
-    expect(checkServiceRestored(up)).toEqual([]);
+        // After a restart, Run checks again restores the rows.
+        await env.startService();
+        await live();
+        const up = await checked();
+        expect(checkServiceRestored(up)).toEqual([]);
+      },
+    );
   });
 
   it("[08-UAT#24] Vault access drills: mismatch, missing, unreadable, read-only and incomplete", async () => {
@@ -335,7 +369,7 @@ describe("health drills", function () {
       },
       async () => {
         // The real installer, into the scratch Claude config and runtime folders only.
-        writeFakeExecutable(paths, "claude", { versionLine: FAKE_CLAUDE_VERSION });
+        writeFakeExecutable(paths, "claude", { versionLine: INSTALLER_CLAUDE_VERSION_LINE });
         await runHookInstaller(paths);
         expect(expectRow(await checked(), "hooks", "no-events-yet")).toEqual([]);
 
@@ -458,11 +492,11 @@ describe("health drills", function () {
 
   it("[08-UAT#27] Scheduler drills: never run, no key, every source failing, a run stopped mid-way", async () => {
     await opened();
-    const never = await checked();
-    expect(expectRow(never, "scheduler", "never-run")).toEqual([]);
-    expect(checkSchedulerLine(never)).toEqual([]);
 
-    // With no key, the summariser reads Needs setup with Copy key setup command (and copying it works).
+    // A scheduler that never ran, on an install with no research key: the row reads Needs setup, and
+    // the key part reads Needs setup with Copy key setup command (and copying it works). Both are
+    // read on a service without the summariser double: with that test transport the key is never
+    // consulted, so its part would read present and lift the row to Working (D-38).
     await withRestore(
       async () => {
         await env.restart();
@@ -472,6 +506,7 @@ describe("health drills", function () {
         await env.restart({ summariser: false });
         await live();
         const noKey = await checked();
+        expect(expectRow(noKey, "scheduler", "never-run")).toEqual([]);
         expect(expectPart(noKey, "scheduler", "research-key", "research-key-missing")).toEqual([]);
         expect(checkOffers(noKey, "scheduler", HEALTH_TEXT.copyKeySetup)).toEqual([]);
         expect(checkSchedulerLine(noKey)).toEqual([]);
@@ -500,7 +535,10 @@ describe("health drills", function () {
 
     // A run stopped mid-way reads Unknown: the service stops while the slow fetch holds the run.
     await withRestore(
-      () => env.prepared.select("base"),
+      async () => {
+        env.prepared.select("base");
+        await ensureServiceRunning(env);
+      },
       async () => {
         env.prepared.select("slow");
         const started = await env.research.run();
@@ -537,7 +575,7 @@ describe("health drills", function () {
         },
         async () => {
           // Saved but not tested reads Needs setup.
-          writeFakeExecutable(paths, "claude", { versionLine: FAKE_CLAUDE_VERSION });
+          writeFakeExecutable(paths, "claude", { versionLine: INSTALLER_CLAUDE_VERSION_LINE });
           const saved = await saveLauncherConfig(env.client, {
             launcherId: "claude-code",
             executable: { kind: "path", path: files.fakeClaude },
