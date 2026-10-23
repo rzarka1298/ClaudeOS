@@ -4,8 +4,11 @@ import { connectionState } from "../connection-state.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import { requestLaunchersFocus } from "./launchers-focus.js";
 import { navigationRequest, requestDestination } from "./navigation-request.js";
+import { SECTION_VIEWS } from "./settings-destination.js";
 import {
   requestSettingsSection,
+  SETTINGS_SECTION_LABELS,
+  SETTINGS_SECTIONS,
   type SettingsSectionId,
   settingsSectionRequested,
   takeSettingsSectionRequest,
@@ -162,6 +165,7 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
       "-1",
       "-1",
       "-1",
+      "-1",
     ]);
     expect(items.every((item) => item.tagName === "BUTTON")).toBe(true);
     expect(items.every((item) => item.getAttribute("type") === "button")).toBe(true);
@@ -177,6 +181,7 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
       "Paths",
       "Visual",
       "Security",
+      "Schedules",
       "Diagnostics",
     ];
     navItem("Projects").focus();
@@ -239,18 +244,69 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
     expect(previousTabStop(heading)).toBe(navItem("Launchers"));
   });
 
-  it("Test 4: a request for a section that does not exist yet leaves the current section unchanged", async () => {
+  it.each(SETTINGS_SECTIONS.map((id) => [id, SETTINGS_SECTION_LABELS[id]] as const))(
+    "Test 4: the %s section is reachable by a deep link and its h3 takes focus",
+    async (id, label) => {
+      renderShell("overview");
+      await act(async () => {
+        requestSettingsSection(id);
+        requestDestination("settings");
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(navItem(label).getAttribute("aria-current")).toBe("page");
+      const heading = document.activeElement;
+      expect(heading?.tagName).toBe("H3");
+      expect(heading?.getAttribute("tabindex")).toBe("-1");
+      expect(heading?.classList.contains("ccc-settings-section-title")).toBe(true);
+      expect(heading?.textContent).toBe(label);
+      // The request was consumed, so it cannot fire again.
+      expect(settingsSectionRequested.value).toBeNull();
+    },
+  );
+
+  it("Test 4: all nine sections are in the nav, each a real section with its own heading", () => {
     renderShell();
-    await act(async () => {
-      requestSettingsSection("schedules");
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(navItem("Projects").getAttribute("aria-current")).toBe("page");
-    expect(within(nav()).queryByRole("button", { name: "Schedules" })).toBeNull();
-    // The request was still consumed, so it cannot fire later when the section exists.
-    expect(settingsSectionRequested.value).toBeNull();
+    expect(SETTINGS_SECTIONS).toHaveLength(9);
+    for (const id of SETTINGS_SECTIONS) {
+      expect(Object.keys(SECTION_VIEWS)).toContain(id);
+      fireEvent.click(navItem(SETTINGS_SECTION_LABELS[id]));
+      expect(
+        document.querySelectorAll(".ccc-settings-content h3.ccc-settings-section-title"),
+      ).toHaveLength(1);
+    }
+  });
+
+  it("Test 4: Tab from the nav reaches the first control of each section that has one", () => {
+    renderShell();
+    // Paths shows three read-only values and has no control; every other section opens on one.
+    const READ_ONLY = new Set<string>(["paths"]);
+    for (const id of SETTINGS_SECTIONS) {
+      fireEvent.click(navItem(SETTINGS_SECTION_LABELS[id]));
+      const content = document.querySelector<HTMLElement>(".ccc-settings-content");
+      const first = [...(content?.querySelectorAll<HTMLElement>(TABBABLE) ?? [])].find(
+        (candidate) => candidate.getAttribute("tabindex") !== "-1",
+      );
+      if (READ_ONLY.has(id)) {
+        expect(first, id).toBeUndefined();
+        continue;
+      }
+      expect(first, id).toBeDefined();
+      // Nothing between the active nav item and the section's first control steals the tab stop.
+      const between = [...document.querySelectorAll<HTMLElement>(TABBABLE)].filter(
+        (candidate) =>
+          candidate.getAttribute("tabindex") !== "-1" &&
+          candidate !== navItem(SETTINGS_SECTION_LABELS[id]) &&
+          (navItem(SETTINGS_SECTION_LABELS[id]).compareDocumentPosition(candidate) &
+            Node.DOCUMENT_POSITION_FOLLOWING) !==
+            0 &&
+          (candidate.compareDocumentPosition(first as HTMLElement) &
+            Node.DOCUMENT_POSITION_FOLLOWING) !==
+            0,
+      );
+      expect(between, id).toEqual([]);
+    }
   });
 
   it("Test 4: an unknown id is ignored and never reaches the destination", async () => {
@@ -267,7 +323,6 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
     const labels = within(nav())
       .getAllByRole("button")
       .map((button) => button.textContent);
-    // Schedules arrives with the next task of 08-18.
     expect(labels).toEqual([
       "Projects",
       "Launchers",
@@ -276,6 +331,7 @@ describe("Task 1 (tracer): the Settings frame with a nav and a deep link to the 
       "Paths",
       "Visual",
       "Security",
+      "Schedules",
       "Diagnostics",
     ]);
   });

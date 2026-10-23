@@ -14,6 +14,7 @@ import type { SettingsHost } from "./settings-host.js";
 import { IntegrationsSection } from "./settings-integrations.js";
 import { PathsSection } from "./settings-paths.js";
 import { ProjectsSettings } from "./settings-projects.js";
+import { SchedulesSection } from "./settings-schedules.js";
 import {
   SETTINGS_SECTION_LABELS,
   SETTINGS_SECTIONS,
@@ -95,6 +96,9 @@ export const SECTION_VIEWS: Partial<Record<SettingsSectionId, SettingsSectionVie
   visual: ({ host, notify }) => <VisualSettings host={host} notify={notify} />,
   security: ({ host, connection, now, notify }) => (
     <SecuritySection host={host} connection={connection} now={now} notify={notify} />
+  ),
+  schedules: ({ connection, now, notify }) => (
+    <SchedulesSection connection={connection} now={now} notify={notify} />
   ),
   diagnostics: ({ host, connection, now, notify }) => (
     <DiagnosticsSection host={host} connection={connection} now={now} notify={notify}>
