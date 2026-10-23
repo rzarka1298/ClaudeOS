@@ -5,13 +5,18 @@ import {
   installConsoleCapture,
   installLongtaskObserver,
   installNotificationSpy,
+  installSaveDialogStub,
   readConsoleErrors,
   readLongtasks,
   readNotifications,
+  readSaveDialogCalls,
   resetLongtasks,
   restoreDocumentHasFocus,
+  restoreSaveDialog,
+  serialiseForRenderer,
   stubDocumentHasFocus,
 } from "./renderer-spies.js";
+import { rendererInstallSpies, rendererReadSpies } from "./spec-support/research-dom.js";
 
 class FakeNotification {
   static permission = "granted";
@@ -336,5 +341,235 @@ describe("self-contained (Test 5)", () => {
       }
       expect(source).not.toMatch(/\brequire\b|\bimport\b|\bprocess\b|\bstate\b\./);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 08-20 Task 3: the save dialog stub
+
+type DialogOptions = {
+  title?: string;
+  buttonLabel?: string;
+  defaultPath?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+  properties?: string[];
+};
+
+interface FakeDialog {
+  showSaveDialog?: (options: DialogOptions) => Promise<{ canceled: boolean; filePath?: string }>;
+  showOpenDialog?: () => Promise<unknown>;
+}
+
+const OWNER_OPTIONS: DialogOptions = {
+  title: "Save diagnostic bundle",
+  buttonLabel: "Save bundle",
+  defaultPath: "claude-command-center-diagnostics-2026-10-23.json",
+  filters: [{ name: "JSON", extensions: ["json"] }],
+  properties: ["createDirectory", "showOverwriteConfirmation"],
+};
+
+function makeDialogWindow(dialog: FakeDialog | undefined, withRequire = true) {
+  const electron = dialog === undefined ? { remote: undefined } : { remote: { dialog } };
+  return {
+    ...(withRequire
+      ? {
+          require: (name: string) => {
+            if (name !== "electron") throw new Error("unexpected module");
+            return electron;
+          },
+        }
+      : {}),
+  } as Record<string, unknown>;
+}
+
+/** A renderer function evaluated against a fake window, as wdio would evaluate it in the page. */
+function inPage<A extends unknown[], R>(
+  fn: (...args: A) => R,
+  win: Record<string, unknown>,
+): (...args: A) => R {
+  const factory = new Function("window", `return (${fn.toString()});`);
+  return factory(win) as (...args: A) => R;
+}
+
+describe("installSaveDialogStub (Task 3 Test 2)", () => {
+  const TARGET = "/tmp/ccc-uat.abc123/tmp/bundle.json";
+
+  function setup(extra: Partial<FakeDialog> = {}) {
+    let originalCalls = 0;
+    const original: NonNullable<FakeDialog["showSaveDialog"]> = async () => {
+      originalCalls += 1;
+      return { canceled: true };
+    };
+    const dialog: FakeDialog = {
+      showSaveDialog: original,
+      showOpenDialog: async () => "open",
+      ...extra,
+    };
+    const win = makeDialogWindow(dialog);
+    return { dialog, win, original, calls: () => originalCalls };
+  }
+
+  it("replaces only showSaveDialog and answers the scripted path without opening the real dialog", async () => {
+    const { dialog, win, original, calls } = setup();
+    const openBefore = dialog.showOpenDialog;
+    expect(inPage(installSaveDialogStub, win)({ kind: "picked", path: TARGET })).toEqual({
+      installed: true,
+      reason: null,
+    });
+    expect(dialog.showSaveDialog).not.toBe(original);
+    expect(dialog.showOpenDialog).toBe(openBefore);
+    const answer = await (dialog.showSaveDialog as NonNullable<FakeDialog["showSaveDialog"]>)(
+      OWNER_OPTIONS,
+    );
+    expect(answer).toEqual({ canceled: false, filePath: TARGET });
+    expect(calls()).toBe(0);
+  });
+
+  it("answers a cancel with no file path", async () => {
+    const { dialog, win } = setup();
+    inPage(installSaveDialogStub, win)({ kind: "cancelled" });
+    const answer = await (dialog.showSaveDialog as NonNullable<FakeDialog["showSaveDialog"]>)(
+      OWNER_OPTIONS,
+    );
+    expect(answer).toEqual({ canceled: true });
+  });
+
+  it("records the options it receives: a bare default name, the filters and the properties", async () => {
+    const { dialog, win } = setup();
+    inPage(installSaveDialogStub, win)({ kind: "picked", path: TARGET });
+    await (dialog.showSaveDialog as NonNullable<FakeDialog["showSaveDialog"]>)(OWNER_OPTIONS);
+    expect(inPage(readSaveDialogCalls, win)()).toEqual([
+      {
+        defaultPath: "claude-command-center-diagnostics-2026-10-23.json",
+        bareDefaultName: true,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+        properties: ["createDirectory", "showOverwriteConfirmation"],
+      },
+    ]);
+  });
+
+  it("marks a default path that names a folder as not bare, and records only fixed fields", async () => {
+    const { dialog, win } = setup();
+    inPage(installSaveDialogStub, win)({ kind: "cancelled" });
+    await (dialog.showSaveDialog as NonNullable<FakeDialog["showSaveDialog"]>)({
+      ...OWNER_OPTIONS,
+      defaultPath: "/Users/username/Desktop/bundle.json",
+      title: "a title that is not recorded",
+    });
+    const [call] = inPage(readSaveDialogCalls, win)();
+    expect(call?.bareDefaultName).toBe(false);
+    expect(Object.keys(call ?? {}).sort()).toEqual([
+      "bareDefaultName",
+      "defaultPath",
+      "filters",
+      "properties",
+    ]);
+  });
+
+  it("restoreSaveDialog puts the original function back, once", () => {
+    const { dialog, win, original } = setup();
+    inPage(installSaveDialogStub, win)({ kind: "picked", path: TARGET });
+    expect(inPage(restoreSaveDialog, win)()).toBe(true);
+    expect(dialog.showSaveDialog).toBe(original);
+    expect(inPage(restoreSaveDialog, win)()).toBe(false);
+    expect(inPage(readSaveDialogCalls, win)()).toEqual([]);
+  });
+
+  it("installs once: a second install changes nothing and reports why", () => {
+    const { dialog, win } = setup();
+    expect(inPage(installSaveDialogStub, win)({ kind: "picked", path: TARGET }).installed).toBe(
+      true,
+    );
+    const stub = dialog.showSaveDialog;
+    expect(inPage(installSaveDialogStub, win)({ kind: "cancelled" })).toEqual({
+      installed: false,
+      reason: "already-installed",
+    });
+    expect(dialog.showSaveDialog).toBe(stub);
+  });
+
+  it("changes nothing and says why when there is no require, no remote dialog or no save function", () => {
+    const noRequire = makeDialogWindow(undefined, false);
+    expect(inPage(installSaveDialogStub, noRequire)({ kind: "cancelled" })).toEqual({
+      installed: false,
+      reason: "no-require",
+    });
+    const noRemote = makeDialogWindow(undefined);
+    expect(inPage(installSaveDialogStub, noRemote)({ kind: "cancelled" })).toEqual({
+      installed: false,
+      reason: "no-dialog",
+    });
+    const noSave = makeDialogWindow({ showOpenDialog: async () => "open" });
+    expect(inPage(installSaveDialogStub, noSave)({ kind: "cancelled" })).toEqual({
+      installed: false,
+      reason: "no-dialog",
+    });
+  });
+
+  it("refuses an answer that is not a picked absolute json path or a cancel", () => {
+    for (const bad of [
+      { kind: "picked", path: "relative.json" },
+      { kind: "picked", path: "/tmp/x.txt" },
+      { kind: "picked", path: "" },
+      { kind: "other" },
+    ]) {
+      const { dialog, win, original } = setup();
+      expect(inPage(installSaveDialogStub, win)(bad as never), JSON.stringify(bad)).toEqual({
+        installed: false,
+        reason: "bad-answer",
+      });
+      expect(dialog.showSaveDialog).toBe(original);
+    }
+  });
+
+  it("holds no path of its own: the serialised script names only the path the test passes", () => {
+    const script = serialiseForRenderer(installSaveDialogStub, { kind: "picked", path: TARGET });
+    expect(script.split(TARGET)).toHaveLength(2);
+    const withoutTarget = script.split(TARGET).join("");
+    expect(withoutTarget).not.toMatch(/\/(?:Users|home|tmp|private|var)\//);
+    expect(String(installSaveDialogStub)).not.toMatch(/\/(?:Users|home|tmp|private|var)\//);
+    expect(String(restoreSaveDialog)).not.toMatch(/\/(?:Users|home|tmp|private|var)\//);
+  });
+
+  it("is self-contained: it needs no module state and no __name helper", () => {
+    for (const fn of [installSaveDialogStub, readSaveDialogCalls, restoreSaveDialog]) {
+      const source = fn.toString();
+      expect(source).not.toMatch(/\b__name\b|\bimport\b|\bprocess\b|\bstate\b\./);
+    }
+    for (const other of ["readSaveDialogCalls(", "restoreSaveDialog(", "serialiseForRenderer("]) {
+      expect(installSaveDialogStub.toString().includes(other)).toBe(false);
+    }
+  });
+});
+
+describe("the clipboard spy captures the Copy payload (Task 3 Test 3)", () => {
+  function clipboardWindow() {
+    let real = 0;
+    const win = {
+      navigator: {
+        clipboard: {
+          writeText: async () => {
+            real += 1;
+          },
+        },
+      },
+      Element: { prototype: { scrollIntoView: () => undefined } },
+    };
+    return { win: win as unknown as Record<string, unknown>, realWrites: () => real };
+  }
+
+  it("records the exact text a Copy writes, byte for byte, and never writes the real clipboard", async () => {
+    const { win, realWrites } = clipboardWindow();
+    expect(inPage(rendererInstallSpies, win)()).toBe(true);
+    const payload = '{\n  "bundleVersion": 1,\n  "text": "ünï — \t tab"\n}';
+    await (
+      win["navigator"] as { clipboard: { writeText(t: string): Promise<void> } }
+    ).clipboard.writeText(payload);
+    const seen = inPage(rendererReadSpies, win)();
+    expect(seen.clipboard).toEqual([payload]);
+    expect(
+      Buffer.from(seen.clipboard[0] as string, "utf8").equals(Buffer.from(payload, "utf8")),
+    ).toBe(true);
+    expect(realWrites()).toBe(0);
   });
 });

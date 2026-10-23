@@ -1,6 +1,12 @@
 import { join } from "node:path";
 import {
+  BUNDLE_MAX_BYTES,
+  buildDenylist,
+  CORPUS_DENYLIST_INPUT,
   COLLECTORS_REASON_STATUS,
+  DiagnosticBundleSchema,
+  HOSTILE_SHAPE_SAMPLES,
+  verifyBundle,
   HOOKS_REASON_STATUS,
   LAUNCHERS_REASON_STATUS,
   SCHEDULER_REASON_STATUS,
@@ -184,11 +190,14 @@ interface RNode {
   cloneNode(deep: boolean): RNode;
   remove(): void;
   click(): void;
+  tagName: string;
+  nextElementSibling: RNode | null;
 }
 
 declare const window: { setTimeout(callback: () => void, ms: number): unknown };
 
 declare const document: {
+  getElementById(id: string): RNode | null;
   activeElement: RNode | null;
   querySelector(selector: string): RNode | null;
   querySelectorAll(selector: string): ArrayLike<RNode>;
@@ -662,6 +671,9 @@ export const MUTATING_HELPERS: readonly string[] = Object.freeze([
   "setTranscriptAnalysis",
   "setSecret",
   "deleteUatAccount",
+  "registerProject",
+  "renameProject",
+  "removeProject",
 ]);
 
 const GUARD_CALLS: readonly string[] = ["withRestore", "withMode"];
@@ -1297,4 +1309,439 @@ export async function waitForLive(
     "the service to be live and Diagnostics to be ready",
     options,
   );
+}
+
+// ---------------------------------------------------------------------------
+// The diagnostic bundle block (items 31 to 33 and 35)
+
+export interface BundleButton {
+  readonly label: string;
+  /** `aria-expanded`, or null for a button without it. */
+  readonly expanded: boolean | null;
+  readonly disabled: boolean;
+  readonly busy: boolean;
+  /** The text of the element the button's `aria-describedby` names, or null. */
+  readonly reason: string | null;
+}
+
+export interface BundleRead {
+  /** The block's heading is on the page. */
+  readonly mounted: boolean;
+  readonly buttons: readonly BundleButton[];
+  readonly preview: {
+    /** The preview's text exactly as drawn: line breaks and indentation kept. */
+    readonly text: string;
+    readonly role: string | null;
+    readonly label: string | null;
+    readonly focusable: boolean;
+  } | null;
+  /** The `Bundle not offered` panel: its heading and its sentence. */
+  readonly refusal: { readonly heading: string; readonly text: string } | null;
+  readonly stale: string | null;
+  readonly sizeLine: string | null;
+  readonly lines: readonly string[];
+  readonly statusLine: string;
+}
+
+export interface BundleDomConfig {
+  readonly content: string;
+  readonly groupTitle: string;
+  readonly heading: string;
+  readonly preview: string;
+  readonly callout: string;
+  readonly itemTitle: string;
+  readonly stale: string;
+  readonly status: string;
+  readonly hidden: string;
+  readonly attrDisabled: string;
+  readonly attrBusy: string;
+  readonly attrExpanded: string;
+}
+
+export const BUNDLE_DOM_CONFIG: BundleDomConfig = {
+  content: HEALTH_CLASSES.settingsContent,
+  groupTitle: HEALTH_CLASSES.settingsGroupTitle,
+  heading: HEALTH_TEXT.bundleHeading,
+  preview: HEALTH_CLASSES.bundlePreview,
+  callout: HEALTH_CLASSES.setupCallout,
+  itemTitle: HEALTH_CLASSES.settingsItemTitle,
+  stale: HEALTH_CLASSES.healthStale,
+  status: HEALTH_CLASSES.settingsStatus,
+  hidden: HEALTH_CLASSES.hidden,
+  attrDisabled: HEALTH_ATTRS.disabled,
+  attrBusy: HEALTH_ATTRS.busy,
+  attrExpanded: HEALTH_ATTRS.expanded,
+};
+
+/**
+ * Reads the diagnostic bundle block: everything between its `h4` heading and the next group
+ * heading. SELF-CONTAINED (renderer function; helpers are arrows in an array literal because of
+ * keepNames). The preview text is the node's `textContent` as it is, because the spec compares it
+ * with the copied text byte for byte.
+ */
+export function rendererReadBundle(c: BundleDomConfig): BundleRead {
+  const H = [
+    (n: RNode | null): string => {
+      if (n === null) return "";
+      const copy = n.cloneNode(true);
+      const gone = copy.querySelectorAll(`.${c.hidden}`);
+      for (let i = 0; i < gone.length; i += 1) (gone[i] as RNode).remove();
+      return (copy.textContent ?? "").replace(/\s+/g, " ").trim();
+    },
+    (b: RNode): BundleButton => {
+      const expanded = b.getAttribute(c.attrExpanded);
+      const describedBy = b.getAttribute("aria-describedby");
+      const target = describedBy === null ? null : document.getElementById(describedBy);
+      return {
+        label: (b.textContent ?? "").replace(/\s+/g, " ").trim(),
+        expanded: expanded === null ? null : expanded === "true",
+        disabled: b.getAttribute(c.attrDisabled) === "true",
+        busy: b.getAttribute(c.attrBusy) === "true",
+        reason: target === null ? null : (target.textContent ?? "").replace(/\s+/g, " ").trim(),
+      };
+    },
+  ];
+  const text = H[0] as (n: RNode | null) => string;
+  const asButton = H[1] as (b: RNode) => BundleButton;
+  const content = document.querySelector(`.${c.content}`);
+  const statusLine = text(document.querySelector(`.${c.status}`));
+  const empty: BundleRead = {
+    mounted: false,
+    buttons: [],
+    preview: null,
+    refusal: null,
+    stale: null,
+    sizeLine: null,
+    lines: [],
+    statusLine,
+  };
+  if (content === null) return empty;
+  let heading: RNode | null = null;
+  const headings = content.querySelectorAll(`h4.${c.groupTitle}`);
+  for (let i = 0; i < headings.length; i += 1) {
+    if (text(headings[i] as RNode) === c.heading) heading = headings[i] as RNode;
+  }
+  if (heading === null) return empty;
+  const buttons: BundleButton[] = [];
+  const lines: string[] = [];
+  let preview: BundleRead["preview"] = null;
+  let refusal: BundleRead["refusal"] = null;
+  let stale: string | null = null;
+  let sizeLine: string | null = null;
+  let node = heading.nextElementSibling;
+  while (node !== null) {
+    if (node.tagName === "H4") break;
+    const own = node.tagName === "BUTTON" ? [node] : Array.from(node.querySelectorAll("button"));
+    for (let i = 0; i < own.length; i += 1) buttons.push(asButton(own[i] as RNode));
+    const pre = node.tagName === "PRE" ? node : node.querySelector(`pre.${c.preview}`);
+    if (pre !== null) {
+      preview = {
+        text: pre.textContent ?? "",
+        role: pre.getAttribute("role"),
+        label: pre.getAttribute("aria-label"),
+        focusable: pre.getAttribute("tabindex") === "0",
+      };
+    }
+    const classes = node.getAttribute("class") ?? "";
+    if (classes.split(" ").includes(c.callout)) {
+      const title = node.querySelector(`h5.${c.itemTitle}`);
+      if (title !== null) {
+        const paragraphs = node.querySelectorAll("p");
+        refusal = {
+          heading: text(title).replace(/^\S+\s+(?=Bundle)/, ""),
+          text: paragraphs.length > 0 ? text(paragraphs[0] as RNode) : "",
+        };
+      }
+    }
+    const staleNode = node.querySelector(`.${c.stale}`);
+    if (staleNode !== null) stale = text(staleNode);
+    const paragraphs = node.tagName === "P" ? [node] : Array.from(node.querySelectorAll("p"));
+    for (let i = 0; i < paragraphs.length; i += 1) {
+      const line = text(paragraphs[i] as RNode);
+      if (line !== "") lines.push(line);
+      if (/^\d+(?:\.\d)? (?:B|KB) · \d+ lines?$/.test(line)) sizeLine = line;
+    }
+    node = node.nextElementSibling;
+  }
+  return { mounted: true, buttons, preview, refusal, stale, sizeLine, lines, statusLine };
+}
+
+export async function readBundle(browser: HealthBrowser): Promise<BundleRead> {
+  return browser.execute(rendererReadBundle, BUNDLE_DOM_CONFIG);
+}
+
+export function bundleButton(read: BundleRead, label: string): BundleButton | undefined {
+  return read.buttons.find((button) => button.label === label);
+}
+
+/** Waits until `check` finds nothing wrong with the bundle block (see {@link waitForHealth}). */
+export async function waitForBundle(
+  browser: HealthBrowser,
+  check: (read: BundleRead) => string[],
+  describe: string,
+  options: WaitOptions = { timeoutMs: 30_000, intervalMs: 250 },
+): Promise<BundleRead> {
+  let last: string[] = ["the bundle block was never read"];
+  try {
+    return await pollUntil(
+      async () => {
+        const read = await readBundle(browser);
+        last = check(read);
+        return last.length === 0 ? read : null;
+      },
+      { ...options, describe },
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`${reason}; the problems were: ${last.join("; ")}`);
+  }
+}
+
+/** Presses a button of the bundle block by its visible text. */
+export async function pressBundleButton(browser: HealthBrowser, label: string): Promise<void> {
+  await pollUntil(
+    () => browser.executeObsidian(rendererClick, `.${HEALTH_CLASSES.healthToolbar} button`, label),
+    { ...WAIT.short, describe: `the "${label}" control` },
+  );
+}
+
+/** Closed: the block is there with its toggle alone: no preview, no Copy, no Save. */
+export function checkBundleClosed(read: BundleRead): string[] {
+  if (!read.mounted) return ["the Diagnostic bundle block is not on the page"];
+  const problems: string[] = [];
+  const toggle = bundleButton(read, HEALTH_TEXT.showBundlePreview);
+  if (toggle === undefined || toggle.disabled || toggle.expanded !== false) {
+    problems.push(`the "${HEALTH_TEXT.showBundlePreview}" control is missing, disabled or open`);
+  }
+  if (read.preview !== null) problems.push("a bundle preview is open");
+  for (const label of [HEALTH_TEXT.copyBundle, HEALTH_TEXT.saveBundle]) {
+    if (bundleButton(read, label) !== undefined)
+      problems.push(`"${label}" is offered while the preview is closed`);
+  }
+  return problems;
+}
+
+/**
+ * Offered: the preview is a labelled, focusable region; Copy is enabled and Save is there; no
+ * refusal and no stale line (the checks are fresh).
+ */
+export function checkBundleOffered(read: BundleRead): string[] {
+  if (!read.mounted) return ["the Diagnostic bundle block is not on the page"];
+  if (read.refusal !== null)
+    return [`the block shows "${read.refusal.heading}" instead of a bundle`];
+  const problems: string[] = [];
+  const toggle = bundleButton(read, HEALTH_TEXT.hideBundlePreview);
+  if (toggle === undefined || toggle.expanded !== true) {
+    problems.push(
+      `the "${HEALTH_TEXT.hideBundlePreview}" control is missing: the preview is not open`,
+    );
+  }
+  if (read.preview === null) {
+    problems.push("the block shows no preview");
+  } else {
+    if (read.preview.role !== "region" || read.preview.label !== HEALTH_TEXT.bundlePreviewLabel) {
+      problems.push("the preview is not a region labelled as the Diagnostic bundle preview");
+    }
+    if (!read.preview.focusable) problems.push("the preview cannot be reached with the keyboard");
+    if (read.preview.text === "") problems.push("the preview is empty");
+  }
+  const copy = bundleButton(read, HEALTH_TEXT.copyBundle);
+  if (copy === undefined || copy.disabled)
+    problems.push(`"${HEALTH_TEXT.copyBundle}" is missing or disabled`);
+  if (bundleButton(read, HEALTH_TEXT.saveBundle) === undefined) {
+    problems.push(`"${HEALTH_TEXT.saveBundle}" is missing`);
+  }
+  if (read.stale !== null) {
+    problems.push("the bundle was built from checks older than 5 minutes");
+  }
+  return problems;
+}
+
+/** Refused: the panel names a closed rule, shows no preview, and Copy and Save are disabled with the reason. */
+export function checkBundleRefused(read: BundleRead): string[] {
+  if (!read.mounted) return ["the Diagnostic bundle block is not on the page"];
+  const problems: string[] = [];
+  if (read.refusal === null || read.refusal.heading !== HEALTH_TEXT.bundleNotOffered) {
+    problems.push(`the block shows no refusal headed "${HEALTH_TEXT.bundleNotOffered}"`);
+  }
+  if (read.preview !== null) problems.push("a refused bundle is previewed");
+  for (const label of [HEALTH_TEXT.copyBundle, HEALTH_TEXT.saveBundle]) {
+    const found = bundleButton(read, label);
+    if (found === undefined || !found.disabled || found.reason !== HEALTH_TEXT.bundleRefused) {
+      problems.push(`"${label}" is not disabled with the refusal reason`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * Save's presence and state (the runner cannot drive the native sheet): the control is there; when
+ * it is disabled it says why.
+ */
+export function checkSaveButton(read: BundleRead): string[] {
+  const save = bundleButton(read, HEALTH_TEXT.saveBundle);
+  if (save === undefined) return [`there is no "${HEALTH_TEXT.saveBundle}" control`];
+  if (save.disabled && (save.reason === null || save.reason === "")) {
+    return [`"${HEALTH_TEXT.saveBundle}" is disabled without a reason`];
+  }
+  return [];
+}
+
+/** The copied text is the preview text, character for character and byte for byte (D-12). */
+export function bundleTextsEqual(preview: string, copied: string | undefined): string[] {
+  if (copied === undefined) return ["nothing was copied"];
+  if (!Buffer.from(preview, "utf8").equals(Buffer.from(copied, "utf8")) || preview !== copied) {
+    return ["the copied text is not the preview byte for byte"];
+  }
+  return [];
+}
+
+/** The saved file holds exactly the preview's bytes and is private to the owner (mode 600). */
+export function checkSavedFile(preview: string, bytes: Buffer, mode: number): string[] {
+  const problems: string[] = [];
+  if (!Buffer.from(preview, "utf8").equals(bytes)) {
+    problems.push("the saved file is not the preview's bytes");
+  }
+  if ((mode & 0o777) !== 0o600) {
+    problems.push(`the saved file's mode is ${(mode & 0o777).toString(8)}, not 600`);
+  }
+  return problems;
+}
+
+const DEFAULT_BUNDLE_NAME = new RegExp(
+  `^${HEALTH_TEXT.bundleFileNamePrefix}\\d{4}-\\d{2}-\\d{2}\\.json$`,
+);
+
+/** What the stubbed save dialog was asked (item 35's automated part). */
+export function checkSaveDialogCall(
+  call:
+    | {
+        readonly defaultPath: string | null;
+        readonly bareDefaultName: boolean;
+        readonly filters: readonly {
+          readonly name: string;
+          readonly extensions: readonly string[];
+        }[];
+        readonly properties: readonly string[];
+      }
+    | undefined,
+): string[] {
+  if (call === undefined) return ["the stub recorded no save dialog call"];
+  const problems: string[] = [];
+  if (!call.bareDefaultName) problems.push("the default file name is not bare: it names a folder");
+  if (call.defaultPath === null || !DEFAULT_BUNDLE_NAME.test(call.defaultPath)) {
+    problems.push("the default file name is not the dated diagnostics file name");
+  }
+  if (!call.filters.some((filter) => filter.extensions.includes("json"))) {
+    problems.push("the dialog has no json filter");
+  }
+  if (!call.properties.includes("showOverwriteConfirmation")) {
+    problems.push("the dialog does not ask for an overwrite confirmation");
+  }
+  return problems;
+}
+
+export interface BundleLeakFacts {
+  readonly runRoot: string;
+  readonly homeFolder: string;
+  readonly userName: string | null;
+  readonly vaultName: string | null;
+  readonly projectNames: readonly string[];
+  readonly folderBasenames: readonly string[];
+}
+
+/**
+ * Judges a bundle text (item 31, 32): it is JSON in the bundle format (versions, the six subsystems
+ * with reason codes, counts and setting flags), under the size cap, holds none of the names, folders
+ * and paths the run knows, and the domain's own verifier accepts it against a denylist built from
+ * the same facts. Failures name a check or a rule, never a value.
+ */
+export function checkBundleClean(text: string, facts: BundleLeakFacts): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return ["the bundle text is not JSON"];
+  }
+  const problems: string[] = [];
+  const lowered = text.toLowerCase();
+  const labelled: [string, string | null][] = [
+    ["the run root", facts.runRoot],
+    ["the home folder", facts.homeFolder],
+    ["the user name", facts.userName],
+    ...facts.projectNames.map((name): [string, string] => ["the project name", name]),
+    ...facts.folderBasenames.map((name): [string, string] => ["a folder name", name]),
+  ];
+  for (const [label, value] of labelled) {
+    if (value !== null && value !== "" && lowered.includes(value.toLowerCase())) {
+      problems.push(`the bundle holds ${label}`);
+    }
+  }
+  if (Buffer.byteLength(text, "utf8") > BUNDLE_MAX_BYTES)
+    problems.push("the bundle is over the size cap");
+  if (!DiagnosticBundleSchema.safeParse(parsed).success) {
+    problems.push("the bundle does not match the bundle format");
+  }
+  const denylist = buildDenylist({
+    projectNames: [...facts.projectNames],
+    folderBasenames: [...facts.folderBasenames],
+    github: [],
+    vaultName: facts.vaultName,
+    userName: facts.userName,
+  });
+  const verdict = verifyBundle(parsed, denylist);
+  if (!verdict.ok) problems.push(`the domain verifier refused the bundle (rule ${verdict.rule})`);
+  return problems;
+}
+
+/**
+ * The hostile names item 32 registers, from the domain's own corpus: folder names that are safe on
+ * disk (a private-looking project name, a folder name, a GitHub owner, the synthetic user, an
+ * email-like name) and display names that are not (a home-path-like string and an email-like one).
+ * `projectNames` and `folderBasenames` are what the bundle must keep out.
+ */
+export function hostileProjectNames(): {
+  projectNames: string[];
+  folderBasenames: string[];
+  folders: string[];
+  displayNames: string[];
+} {
+  const emailSample = HOSTILE_SHAPE_SAMPLES.find(
+    (sample) => sample.rule === "email" && !/[\\/\0\s]/.test(sample.value),
+  );
+  const homeSample = HOSTILE_SHAPE_SAMPLES.find((sample) => sample.rule === "home-path");
+  const projectNames = [...CORPUS_DENYLIST_INPUT.projectNames];
+  const folderBasenames = [...CORPUS_DENYLIST_INPUT.folderBasenames];
+  const safe = (name: string): boolean =>
+    name.length > 0 && name.length <= 80 && !/[\\/\0]/.test(name);
+  const folders = [
+    ...projectNames,
+    ...folderBasenames,
+    ...CORPUS_DENYLIST_INPUT.github.map((entry) => entry.owner),
+    ...(emailSample === undefined ? [] : [emailSample.value]),
+  ].filter(safe);
+  const displayNames = [
+    ...(homeSample === undefined ? [] : [homeSample.value]),
+    ...(emailSample === undefined ? [] : [emailSample.value]),
+    ...projectNames,
+  ];
+  return { projectNames, folderBasenames, folders, displayNames };
+}
+
+/** Presses Show bundle preview and waits for the offered preview. */
+export async function openBundlePreview(
+  browser: HealthBrowser,
+  options: WaitOptions = WAIT.connect,
+): Promise<BundleRead> {
+  await pressBundleButton(browser, HEALTH_TEXT.showBundlePreview);
+  return waitForBundle(browser, checkBundleOffered, "the bundle preview to be offered", options);
+}
+
+/** Presses Hide bundle preview and waits for the closed block. */
+export async function closeBundlePreview(
+  browser: HealthBrowser,
+  options: WaitOptions = WAIT.short,
+): Promise<BundleRead> {
+  await pressBundleButton(browser, HEALTH_TEXT.hideBundlePreview);
+  return waitForBundle(browser, checkBundleClosed, "the bundle preview to close", options);
 }

@@ -47,3 +47,34 @@ describe("health drills spec titles", () => {
     expect(mine.sort((a, b) => a - b)).toEqual([22, 23, 24, 25, 26, 27, 28, 29, 30, 36]);
   });
 });
+
+const BUNDLE_SPEC = "packages/e2e/specs/bundle-export.e2e.ts";
+const BUNDLE_ITEMS = [31, 32, 33, 35] as const;
+
+describe("bundle export spec titles", () => {
+  it("holds exactly [08-UAT#31], [08-UAT#32], [08-UAT#33] and [08-UAT#35], once each", () => {
+    expect(numbersOf(titlesOf(BUNDLE_SPEC)).sort((a, b) => a - b)).toEqual([...BUNDLE_ITEMS]);
+  });
+
+  it("holds no title for any other item", () => {
+    expect(titlesOf(BUNDLE_SPEC).filter((title) => !/^\[08-UAT#(3[1235])\] /.test(title))).toEqual(
+      [],
+    );
+  });
+
+  it("maps items 31, 32, 33 and 35 of the Phase 8 item plan to this spec file, and no other", () => {
+    const plan = specMapForPhase("08")?.itemPlan ?? [];
+    for (const number of BUNDLE_ITEMS) {
+      expect(plan.find((entry) => entry.number === number)?.specFile, `item ${number}`).toBe(
+        BUNDLE_SPEC,
+      );
+    }
+    const mine = plan.filter((entry) => entry.specFile === BUNDLE_SPEC).map((e) => e.number);
+    expect(mine.sort((a, b) => a - b)).toEqual([...BUNDLE_ITEMS]);
+  });
+
+  it("keeps item 34 out of both health specs (it is the settings-core owner item)", () => {
+    expect(titlesOf(BUNDLE_SPEC).some((title) => title.startsWith("[08-UAT#34]"))).toBe(false);
+    expect(titlesOf(HEALTH_SPEC).some((title) => title.startsWith("[08-UAT#34]"))).toBe(false);
+  });
+});

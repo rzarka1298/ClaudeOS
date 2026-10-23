@@ -8,12 +8,22 @@ import { REPO_ROOT } from "../repo-paths.js";
 import { pathsForRoot } from "../run-root.js";
 import { HEALTH_TEXT, reasonSentence } from "./health-copy.js";
 import {
+  BUNDLE_DOM_CONFIG,
+  type BundleRead,
+  bundleTextsEqual,
+  checkBundleClean,
+  checkBundleClosed,
+  checkBundleOffered,
+  checkBundleRefused,
   checkCachedReopen,
   checkFreshInstall,
   checkOffers,
   checkPartIs,
   checkRowIs,
   checkRunChecksPresses,
+  checkSaveButton,
+  checkSaveDialogCall,
+  checkSavedFile,
   checkSchedulerLine,
   checkServiceRestored,
   checkServiceStopped,
@@ -27,8 +37,10 @@ import {
   HEALTH_DOM_CONFIG,
   type HealthBrowser,
   type HealthRead,
+  hostileProjectNames,
   installJsonWithNodePath,
   newCheckClock,
+  openBundlePreview,
   openDiagnostics,
   partOf,
   recheck,
@@ -836,6 +848,11 @@ describe("findUnguardedMutations (Test 3)", () => {
     expect(findUnguardedMutations(source)).toEqual([]);
   });
 
+  it("finds nothing unguarded in the bundle export spec", () => {
+    const spec = readFileSync(join(REPO_ROOT, "packages/e2e/specs/bundle-export.e2e.ts"), "utf8");
+    expect(findUnguardedMutations(spec)).toEqual([]);
+  });
+
   it("finds nothing unguarded in the health drills spec", () => {
     const spec = readFileSync(join(REPO_ROOT, "packages/e2e/specs/health-drills.e2e.ts"), "utf8");
     expect(findUnguardedMutations(spec)).toEqual([]);
@@ -1014,5 +1031,386 @@ describe("reopenDiagnostics, waitForLive and recheck", () => {
     const started = Date.now();
     await recheck(stub.browser, clock, { gapMs: 120, wait: { timeoutMs: 5_000, intervalMs: 1 } });
     expect(Date.now() - started).toBeGreaterThanOrEqual(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: the diagnostic bundle block
+
+const BUNDLE_JSON = JSON.stringify(
+  {
+    bundleVersion: 1,
+    generatedAt: "2026-10-23T10:00:00.000Z",
+    versions: {
+      plugin: "0.1.0",
+      service: "0.1.0",
+      obsidian: "1.13.7",
+      electron: "37.2.1",
+      node: "24.20.0",
+      storeSchema: 7,
+    },
+    platform: { os: "darwin", arch: "arm64" },
+    connection: { state: "live" },
+    subsystems: [
+      {
+        id: "service",
+        status: "ok",
+        reasonCode: "service-live",
+        checkedAt: "2026-10-23T10:00:00.000Z",
+        freshness: "live",
+      },
+      {
+        id: "vault",
+        status: "setup-needed",
+        reasonCode: "vault-not-set-up",
+        checkedAt: "2026-10-23T10:00:00.000Z",
+        freshness: "live",
+      },
+      {
+        id: "hooks",
+        status: "setup-needed",
+        reasonCode: "hooks-not-installed",
+        checkedAt: "2026-10-23T10:00:00.000Z",
+        freshness: "live",
+      },
+      {
+        id: "collectors",
+        status: "setup-needed",
+        reasonCode: "statusline-not-installed",
+        checkedAt: "2026-10-23T10:00:00.000Z",
+        freshness: "live",
+      },
+      {
+        id: "scheduler",
+        status: "setup-needed",
+        reasonCode: "never-run",
+        checkedAt: "2026-10-23T10:00:00.000Z",
+        freshness: "live",
+      },
+      {
+        id: "launchers",
+        status: "setup-needed",
+        reasonCode: "launcher-not-set-up",
+        checkedAt: "2026-10-23T10:00:00.000Z",
+        freshness: "live",
+      },
+    ],
+    counts: { projects: 0, scanFolders: 0, openTasks: 0, reports: 0, pluginDiagnostics: 0 },
+    features: {
+      reducedMotion: "auto",
+      transcriptAnalysis: false,
+      notifyApprovals: true,
+      launchers: { antigravity: null, "claude-code": null, "claude-desktop": null, codex: null },
+    },
+    pluginDiagnostics: [],
+  },
+  null,
+  2,
+);
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
+function button(label: string, extra = ""): string {
+  return `<button type="button" class="ccc-connect-button" data-variant="secondary"${extra}>${label}</button>`;
+}
+
+interface BundleHtmlSpec {
+  open?: boolean;
+  preview?: string;
+  refusal?: boolean;
+  saveDisabled?: string;
+  stale?: boolean;
+  waiting?: boolean;
+}
+
+function bundleHtml(spec: BundleHtmlSpec = {}): string {
+  const open = spec.open ?? false;
+  const parts: string[] = [
+    '<h4 class="ccc-settings-group-title">Diagnostic bundle</h4>',
+    "<p>A bundle lists versions, the status of each subsystem with its reason code, counts and setting flags. Read the preview before you share it.</p>",
+    `<div class="ccc-health-toolbar">${button(open ? "Hide bundle preview" : "Show bundle preview", ` aria-expanded="${open}"`)}</div>`,
+  ];
+  if (open && spec.refusal === true) {
+    parts.push(
+      `<div id="pv" class="ccc-setup-callout"><h5 tabindex="-1" class="ccc-settings-item-title"><span class="ccc-error-glyph" aria-hidden="true">▲</span> Bundle not offered</h5><p>The bundle failed a privacy check (a project name), so it can't be copied or saved. Nothing was exported. Run the checks again to rebuild it.</p>${button("Run checks again")}</div>`,
+    );
+  } else if (open && spec.waiting === true) {
+    parts.push(
+      '<div id="pv" aria-busy="true"><div class="ccc-skeleton-line" aria-hidden="true"></div></div>',
+    );
+  } else if (open) {
+    parts.push(
+      `<pre id="pv" class="ccc-bundle-preview" tabindex="0" role="region" aria-label="Diagnostic bundle preview">${escapeHtml(spec.preview ?? BUNDLE_JSON)}</pre>`,
+    );
+    if (spec.stale === true) {
+      parts.push(
+        `<div class="ccc-health-toolbar"><p class="ccc-health-stale">Built from checks older than 5 minutes</p>${button("Run checks again")}</div>`,
+      );
+    }
+  }
+  if (open) {
+    const refused = spec.refusal === true;
+    const waiting = spec.waiting === true;
+    const reason = refused
+      ? "The bundle was refused by a privacy check."
+      : waiting
+        ? "Waiting for the checks."
+        : spec.saveDisabled;
+    parts.push(
+      `<div class="ccc-health-toolbar">${refused || waiting ? "" : "<p>1.4 KB · 61 lines</p>"}${button("Copy bundle", refused || waiting ? ' aria-disabled="true" aria-describedby="why"' : "")}${button("Save bundle", reason === undefined ? "" : ' aria-disabled="true" aria-describedby="why"')}${reason === undefined ? "" : `<p id="why">${reason}</p>`}</div>`,
+    );
+  }
+  return parts.join("");
+}
+
+function withBundle(spec: BundleHtmlSpec): HealthRead & { bundle: BundleRead } {
+  const html = BASE_HTML.replace(
+    "</div>\n    </div>\n  </div>\n</section>",
+    `</div>${bundleHtml(spec)}\n    </div>\n  </div>\n</section>`,
+  );
+  return readBundleFrom(html);
+}
+
+function readBundleFrom(html: string): HealthRead & { bundle: BundleRead } {
+  const { JSDOM } = loadJsdom();
+  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`);
+  const window = dom.window as Record<string, unknown> & { document: LooseDocument };
+  const context = vm.createContext({ document: window.document, window });
+  const text = rendererText("rendererReadBundle");
+  const out = vm.runInContext(
+    `(${text}).apply(null, ${JSON.stringify([BUNDLE_DOM_CONFIG])})`,
+    context,
+  );
+  return { bundle: JSON.parse(JSON.stringify(out)) as BundleRead } as HealthRead & {
+    bundle: BundleRead;
+  };
+}
+
+describe("rendererReadBundle (Task 3)", () => {
+  it("finds the block by its heading and reads the closed state: only the toggle", () => {
+    const { bundle } = withBundle({});
+    expect(bundle.mounted).toBe(true);
+    expect(bundle.buttons).toEqual([
+      { label: "Show bundle preview", expanded: false, disabled: false, busy: false, reason: null },
+    ]);
+    expect(bundle.preview).toBeNull();
+    expect(bundle.refusal).toBeNull();
+  });
+
+  it("reads the open preview exactly (line breaks and indentation kept) with its role and label", () => {
+    const { bundle } = withBundle({ open: true });
+    expect(bundle.preview?.text).toBe(BUNDLE_JSON);
+    expect(bundle.preview).toMatchObject({
+      role: "region",
+      label: "Diagnostic bundle preview",
+      focusable: true,
+    });
+    expect(bundle.buttons.map((entry) => entry.label)).toEqual([
+      "Hide bundle preview",
+      "Copy bundle",
+      "Save bundle",
+    ]);
+    expect(bundle.sizeLine).toBe("1.4 KB · 61 lines");
+  });
+
+  it("reads a disabled Save with the reason its aria-describedby names", () => {
+    const { bundle } = withBundle({
+      open: true,
+      saveDisabled: "The save dialog isn't available here. Use Copy bundle instead.",
+    });
+    const save = bundle.buttons.find((entry) => entry.label === "Save bundle");
+    expect(save).toMatchObject({
+      disabled: true,
+      reason: "The save dialog isn't available here. Use Copy bundle instead.",
+    });
+    expect(bundle.buttons.find((entry) => entry.label === "Copy bundle")?.disabled).toBe(false);
+  });
+
+  it("reads a refusal by its heading and closed label, never a preview", () => {
+    const { bundle } = withBundle({ open: true, refusal: true });
+    expect(bundle.preview).toBeNull();
+    expect(bundle.refusal?.heading).toBe("Bundle not offered");
+    expect(bundle.refusal?.text).toContain("privacy check");
+    expect(bundle.buttons.find((entry) => entry.label === "Copy bundle")).toMatchObject({
+      disabled: true,
+      reason: "The bundle was refused by a privacy check.",
+    });
+  });
+
+  it("reads the stale line and the status line", () => {
+    const { bundle } = withBundle({ open: true, stale: true });
+    expect(bundle.stale).toBe("Built from checks older than 5 minutes");
+    expect(bundle.statusLine).toBe("");
+  });
+
+  it("reads a block that is not on the page as not mounted", () => {
+    const { bundle } = readBundleFrom(BASE_HTML);
+    expect(bundle.mounted).toBe(false);
+    expect(bundle.buttons).toEqual([]);
+  });
+});
+
+describe("bundle verdicts (Task 3)", () => {
+  const closed = withBundle({}).bundle;
+  const offered = withBundle({ open: true }).bundle;
+  const noDialog = withBundle({
+    open: true,
+    saveDisabled: "The save dialog isn't available here. Use Copy bundle instead.",
+  }).bundle;
+  const refused = withBundle({ open: true, refusal: true }).bundle;
+
+  it("checkBundleClosed accepts the toggle alone and flags a preview or a Copy button", () => {
+    expect(checkBundleClosed(closed)).toEqual([]);
+    expect(checkBundleClosed(offered).join(" ")).toContain("preview");
+  });
+
+  it("checkBundleOffered accepts a labelled region with Copy enabled and Save present", () => {
+    expect(checkBundleOffered(offered)).toEqual([]);
+    expect(checkBundleOffered(closed).join(" ")).toContain("no preview");
+    expect(checkBundleOffered(refused).join(" ")).toContain("Bundle not offered");
+    expect(checkBundleOffered(withBundle({ open: true, stale: true }).bundle).join(" ")).toContain(
+      "older than 5 minutes",
+    );
+  });
+
+  it("checkBundleRefused accepts the refusal heading with no preview and Copy and Save disabled", () => {
+    expect(checkBundleRefused(refused)).toEqual([]);
+    expect(checkBundleRefused(offered).join(" ")).toContain("refusal");
+  });
+
+  it("checkSaveButton reports Save's presence and state, and a disabled Save must say why", () => {
+    expect(checkSaveButton(offered)).toEqual([]);
+    expect(checkSaveButton(noDialog)).toEqual([]);
+    expect(checkSaveButton(closed).join(" ")).toContain("Save bundle");
+    const silent = withBundle({ open: true, saveDisabled: "" }).bundle;
+    expect(checkSaveButton(silent).join(" ")).toContain("reason");
+  });
+
+  it("bundleTextsEqual compares the preview and the copied text byte for byte", () => {
+    expect(bundleTextsEqual(BUNDLE_JSON, BUNDLE_JSON)).toEqual([]);
+    expect(bundleTextsEqual(BUNDLE_JSON, `${BUNDLE_JSON}\n`).join(" ")).toContain("byte");
+    expect(
+      bundleTextsEqual(BUNDLE_JSON, BUNDLE_JSON.replace("darwin", "linux")).join(" "),
+    ).toContain("byte");
+    expect(bundleTextsEqual(BUNDLE_JSON, undefined).join(" ")).toContain("nothing was copied");
+    // Same characters, different bytes: a composed and a decomposed letter.
+    expect(bundleTextsEqual("caf\u00e9", "cafe\u0301").join(" ")).toContain("byte");
+  });
+
+  it("checkSavedFile needs the preview's bytes and mode 0600", () => {
+    const bytes = Buffer.from(BUNDLE_JSON, "utf8");
+    expect(checkSavedFile(BUNDLE_JSON, bytes, 0o600)).toEqual([]);
+    expect(checkSavedFile(BUNDLE_JSON, Buffer.from("x"), 0o600).join(" ")).toContain("preview");
+    expect(checkSavedFile(BUNDLE_JSON, bytes, 0o644).join(" ")).toContain("600");
+  });
+
+  it("checkSaveDialogCall needs a bare default name, the json filter and the overwrite confirmation", () => {
+    const call = {
+      defaultPath: "claude-command-center-diagnostics-2026-10-23.json",
+      bareDefaultName: true,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+    };
+    expect(checkSaveDialogCall(call)).toEqual([]);
+    expect(checkSaveDialogCall({ ...call, bareDefaultName: false }).join(" ")).toContain("bare");
+    expect(checkSaveDialogCall({ ...call, defaultPath: "bundle.json" }).join(" ")).toContain(
+      "name",
+    );
+    expect(checkSaveDialogCall({ ...call, properties: [] }).join(" ")).toContain("overwrite");
+    expect(checkSaveDialogCall({ ...call, filters: [] }).join(" ")).toContain("filter");
+    expect(checkSaveDialogCall(undefined).join(" ")).toContain("no save dialog call");
+  });
+});
+
+describe("checkBundleClean (Task 3)", () => {
+  const facts = {
+    runRoot: "/tmp/ccc-uat.abc123",
+    homeFolder: "/Users/username",
+    userName: "username-example",
+    vaultName: "live",
+    projectNames: ["Orchard Ledger"],
+    folderBasenames: ["plum-cellar"],
+  };
+
+  it("accepts a clean bundle: versions, subsystem reason codes, counts and setting flags", () => {
+    expect(checkBundleClean(BUNDLE_JSON, facts)).toEqual([]);
+  });
+
+  it("flags text that is not the bundle format, naming only the check that failed", () => {
+    expect(checkBundleClean("not json", facts).join(" ")).toContain("JSON");
+    expect(checkBundleClean(JSON.stringify({ bundleVersion: 1 }), facts).join(" ")).toContain(
+      "format",
+    );
+  });
+
+  it("flags a name, a path, an address or a token by label and never shows the value", () => {
+    const leaks: Array<[string, string]> = [
+      ["the project name", "Orchard Ledger"],
+      ["a folder name", "plum-cellar"],
+      ["the run root", "/tmp/ccc-uat.abc123"],
+      ["the home folder", "/Users/username"],
+      ["the user name", "username-example"],
+    ];
+    for (const [label, value] of leaks) {
+      const dirty = BUNDLE_JSON.replace('"node": "24.20.0"', `"node": "24.20.0 ${value}"`);
+      const problems = checkBundleClean(dirty, facts).join(" ");
+      expect(problems, label).toContain(label);
+      expect(problems, label).not.toContain(value);
+    }
+  });
+
+  it("flags an email address and a token-shaped string through the domain verifier, by rule", () => {
+    const email = BUNDLE_JSON.replace('"node": "24.20.0"', '"node": "person@mail.co"');
+    expect(checkBundleClean(email, facts).join(" ")).toMatch(/email|format/);
+    expect(checkBundleClean(email, facts).join(" ")).not.toContain("person@mail.co");
+  });
+
+  it("flags a bundle over the size cap and one missing a section", () => {
+    const missing = JSON.parse(BUNDLE_JSON) as Record<string, unknown>;
+    delete missing.counts;
+    const padded = JSON.stringify({ ...JSON.parse(BUNDLE_JSON), pad: "x".repeat(40_000) }, null, 2);
+    expect(checkBundleClean(padded, facts).join(" ")).toContain("size cap");
+    expect(checkBundleClean(JSON.stringify(missing, null, 2), facts).join(" ")).toContain("format");
+  });
+});
+
+describe("hostileProjectNames and openBundlePreview (Task 3)", () => {
+  it("takes folder names that are safe on disk from the domain's hostile corpus", () => {
+    const names = hostileProjectNames();
+    expect(names.folders.length).toBeGreaterThanOrEqual(3);
+    for (const folder of names.folders) {
+      expect(folder).not.toMatch(/[\\/\0]/);
+      expect(folder.length).toBeLessThanOrEqual(80);
+    }
+    expect(names.displayNames.some((name) => /\/(?:Users|home)/.test(name))).toBe(true);
+    expect(names.displayNames.some((name) => name.includes("@"))).toBe(true);
+    // The names that must stay out of the bundle are the corpus's own invented ones.
+    expect(names.projectNames).toContain("Orchard Ledger");
+    expect(names.folderBasenames).toContain("plum-cellar");
+  });
+
+  it("presses the toggle and returns the offered block", async () => {
+    const calls: unknown[][] = [];
+    let step = 0;
+    const closedRead = readBundleFrom(
+      BASE_HTML.replace(
+        "</div>\n    </div>\n  </div>\n</section>",
+        `</div>${bundleHtml({})}\n    </div>\n  </div>\n</section>`,
+      ),
+    ).bundle;
+    const openRead = withBundle({ open: true }).bundle;
+    const browser = {
+      executeObsidianCommand: async () => undefined,
+      executeObsidian: async (_fn: unknown, ...args: unknown[]) => {
+        calls.push(args);
+        return true;
+      },
+      execute: async () => (step++ === 0 ? closedRead : openRead),
+    } as unknown as HealthBrowser;
+    const read = await openBundlePreview(browser);
+    expect(calls[0]).toEqual([`.ccc-health-toolbar button`, "Show bundle preview"]);
+    expect(read.preview?.text).toBe(BUNDLE_JSON);
   });
 });
