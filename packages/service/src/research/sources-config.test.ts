@@ -381,6 +381,48 @@ describe("07-14 hardening (opus m9): reading the allowlist for display has no si
   });
 });
 
+describe("FIX3A MAJOR-1: the display read never resolves paths (no synchronous realpath on a health check)", () => {
+  const throwingRealpath = (): ResearchSourcesFs =>
+    fakeFs({
+      realpathSync: () => {
+        throw new Error("a display read must not resolve paths synchronously");
+      },
+    });
+
+  it("takes the cached 'runtime is inside the vault' boolean and refuses without opening the file", () => {
+    writeFileSync(file, JSON.stringify(VALID), { mode: 0o600 });
+    const spy = recordingFs([]);
+    const fs: ResearchSourcesFs = {
+      ...spy.fs,
+      realpathSync: () => {
+        throw new Error("no realpath");
+      },
+    };
+    expect(peekResearchSources(dir, fs, { runtimeInsideVault: true })).toEqual({
+      ok: false,
+      code: "inside-vault",
+    });
+    expect(spy.calls).toEqual([]);
+  });
+
+  it("reads the file when the cached answer is false, with a realpathSync that throws if touched", () => {
+    writeFileSync(file, JSON.stringify(VALID), { mode: 0o600 });
+    expect(peekResearchSources(dir, throwingRealpath(), { runtimeInsideVault: false })).toEqual({
+      ok: true,
+      config: VALID,
+    });
+    expect(peekResearchSources(dir, throwingRealpath())).toEqual({ ok: true, config: VALID });
+  });
+
+  it("the peek source names no path resolution at all (source scan)", () => {
+    const text = readFileSync(new URL("./sources-config.ts", import.meta.url), "utf8");
+    const start = text.indexOf("export function peekResearchSources");
+    expect(start).toBeGreaterThan(0);
+    const body = text.slice(start);
+    expect(body).not.toMatch(/realpath|isInsideVault/);
+  });
+});
+
 describe("wave 3 A16: duplicate sources in the allowlist are refused", () => {
   const dup = (second: { label: string; url: string }): string =>
     JSON.stringify({

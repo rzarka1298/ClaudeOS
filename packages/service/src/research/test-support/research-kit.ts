@@ -96,6 +96,10 @@ export interface KitOptions {
   readonly maxInputChars?: number;
   /** Puts the runtime directory (and so the allowlist file) inside the vault. */
   readonly runtimeInsideVault?: boolean;
+  /** Replaces the file seam the allowlist is read through (FIX3A: a seam whose realpathSync throws). */
+  readonly sourcesFs?: ResearchServicesDeps["sourcesFs"];
+  /** Replaces the cached "runtime folder is inside the vault" answer the status read takes. */
+  readonly isRuntimeInsideVault?: ResearchServicesDeps["isRuntimeInsideVault"];
   /** Runs on the migrated database before the services are created (to leave a stuck row behind). */
   readonly beforeServices?: (db: ReturnType<typeof openStore>["db"]) => void;
 }
@@ -207,6 +211,10 @@ export function createKit(options: KitOptions = {}): Kit {
         if (options.logThrows === true) throw new Error("log sink down");
       },
     },
+    ...(options.sourcesFs === undefined ? {} : { sourcesFs: options.sourcesFs }),
+    ...(options.isRuntimeInsideVault === undefined
+      ? {}
+      : { isRuntimeInsideVault: options.isRuntimeInsideVault }),
     ...(options.watchdogMs === undefined ? {} : { watchdogMs: options.watchdogMs }),
     ...(options.scheduleTimeout === undefined ? {} : { scheduleTimeout: options.scheduleTimeout }),
   });

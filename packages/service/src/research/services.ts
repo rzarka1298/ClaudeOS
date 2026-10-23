@@ -28,6 +28,7 @@ import {
   type Watchdog,
 } from "./pipeline.js";
 import { nameEffect, PIPELINE_EFFECTS, type PipelineEffect } from "./pipeline-effects.js";
+import { lexicalInsideVault } from "./runtime-vault-guard.js";
 import { peekResearchSources, type ResearchSourcesFs } from "./sources-config.js";
 
 /**
@@ -80,6 +81,12 @@ export interface ResearchServicesDeps {
   /** Starts a timer and returns its cancel function. Default: a real, unref'd timer. */
   readonly scheduleTimeout?: Watchdog["schedule"];
   readonly sourcesFs?: ResearchSourcesFs;
+  /**
+   * The CACHED "runtime folder is inside the vault" answer for a vault root (FIX3A MAJOR-1). The
+   * status read takes it instead of resolving paths itself. Absent: the lexical comparison, which
+   * does no file work either.
+   */
+  readonly isRuntimeInsideVault?: (vaultRoot: string | null) => boolean;
   /** Observes each classified effect step as it happens (diagnostics and tests). */
   readonly audit?: (operation: PipelineEffect) => void;
 }
@@ -272,8 +279,14 @@ export function createResearchServices(deps: ResearchServicesDeps): ResearchServ
     },
     configuredSources() {
       // A read for display: nothing is seeded, repaired or written (07-14, opus m9).
+      // No path resolution here: this is on the health path (FIX3A MAJOR-1).
+      const vaultRoot = deps.getVaultRoot();
+      const inside =
+        deps.isRuntimeInsideVault !== undefined
+          ? deps.isRuntimeInsideVault(vaultRoot)
+          : vaultRoot !== null && lexicalInsideVault(deps.runtimeDir, vaultRoot);
       const loaded = peekResearchSources(deps.runtimeDir, deps.sourcesFs, {
-        vaultRoot: deps.getVaultRoot(),
+        runtimeInsideVault: inside,
       });
       if (!loaded.ok) return null;
       return {

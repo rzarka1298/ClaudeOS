@@ -166,6 +166,16 @@ describe("Test 2: the research key closure uses the resolved account (D-38, T-08
     expect(spies.hasSecret).not.toHaveBeenCalled();
   });
 
+  it("FIX3A MAJOR-1: main.ts resolves 'runtime inside the vault' asynchronously (at start and on vault setup) and the research status read takes the cached answer", () => {
+    const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
+    expect(main).toContain("createRuntimeVaultGuard({");
+    expect(main).toMatch(/realpath: \(path\) => realpath\(path\)/); // fs/promises, not realpathSync
+    expect(main).not.toMatch(/realpathSync/);
+    expect(main).toMatch(/void runtimeVaultGuard\.refresh\(\);\n\s*const runInspector/);
+    expect(main).toMatch(/onVaultSetup: \(\) => \{\n\s*void runtimeVaultGuard\.refresh\(\);/);
+    expect(main).toContain("isRuntimeInsideVault: (root) => runtimeVaultGuard.insideVault(root)");
+  });
+
   it("main.ts resolves the account once and hands that same variable to the pipeline's key reader and to the diagnostics wiring (no literal)", () => {
     const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
     expect(main).toMatch(

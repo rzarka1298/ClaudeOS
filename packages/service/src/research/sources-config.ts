@@ -226,19 +226,22 @@ export function loadResearchSources(
  * Reads the allowlist for DISPLAY (the status route): the same checks and codes as
  * {@link loadResearchSources}, but nothing is written or changed. An absent file answers the
  * defaults that the next run would seed; a loose mode is left as it is.
+ *
+ * This runs on the health path, so it resolves NO paths: the "runtime folder is inside the vault"
+ * answer is a boolean the caller took from the cached, asynchronously resolved guard
+ * (`runtime-vault-guard.ts`, FIX3A MAJOR-1). The fresh check stays on the run's own write path.
  */
+export interface PeekSourcesOptions {
+  /** The cached answer; true refuses with `inside-vault` before the file is opened. */
+  readonly runtimeInsideVault?: boolean;
+}
+
 export function peekResearchSources(
   runtimeDir: string,
   fs: ResearchSourcesFs = NODE_FS,
-  options: LoadSourcesOptions = {},
+  options: PeekSourcesOptions = {},
 ): LoadSourcesResult {
-  if (
-    options.vaultRoot !== undefined &&
-    options.vaultRoot !== null &&
-    isInsideVault(runtimeDir, options.vaultRoot, fs)
-  ) {
-    return { ok: false, code: "inside-vault" };
-  }
+  if (options.runtimeInsideVault === true) return { ok: false, code: "inside-vault" };
   const outcome = readThroughDescriptor(join(runtimeDir, RESEARCH_SOURCES_FILE), fs, false);
   if (outcome.kind === "text") return parseConfig(outcome.text);
   if (outcome.kind === "refused") return { ok: false, code: outcome.code };

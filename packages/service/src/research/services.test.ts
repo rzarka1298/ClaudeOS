@@ -1,4 +1,16 @@
-import { chmodSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  fchmodSync,
+  fstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   JOB_RUN_OUTCOMES,
@@ -18,6 +30,8 @@ import { RUN_BYTE_CAP } from "./fetch/limits.js";
 import { createSafeFetcher } from "./fetch/safe-fetch.js";
 import { createFakeHttps } from "./fetch/test-support/fake-https.js";
 import { sourceIdFor } from "./hash.js";
+import { createResearchRouteServices } from "./route-services.js";
+import type { ResearchSourcesFs } from "./sources-config.js";
 import { SummariserError } from "./summariser-error.js";
 import {
   createKit,
@@ -976,6 +990,49 @@ describe("07-14 hardening (opus m9): reading the configured sources has no side 
     const configured = kit.services.configuredSources();
     expect(configured?.sources).toEqual([{ label: "One", host: "one.example.invalid" }]);
     expect(JSON.stringify(configured)).not.toContain("SECRET");
+  });
+});
+
+describe("FIX3A MAJOR-1: the status path (scheduler status port) does no synchronous path resolution", () => {
+  const exploding = (calls: string[]): ResearchSourcesFs => ({
+    openSync,
+    fstatSync,
+    readSync,
+    closeSync,
+    fchmodSync,
+    writeFileSync,
+    realpathSync: (path) => {
+      calls.push(path);
+      throw new Error("realpathSync must not run on a status read");
+    },
+    getuid: () => process.getuid?.() ?? -1,
+  });
+
+  it("configuredSources and the route's status() never call realpathSync, however often they run", () => {
+    const calls: string[] = [];
+    kit = createKit({ sourcesFs: exploding(calls) });
+    for (let i = 0; i < 5; i += 1) {
+      expect(kit.services.configuredSources()?.topicLabel).toBe("Developer tooling");
+    }
+    const routes = createResearchRouteServices({
+      db: kit.store.db,
+      getVaultRoot: () => kit?.vaultRoot ?? null,
+      services: kit.services,
+    });
+    for (let i = 0; i < 5; i += 1) expect(routes.status().ok).toBe(true);
+    expect(calls).toEqual([]);
+  });
+
+  it("uses the cached boolean the composition root provides: inside the vault reads as unusable", () => {
+    const seen: (string | null)[] = [];
+    kit = createKit({
+      isRuntimeInsideVault: (root) => {
+        seen.push(root);
+        return true;
+      },
+    });
+    expect(kit.services.configuredSources()).toBeNull();
+    expect(seen).toEqual([kit.vaultRoot]);
   });
 });
 

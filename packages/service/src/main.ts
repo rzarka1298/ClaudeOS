@@ -1,4 +1,5 @@
 import { existsSync, unlinkSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { type Clock, DEFAULT_HEARTBEAT_INTERVAL_MS, type ProjectId, type RunId } from "@ccc/domain";
 import { createSecurityCliSecretStore, hasSecret } from "@ccc/keychain";
 import {
@@ -56,6 +57,7 @@ import { createSafeFetcher } from "./research/fetch/index.js";
 import { RESEARCH_API_KEY_ACCOUNT } from "./research/research-key.js";
 import { createResearchRouteServices } from "./research/route-services.js";
 import { createResearchRouteSlot } from "./research/route-slot.js";
+import { createRuntimeVaultGuard } from "./research/runtime-vault-guard.js";
 import { createResearchServices } from "./research/services.js";
 import { createChooseSummariser } from "./research/summariser-choice.js";
 import { resolveResearchTestOverrides } from "./research/test-fixture-guard.js";
@@ -337,6 +339,16 @@ async function main(): Promise<void> {
     const persisted = store.readServiceMeta(VAULT_ROOT_META_KEY);
     return persisted !== null && persisted.length > 0 ? persisted : null;
   };
+  // FIX3A MAJOR-1: "the runtime folder is inside the vault" is resolved ONCE, asynchronously, at
+  // start and again whenever the vault root changes (vault setup, below), then cached. The health
+  // path (the scheduler status port -> configuredSources) takes the cached boolean and resolves no
+  // path itself, so a vault on a stalled mount cannot freeze the event loop.
+  const runtimeVaultGuard = createRuntimeVaultGuard({
+    runtimeDir,
+    getVaultRoot: readVaultRoot,
+    realpath: (path) => realpath(path),
+  });
+  void runtimeVaultGuard.refresh();
   const runInspector = createRunInspector({
     db: store.db,
     processFacts: claudeServices.processFacts,
@@ -484,6 +496,7 @@ async function main(): Promise<void> {
     approvals: approvals.services,
     // A vault set up after boot has no startup walk: index it as soon as the response is out.
     onVaultSetup: () => {
+      void runtimeVaultGuard.refresh();
       setImmediate(() => {
         try {
           const walked = taskHost.vaultSetUp();
@@ -518,6 +531,7 @@ async function main(): Promise<void> {
     db: store.db,
     getVaultRoot: readVaultRoot,
     runtimeDir,
+    isRuntimeInsideVault: (root) => runtimeVaultGuard.insideVault(root),
     eventBus,
     fetcher: researchOverrides.fetcher ?? createSafeFetcher(),
     chooseSummariser: createChooseSummariser({
