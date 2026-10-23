@@ -964,6 +964,8 @@ describe("Task 3, Test 6: headings, focus and keyboard", () => {
       "h5 Gmail",
       "h5 Google Calendar",
       "h5 GitHub",
+      // Plan 08-16: the bundle block is the section's last group.
+      "h4 Diagnostic bundle",
     ]);
     const h3 = screen.getByRole("heading", { level: 3, name: "Diagnostics" });
     expect(h3.className).toContain("ccc-settings-section-title");
