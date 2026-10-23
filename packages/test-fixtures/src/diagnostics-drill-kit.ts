@@ -165,6 +165,9 @@ export async function withDrillService<T>(
         dbPath: join(dir, "operational.db"),
         waitAttempts: 200,
         env: {
+          // The hook spool and its dropped-records file live inside the run folder, whatever the
+          // calling shell exported.
+          CCC_SPOOL_PATH: join(dir, "spool", "hooks.ndjson"),
           CCC_ENABLE_TEST_OVERRIDES: "1",
           CCC_RESEARCH_KEY_ACCOUNT: researchAccount,
           NODE_OPTIONS: `--require=${preload}`,
