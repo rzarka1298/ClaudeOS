@@ -102,11 +102,14 @@ export const RESEARCH_TEXT_TABLE = {
     "packages/plugin/src/widgets/panels.tsx",
     "literal",
   ],
+  // Item 20 as amended by Phase 8 (D-47): the live Today note, the Partial chip and the Cached badge.
   todaySource: [
-    "Google Calendar and Gmail",
-    "packages/plugin/src/widgets/widget-data.ts",
-    "literal",
+    "Google Calendar and Gmail: not part of this version.",
+    "packages/plugin/src/widgets/panels.tsx",
+    "fragment",
   ],
+  partialLabel: ["Partial", "packages/plugin/src/widgets/footer.tsx", "fragment"],
+  cachedLabel: ["Cached", "packages/plugin/src/widgets/footer.tsx", "literal"],
   overviewTabId: ["overview", `${VIEW}destinations.ts`, "literal"],
 } as const satisfies CopyTable;
 

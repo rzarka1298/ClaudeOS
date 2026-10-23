@@ -975,31 +975,64 @@ export function checkReuse(input: {
 // ---------------------------------------------------------------------------
 // 07-UAT item 20: the Overview
 
-/** The Overview is unchanged (D-21 amended): Today stays the permission-required card, tech-intel unavailable. */
-export function checkOverviewCards(
-  cards: readonly {
-    readonly title: string;
-    readonly presentation: string | null;
-    readonly heading: string;
-  }[],
-): string[] {
+/** What `checkOverviewCards` reads of a card (an `OverviewCard` of overview-support.ts satisfies it). */
+export interface OverviewCardFacts {
+  readonly title: string;
+  readonly presentation: string | null;
+  readonly note: string | null;
+  readonly intel: { readonly title: string } | null;
+  readonly footer: {
+    readonly freshness: string | null;
+    readonly freshnessLabel: string | null;
+    readonly partial: string | null;
+  };
+}
+
+/**
+ * The Overview after Phase 8 (item 20 as amended by SLICE-01, D-19, D-20, D-47). Phase 7 first
+ * asserted that the Overview was unchanged: Today the permission-required card, technology and
+ * market intelligence unavailable. Both cards are live now. Today is service-fed (ready, stale or
+ * empty), carries the Partial badge and the note that Google Calendar and Gmail are not part of
+ * this version; after the long report's run the technology card is ready with the latest report
+ * and shows it as Cached, never Live. Returns what is wrong; an empty list is a pass.
+ */
+export function checkOverviewCards(cards: readonly OverviewCardFacts[]): string[] {
   const problems: string[] = [];
   const today = cards.find((card) => card.title === RESEARCH_TEXT.todayTitle);
   if (today === undefined) problems.push("there is no Today card");
   else {
-    if (today.presentation !== "permission-required") {
-      problems.push(`the Today card is ${today.presentation}, not permission-required`);
+    if (today.presentation === "permission-required") {
+      problems.push("the Today card is permission-required, not service-fed");
+    } else if (!["ready", "stale", "empty"].includes(today.presentation ?? "")) {
+      problems.push(`the Today card is ${today.presentation ?? "unreadable"}, not ready`);
     }
-    if (!today.heading.includes(RESEARCH_TEXT.todaySource)) {
-      problems.push("the Today card does not name Google Calendar and Gmail");
+    if (today.note === null || !today.note.includes(RESEARCH_TEXT.todaySource)) {
+      problems.push(
+        "the Today card does not carry the note that Google Calendar and Gmail are not part of this version",
+      );
+    }
+    if (
+      today.footer.partial === null ||
+      !today.footer.partial.includes(RESEARCH_TEXT.partialLabel)
+    ) {
+      problems.push(`the Today card does not carry the ${RESEARCH_TEXT.partialLabel} badge`);
     }
   }
   const intel = cards.find((card) => card.title === RESEARCH_TEXT.techIntelTitle);
   if (intel === undefined) problems.push("there is no technology and market intelligence card");
-  else if (intel.presentation !== "unavailable") {
+  else if (intel.presentation !== "ready") {
     problems.push(
-      `the technology and market intelligence card is ${intel.presentation}, not unavailable`,
+      `the technology and market intelligence card is ${intel.presentation ?? "unreadable"}, not ready with the latest report`,
     );
+  } else {
+    if (intel.intel === null) {
+      problems.push("the technology and market intelligence card shows no report");
+    }
+    if (intel.footer.freshness !== "cached") {
+      problems.push(
+        `the technology and market intelligence card freshness is ${intel.footer.freshnessLabel ?? "missing"}, not ${RESEARCH_TEXT.cachedLabel}`,
+      );
+    }
   }
   return problems;
 }

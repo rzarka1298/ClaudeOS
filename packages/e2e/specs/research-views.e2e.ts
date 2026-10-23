@@ -19,6 +19,7 @@ import {
   readContrastInBothThemes,
 } from "../src/spec-support/contrast-probe.js";
 import { recordLookPending, sampleMotionInRenderer } from "../src/spec-support/cross-support.js";
+import { asOverviewBrowser, waitForVerdict } from "../src/spec-support/overview-support.js";
 import { RESEARCH_CLASSES, RESEARCH_TEXT } from "../src/spec-support/research-copy.js";
 import {
   type ResearchFocus,
@@ -26,7 +27,6 @@ import {
   rendererClickInSource,
   rendererClickNth,
   rendererInstallSpies,
-  rendererReadCards,
   rendererReadFocus,
   rendererReadScrollBehaviour,
   rendererReadSpies,
@@ -452,19 +452,21 @@ describe("research views", () => {
     await waitForNoteOpen(rb, `automation-runs/${runId}.md`);
   });
 
-  it("[07-UAT#20] The Overview is unchanged", async () => {
+  it("[07-UAT#20] The Overview shows the live Today and technology cards (superseded by Phase 8 SLICE-01)", async () => {
+    // Item 20 was "the Overview is unchanged" until Phase 8 made Today and Technology live (D-47):
+    // after the long report's run, Today is service-fed with the not-in-version note and the
+    // technology card shows that report as Cached. The tab switch mounts the Overview, which
+    // fetches its feeds on mount.
     await ensureLongReport();
     await browser.executeObsidian(
       rendererClick,
       `#${RESEARCH_CLASSES.tabPrefix}${RESEARCH_TEXT.overviewTabId}`,
       null,
     );
-    const cards = await pollUntil(
-      async () => {
-        const found = await browser.execute(rendererReadCards, RESEARCH_CLASSES.card);
-        return found.some((card) => card.title === RESEARCH_TEXT.todayTitle) ? found : null;
-      },
-      { timeoutMs: 20_000, intervalMs: 250, describe: "the Overview cards" },
+    const cards = await waitForVerdict(
+      asOverviewBrowser(browser),
+      checkOverviewCards,
+      "the Today and technology cards to show their live state",
     );
     expect(checkOverviewCards(cards)).toEqual([]);
   });

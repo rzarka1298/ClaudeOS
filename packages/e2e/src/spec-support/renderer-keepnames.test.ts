@@ -28,6 +28,8 @@ const SUPPORT_FILES = [
   "research-shots.ts",
   // The live-Obsidian contrast probe: its harvest and theme-swap renderers are declared where called.
   "contrast-probe.ts",
+  // The Overview slice's card reader (plan 08-19).
+  "overview-support.ts",
 ];
 
 /** Where a support file's renderer functions are declared when not in the file that calls them. */
@@ -192,6 +194,7 @@ describe("inline renderer functions in the specs and support modules", () => {
       "research-hostile",
       "research-lifecycle",
       "research-views",
+      "overview-slice",
       "tasks-core",
       "tasks-scale",
       "tasks-views",
