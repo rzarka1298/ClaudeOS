@@ -1,3 +1,4 @@
+import { execFile as execFileDouble } from "node:child_process";
 import { LAUNCHER_PART_IDS } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { isValidRow, partsOf } from "../test-support/diagnostics-probe-fixtures.js";
@@ -100,6 +101,20 @@ function part(outcome: Awaited<ReturnType<typeof probeLaunchers>>, partId: strin
 }
 
 const GO_LAUNCHERS = { kind: "go-to-section", section: "launchers" } as const;
+
+/** Literal-specifier loaders for the doubles (T-06-15 bans computed `import()`), checked against the double list. */
+const LOAD_DOUBLE: Readonly<Record<string, () => Promise<unknown>>> = {
+  "node:http": () => import("node:http"),
+  "node:https": () => import("node:https"),
+  "node:http2": () => import("node:http2"),
+  "node:net": () => import("node:net"),
+  "node:tls": () => import("node:tls"),
+  "node:dgram": () => import("node:dgram"),
+  "node:dns": () => import("node:dns"),
+  "node:dns/promises": () => import("node:dns/promises"),
+  // D-18: child_process is imported statically by name; the mocked binding is the double.
+  "node:child_process": async () => ({ execFile: execFileDouble }),
+};
 
 describe("Test 4: every launcher state", () => {
   it("no saved row reads launcher-not-set-up for all four, with the launchers section action, and a setup-needed row", async () => {
@@ -441,8 +456,11 @@ describe("Test 7 (W2): bounded and offline", () => {
     });
 
     it("the doubles are live: a call into any of them, or fetch, throws and is recorded", async () => {
+      expect(Object.keys(LOAD_DOUBLE).sort()).toEqual([...NETWORK_DOUBLE_MODULES].sort());
       for (const name of NETWORK_DOUBLE_MODULES) {
-        const module = (await import(/* @vite-ignore */ name)) as Record<string, unknown>;
+        const load = LOAD_DOUBLE[name];
+        if (load === undefined) throw new Error(`no loader for ${name}`);
+        const module = (await load()) as Record<string, unknown>;
         const member = Object.entries(module).find(
           ([key, value]) => key !== "default" && typeof value === "function",
         );
