@@ -1,0 +1,129 @@
+<!-- Synthetic Overview slice DOM (plan 08-19). Every name is invented. The structure mirrors what the plugin's WidgetFrame, WidgetFooter, ListBody, LaunchToolbar, TodayBody and TechIntelBody render; overview-support.test.ts reads it with the renderer reader and edits copies of it for the other states. -->
+<div class="ccc-overview-grid">
+  <section class="ccc-card" data-presentation="ready" data-size="medium" aria-labelledby="t-projects">
+    <header class="ccc-card-header"><h3 id="t-projects">Project shortcuts</h3></header>
+    <div class="ccc-card-body">
+      <ul class="ccc-list">
+        <li class="ccc-list-row">
+          <p class="ccc-list-primary ccc-clamp-2" title="uat-slice-project">uat-slice-project</p>
+          <p class="ccc-list-meta ccc-meta-segments"><span class="ccc-meta-glyph" aria-hidden="true">◌</span> Not a Git repository</p>
+          <div role="toolbar" aria-label="uat-slice-project actions" class="ccc-launch-toolbar">
+            <button type="button" class="ccc-quick-action" aria-label="Open uat-slice-project in Antigravity" tabindex="0">Antigravity</button>
+            <button type="button" class="ccc-quick-action" aria-label="Start Claude Code in uat-slice-project" tabindex="-1">Claude Code</button>
+            <button type="button" class="ccc-quick-action" aria-label="Open uat-slice-project with Claude + Codex" tabindex="-1">Claude + Codex</button>
+            <button type="button" class="ccc-quick-action" aria-label="Reveal uat-slice-project in Finder" tabindex="-1">Finder</button>
+            <button type="button" class="ccc-quick-action" aria-label="Open uat-slice-project on GitHub" aria-disabled="true" aria-describedby="no-remote" tabindex="-1">GitHub</button>
+            <span id="no-remote" class="ccc-visually-hidden">No GitHub remote</span>
+          </div>
+          <p role="status" class="ccc-launch-status"></p>
+        </li>
+      </ul>
+    </div>
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time" datetime="2026-10-23T10:00:05.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-projects" tabindex="0">5s ago</time>
+      <span id="abs-projects" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span>
+      <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">●</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="panel-projects">Source</button>
+      <div id="panel-projects" class="ccc-source-panel" hidden>
+        <p class="ccc-visually-hidden">Sources for project shortcuts</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Project registry — ok</li>
+          <li class="ccc-source-row">Local git status — ok</li>
+          <li class="ccc-source-row">Launcher settings — ok</li>
+        </ul>
+      </div>
+    </footer>
+  </section>
+
+  <section class="ccc-card" data-presentation="ready" data-size="tall" data-variant="hero" data-surface="cream" aria-labelledby="t-sessions">
+    <header class="ccc-card-header"><h3 id="t-sessions">Active Claude sessions</h3></header>
+    <div class="ccc-hero-head">
+      <p class="ccc-kpi-number">1</p>
+      <span class="ccc-visually-hidden">1 active sessions, running or waiting for approval</span>
+      <p class="ccc-hero-caption">0 waiting for approval · 0 unknown</p>
+    </div>
+    <div class="ccc-card-body" tabindex="0">
+      <ul class="ccc-list">
+        <li class="ccc-list-row">
+          <button type="button" class="ccc-list-primary ccc-clamp-2 ccc-session-row-link" title="Unclassified · Session 1a2b3c4d">Unclassified · Session 1a2b3c4d</button>
+          <p class="ccc-list-meta">▸ Running · claude-test-model · 4s · active 3s ago</p>
+          <button type="button" class="ccc-row-action" aria-label="Focus terminal for Session 1a2b3c4d">Focus</button>
+        </li>
+      </ul>
+    </div>
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time" datetime="2026-10-23T10:00:03.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-sessions" tabindex="0">3s ago</time>
+      <span id="abs-sessions" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span>
+      <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">●</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="panel-sessions">Source</button>
+      <div id="panel-sessions" class="ccc-source-panel" hidden>
+        <p class="ccc-visually-hidden">Sources for active Claude sessions</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Claude Code hooks — ok</li>
+        </ul>
+      </div>
+    </footer>
+  </section>
+
+  <section class="ccc-card" data-presentation="ready" data-size="wide" aria-labelledby="t-today">
+    <header class="ccc-card-header"><h3 id="t-today">Today</h3></header>
+    <div class="ccc-card-body">
+      <h4 class="ccc-today-section" data-focal="true">Due today</h4>
+      <ul class="ccc-list">
+        <li class="ccc-list-row">
+          <button type="button" class="ccc-list-primary ccc-clamp-2 ccc-session-row-link" title="Sort the synthetic backlog" aria-label="Open task: Sort the synthetic backlog, Overdue since Oct 5">Sort the synthetic backlog</button>
+          <p class="ccc-list-meta">Overdue since Oct 5</p>
+        </li>
+        <li class="ccc-list-row">
+          <button type="button" class="ccc-list-primary ccc-clamp-2 ccc-session-row-link" title="Review the invented notes" aria-label="Open task: Review the invented notes, Overdue since Oct 7">Review the invented notes</button>
+          <p class="ccc-list-meta">Overdue since Oct 7</p>
+        </li>
+        <li class="ccc-list-overflow"><button type="button" class="ccc-list-more">Show more in the tasks view</button></li>
+      </ul>
+      <h4 class="ccc-today-section">Automation</h4>
+      <p class="ccc-state-body">No automation failures.</p>
+      <p class="ccc-today-note"><span aria-hidden="true">∅</span> Google Calendar and Gmail: not part of this version.</p>
+    </div>
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time" datetime="2026-10-23T10:00:04.000Z" title="Oct 23, 2026, 10:00 AM" aria-describedby="abs-today" tabindex="0">4s ago</time>
+      <span id="abs-today" class="ccc-visually-hidden">Oct 23, 2026, 10:00 AM</span>
+      <span class="ccc-badge" data-badge="live"><span class="ccc-badge-glyph" aria-hidden="true">●</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Live</span></span>
+      <span class="ccc-badge" data-badge="partial"><span class="ccc-badge-glyph" aria-hidden="true">◈</span><span class="ccc-badge-label">Partial</span><span class="ccc-visually-hidden"> — Google Calendar and Gmail aren't part of this version</span></span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="panel-today">Source</button>
+      <div id="panel-today" class="ccc-source-panel" hidden>
+        <p class="ccc-visually-hidden">Sources for today</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Google Calendar — not part of this version</li>
+          <li class="ccc-source-row">Gmail — not part of this version</li>
+          <li class="ccc-source-row">Managed task store — ok</li>
+          <li class="ccc-source-row">Automation runs — ok</li>
+        </ul>
+      </div>
+    </footer>
+  </section>
+
+  <section class="ccc-card" data-presentation="ready" data-size="tall" aria-labelledby="t-intel">
+    <header class="ccc-card-header"><h3 id="t-intel">Technology and market intelligence</h3></header>
+    <div class="ccc-card-body" tabindex="0">
+      <div class="ccc-intel-latest">
+        <p class="ccc-clamp-2" title="Developer tooling and open-source releases">Developer tooling and open-source releases</p>
+        <p class="ccc-list-meta">3 sources · 6 items</p>
+        <p class="ccc-list-meta">AI-generated summary. Not verified by a person.</p>
+        <button type="button" class="ccc-connect-button" aria-label="Open report: Developer tooling and open-source releases">Open report</button>
+      </div>
+    </div>
+    <footer class="ccc-card-footer">
+      <time class="ccc-footer-time" datetime="2026-10-23T09:58:00.000Z" title="Oct 23, 2026, 9:58 AM" aria-describedby="abs-intel" tabindex="0">2 minutes ago</time>
+      <span id="abs-intel" class="ccc-visually-hidden">Oct 23, 2026, 9:58 AM</span>
+      <span class="ccc-badge" data-badge="cached"><span class="ccc-badge-glyph" aria-hidden="true">◐</span><span class="ccc-visually-hidden">Freshness: </span><span class="ccc-badge-label">Cached</span></span>
+      <button type="button" class="ccc-source-button" aria-expanded="false" aria-controls="panel-intel">Source</button>
+      <div id="panel-intel" class="ccc-source-panel" hidden>
+        <p class="ccc-visually-hidden">Sources for technology and market intelligence</p>
+        <ul class="ccc-source-list">
+          <li class="ccc-source-row">Research reports — ok</li>
+          <li class="ccc-source-row">Research sources — ok</li>
+        </ul>
+      </div>
+    </footer>
+  </section>
+</div>
