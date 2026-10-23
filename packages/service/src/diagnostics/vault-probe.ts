@@ -47,6 +47,40 @@ const DEFAULT_FS: VaultFsPorts = {
   realpath: (path) => realpath(path),
 };
 
+/**
+ * At most one call per (operation, path) in flight per file-system implementation (FIX3A MINOR-3).
+ * A call on a stalled mount cannot be cancelled and holds a thread-pool thread until the mount
+ * answers; the probe abandons it at its cap. A later check that asked again would hold another
+ * thread per check, so while one is outstanding the new check shares the pending promise, times out
+ * on its own signal (`probe-timeout`) and starts nothing. Once the call settles the entry is
+ * dropped and the next check starts fresh. Keyed by the fs object so a test double never shares
+ * state with the real calls.
+ */
+const inFlightByFs = new WeakMap<VaultFsPorts, Map<string, Promise<unknown>>>();
+
+function singleFlight<T>(fs: VaultFsPorts, key: string, start: () => Promise<T>): Promise<T> {
+  let table = inFlightByFs.get(fs);
+  if (table === undefined) {
+    table = new Map();
+    inFlightByFs.set(fs, table);
+  }
+  const pending = table.get(key);
+  if (pending !== undefined) return pending as Promise<T>;
+  let call: Promise<T>;
+  try {
+    call = start();
+  } catch (error) {
+    call = Promise.reject(error);
+  }
+  const owned = table;
+  const clear = (): void => {
+    if (owned.get(key) === call) owned.delete(key);
+  };
+  table.set(key, call);
+  call.then(clear, clear);
+  return call;
+}
+
 /** The marker Obsidian itself creates in every vault. */
 const OBSIDIAN_MARKER = ".obsidian";
 
@@ -154,7 +188,13 @@ export async function probeVault(
   if (!isUsableRootString(root)) return outcomes.refused;
   if (signal.aborted) return outcomes.timeout;
 
-  const fs = ports.fs ?? DEFAULT_FS;
+  const base = ports.fs ?? DEFAULT_FS;
+  const fs: VaultFsPorts = {
+    stat: (path) => singleFlight(base, `stat:${path}`, () => base.stat(path)),
+    access: (path, mode) =>
+      singleFlight(base, `access:${mode}:${path}`, () => base.access(path, mode)),
+    realpath: (path) => singleFlight(base, `realpath:${path}`, () => base.realpath(path)),
+  };
   const forbidden = ports.isForbiddenRoot ?? isForbiddenRoot;
 
   try {

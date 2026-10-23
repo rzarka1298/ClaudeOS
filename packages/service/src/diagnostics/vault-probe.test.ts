@@ -461,3 +461,54 @@ describe("Test 4: no path and no errno message in any result", () => {
     expect(members).toHaveLength(3);
   });
 });
+
+describe("FIX3A MINOR-3: one stat in flight per path", () => {
+  it("FIX3A MINOR-3: at most one stat per path is in flight; a later check reports probe-timeout without starting another", async () => {
+    const calls: string[] = [];
+    const fs: VaultFsPorts = {
+      // A stalled mount: the call never settles.
+      stat: (path) => note(calls, `stat:${path}`, new Promise(() => undefined)),
+      access: () => Promise.resolve(),
+      realpath: (path) => Promise.resolve(path),
+    };
+    const shared = ports("/stalled/vault", { fs });
+    for (let check = 0; check < 4; check += 1) {
+      const controller = new AbortController();
+      const pending = probeVault(shared, controller.signal);
+      setTimeout(() => controller.abort(), 5);
+      expect(await pending).toEqual({
+        id: "vault",
+        status: "unknown",
+        reasonCode: "probe-timeout",
+      });
+    }
+    expect(calls).toEqual(["stat:/stalled/vault"]);
+  });
+
+  it("FIX3A MINOR-3: once the outstanding stat settles, the next check starts a fresh one", async () => {
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const fs: VaultFsPorts = {
+      stat: () => {
+        calls += 1;
+        if (calls > 1) return Promise.resolve({ isDirectory: () => false });
+        return new Promise((resolve) => {
+          release = () => resolve({ isDirectory: () => false });
+        });
+      },
+      access: () => Promise.resolve(),
+      realpath: (path) => Promise.resolve(path),
+    };
+    const shared = ports("/stalled/vault", { fs });
+    const first = new AbortController();
+    const pending = probeVault(shared, first.signal);
+    setTimeout(() => first.abort(), 5);
+    await pending;
+    release?.();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(await probeVault(shared, SIGNAL)).toMatchObject({
+      reasonCode: "vault-root-not-directory",
+    });
+    expect(calls).toBe(2);
+  });
+});

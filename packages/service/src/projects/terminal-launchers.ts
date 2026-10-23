@@ -114,7 +114,25 @@ function neverHandedOff(outcome: SpawnOutcome): boolean {
  * as a spawn errno (`spawn-failed`, script removed); a same-user swap is the
  * same-user threat ADR-0001 accepts.
  */
-export async function isExecutableFile(path: string): Promise<boolean> {
+export function isExecutableFile(path: string): Promise<boolean> {
+  // At most one check per path in flight (FIX3A MINOR-3): a stat on a stalled mount cannot be
+  // cancelled and holds a thread-pool thread, so a caller that gave up (the health probe at its
+  // cap) must not leave a new abandoned stat behind on every check. Later callers share the
+  // pending promise (and time out on their own signal); the entry is dropped when it settles.
+  const pending = executableChecksInFlight.get(path);
+  if (pending !== undefined) return pending;
+  const check = checkExecutableFile(path);
+  executableChecksInFlight.set(path, check);
+  const clear = (): void => {
+    if (executableChecksInFlight.get(path) === check) executableChecksInFlight.delete(path);
+  };
+  check.then(clear, clear);
+  return check;
+}
+
+const executableChecksInFlight = new Map<string, Promise<boolean>>();
+
+async function checkExecutableFile(path: string): Promise<boolean> {
   try {
     const info = await stat(path);
     if (!info.isFile()) return false;
