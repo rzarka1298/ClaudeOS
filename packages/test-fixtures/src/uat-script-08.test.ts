@@ -385,6 +385,7 @@ run("coverage (Test 4)", () => {
       [30, "Checked just now."],
       [33, "Bundle saved."],
       [35, "A file with that name already exists. Choose a new name. Nothing was written."],
+      [35, "This location can't hold the bundle safely. Choose a folder on your Mac's disk."],
       [35, "That location is inside your vault. Choose a folder outside the vault."],
     ];
     for (const [number, phrase, written] of anchors) {
