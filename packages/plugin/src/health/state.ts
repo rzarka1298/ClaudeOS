@@ -1,13 +1,15 @@
 import type { Freshness } from "@ccc/domain";
-import type {
-  DiagnosticsErrorCode,
-  DiagnosticsHealthResponse,
-  DisplayedRow,
-  HealthTrigger,
-  OverlayOnlyReason,
-  ServiceReason,
-  SubsystemId,
-  SubsystemStatus,
+import {
+  type DiagnosticsErrorCode,
+  type DiagnosticsHealthResponse,
+  type DisplayedRow,
+  type HealthTrigger,
+  type OverlayOnlyReason,
+  type ServiceReason,
+  type SetupAction,
+  type SubsystemId,
+  type SubsystemStatus,
+  VAULT_REASON_STATUS,
 } from "@ccc/domain/diagnostics.js";
 import { effect, signal } from "@preact/signals";
 import { type ConnectionState, connectionState } from "../connection-state.js";
@@ -17,8 +19,8 @@ import { HealthApiError, healthApi } from "./api.js";
  * The Diagnostics health state (plan 08-13; D-03, D-05, D-43, 08-UI-SPEC S3).
  *
  * What the section shows is a pure function of three things: the connection state, the last
- * answer from the health route, and (once the vault overlay lands) the result of comparing the
- * vault fingerprint. The Companion service row never comes from the route: it is computed here
+ * answer from the health route, and the result of comparing the vault fingerprint with the open
+ * vault (the plugin-side overlay, D-36). The Companion service row never comes from the route: it is computed here
  * from the connection KIND alone (D-43), so the raw connection reason text has nowhere to go.
  * While the service is not live every other row is cleared to `unknown` with no last-good value
  * (D-03, ADR-0002), and the held answer itself is dropped.
@@ -41,6 +43,14 @@ export const healthResponse = signal<DiagnosticsHealthResponse | null>(null);
 
 /** `loading` only until the first answer; a re-check keeps the rows it already has. */
 export const healthPhase = signal<HealthPhase>("idle");
+
+/**
+ * Whether the vault open in Obsidian is the vault the service manages (D-36), decided with the
+ * answer it belongs to. Only the verdict is held: the fingerprint stays inside the response
+ * signal and the base path is never stored.
+ */
+export type VaultCheck = "match" | "mismatch" | "unavailable";
+export const healthVaultCheck = signal<VaultCheck>("unavailable");
 
 // ---------------------------------------------------------------------------
 // Rows
@@ -125,17 +135,79 @@ export function clearedRows(): ClearedRow[] {
   }));
 }
 
+/** The vault row exactly as the service sent it. */
+export type VaultServiceRow = DiagnosticsHealthResponse["rows"][0];
+
+const VAULT_SETUP_ACTION: SetupAction = { kind: "run-plugin-command", command: "vault-setup" };
+
 /**
- * The six rows, service first. The five service-dependent rows are the held answer when the
- * service is live and an answer exists, and cleared in every other case.
+ * The plugin-side vault overlay (D-36). The service says the managed vault is ready; only the
+ * plugin knows which vault is open in Obsidian. A different vault reads `vault-mismatch`
+ * (degraded, with the vault-setup action); a vault with no base path reads
+ * `vault-check-unavailable` (unknown). Only a `vault-ready` row is overlaid: a worse answer from
+ * the service (missing, unreadable, incomplete) is the more useful one and is never softened or
+ * replaced. A matching vault returns the row itself.
+ */
+export function applyVaultOverlay(row: VaultServiceRow, check: VaultCheck): DisplayedRow {
+  if (row.reasonCode !== "vault-ready" || check === "match") return row;
+  if (check === "mismatch") {
+    return {
+      ...row,
+      status: VAULT_REASON_STATUS["vault-mismatch"],
+      reasonCode: "vault-mismatch",
+      setupAction: VAULT_SETUP_ACTION,
+    };
+  }
+  return {
+    ...row,
+    status: VAULT_REASON_STATUS["vault-check-unavailable"],
+    reasonCode: "vault-check-unavailable",
+  };
+}
+
+/**
+ * The six rows, service first. The five service-dependent rows are the held answer (with the
+ * vault overlay applied) when the service is live and an answer exists, and cleared in every
+ * other case.
  */
 export function rowsFor(
   connection: ConnectionState,
   response: DiagnosticsHealthResponse | null,
+  vaultCheck: VaultCheck = "match",
 ): ShownRow[] {
   const service = serviceRowFor(connection, response);
   if (connection.kind !== "live" || response === null) return [service, ...clearedRows()];
-  return [service, ...response.rows];
+  const [vault, ...rest] = response.rows;
+  return [service, applyVaultOverlay(vault, vaultCheck), ...rest];
+}
+
+/** The first 16 lowercase hex characters of SHA-256 over `text`, with WebCrypto. */
+async function digest16(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  const hash = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
+}
+
+/**
+ * Compares the service's salted vault fingerprint with a WebCrypto digest of the open vault's
+ * base path (D-36): both sides hash `salt:path` and compare the first 16 hex characters. The path
+ * itself never crosses the wire. `unavailable` when there is no managed vault, the open vault has
+ * no base path, or WebCrypto is not there to answer.
+ */
+export async function computeVaultCheck(
+  fingerprint: DiagnosticsHealthResponse["vaultFingerprint"],
+  basePath: string | null,
+): Promise<VaultCheck> {
+  if (fingerprint === null || basePath === null || basePath === "") return "unavailable";
+  try {
+    return (await digest16(`${fingerprint.salt}:${basePath}`)) === fingerprint.digest
+      ? "match"
+      : "mismatch";
+  } catch {
+    return "unavailable";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +219,7 @@ export type HealthRefreshOutcome =
   | { readonly kind: "superseded" };
 
 export interface RefreshOptions {
-  /** The open vault's folder on disk, or `null` (the overlay lands in a later task of this plan). */
+  /** The open vault's folder on disk, or `null` for a vault that is not a local folder (D-36). */
   readonly vaultBasePath: string | null;
 }
 
@@ -172,18 +244,22 @@ function countTimedOut(response: DiagnosticsHealthResponse): number {
 async function fetchAndPublish(
   token: number,
   trigger: HealthTrigger,
-  _options: RefreshOptions,
+  options: RefreshOptions,
 ): Promise<HealthRefreshOutcome> {
   try {
     const response = await healthApi().get(trigger);
+    // The verdict is computed with the answer it belongs to, so the vault row never flashes ready.
+    const vaultCheck = await computeVaultCheck(response.vaultFingerprint, options.vaultBasePath);
     if (token !== sequence) return { kind: "superseded" };
     healthResponse.value = response;
+    healthVaultCheck.value = vaultCheck;
     healthPhase.value = "ready";
     return { kind: "ok", timedOut: countTimedOut(response) };
   } catch (error) {
     if (token !== sequence) return { kind: "superseded" };
     // A failed check leaves no last-good answer on screen (D-03).
     healthResponse.value = null;
+    healthVaultCheck.value = "unavailable";
     healthPhase.value = "error";
     return { kind: "error", code: error instanceof HealthApiError ? error.code : "internal" };
   }
@@ -218,6 +294,7 @@ export async function refreshHealth(
 export function clearHealth(): void {
   sequence += 1;
   healthResponse.value = null;
+  healthVaultCheck.value = "unavailable";
   healthPhase.value = "idle";
 }
 

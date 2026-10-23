@@ -1,12 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
-import { allOkHealth, healthResponse as fixtureResponse } from "../test-support/health-fixtures.js";
+import {
+  allOkHealth,
+  fingerprintFor,
+  healthResponse as fixtureResponse,
+} from "../test-support/health-fixtures.js";
 import { configureHealth, HealthApiError } from "./api.js";
 import {
+  applyVaultOverlay,
   clearedRows,
   clearHealth,
+  computeVaultCheck,
   healthPhase,
   healthResponse,
+  healthVaultCheck,
   onHealthLive,
   refreshHealth,
   registerHealthView,
@@ -258,5 +265,93 @@ describe("watchConnection (D-03)", () => {
     stop();
     connectionState.value = { kind: "connecting" };
     expect(healthResponse.value).not.toBeNull();
+  });
+});
+
+describe("the vault overlay (Task 2, Test 5; D-36)", () => {
+  const BASE = "/Users/example/Vaults/Example";
+
+  async function readyResponse(basePath: string | null) {
+    const fingerprint = basePath === null ? null : await fingerprintFor(basePath);
+    return allOkHealth({ vaultFingerprint: fingerprint });
+  }
+
+  it("computeVaultCheck matches the digest of salt:basePath the way the service computes it", async () => {
+    const response = await readyResponse(BASE);
+    expect(await computeVaultCheck(response.vaultFingerprint, BASE)).toBe("match");
+    expect(await computeVaultCheck(response.vaultFingerprint, `${BASE}-other`)).toBe("mismatch");
+    // A vault that is not a local folder, or a service with no managed vault, cannot be compared.
+    expect(await computeVaultCheck(response.vaultFingerprint, null)).toBe("unavailable");
+    expect(await computeVaultCheck(response.vaultFingerprint, "")).toBe("unavailable");
+    expect(await computeVaultCheck(null, BASE)).toBe("unavailable");
+  });
+
+  it("keeps vault-ready when the fingerprints match", async () => {
+    const response = await readyResponse(BASE);
+    const vault = response.rows[0];
+    expect(applyVaultOverlay(vault, "match")).toBe(vault);
+  });
+
+  it("reads vault-mismatch (degraded) with its next step action when the open vault differs", async () => {
+    const response = await readyResponse(BASE);
+    const row = applyVaultOverlay(response.rows[0], "mismatch");
+    expect(row).toMatchObject({
+      id: "vault",
+      status: "degraded",
+      reasonCode: "vault-mismatch",
+      setupAction: { kind: "run-plugin-command", command: "vault-setup" },
+      checkedAt: response.rows[0].checkedAt,
+      freshness: response.rows[0].freshness,
+    });
+  });
+
+  it("reads vault-check-unavailable (unknown) for a vault without a base path", async () => {
+    const response = await readyResponse(BASE);
+    expect(applyVaultOverlay(response.rows[0], "unavailable")).toMatchObject({
+      id: "vault",
+      status: "unknown",
+      reasonCode: "vault-check-unavailable",
+    });
+  });
+
+  it("only overlays a ready vault: a worse service answer is never softened or replaced", () => {
+    const response = fixtureResponse();
+    const notSetUp = response.rows[0];
+    expect(notSetUp.reasonCode).toBe("vault-not-set-up");
+    expect(applyVaultOverlay(notSetUp, "mismatch")).toBe(notSetUp);
+    expect(applyVaultOverlay(notSetUp, "unavailable")).toBe(notSetUp);
+  });
+
+  it("refreshHealth computes the check with the answer and rowsFor applies it", async () => {
+    const response = await readyResponse(BASE);
+    configureHealth({ api: { get: () => Promise.resolve(response) } });
+    await refreshHealth("gesture", { vaultBasePath: `${BASE}-other` });
+    expect(healthVaultCheck.value).toBe("mismatch");
+    const rows = rowsFor(LIVE, healthResponse.value, healthVaultCheck.value);
+    expect(rows[1]).toMatchObject({ id: "vault", reasonCode: "vault-mismatch" });
+
+    await refreshHealth("gesture", { vaultBasePath: BASE });
+    expect(healthVaultCheck.value).toBe("match");
+    expect(rowsFor(LIVE, healthResponse.value, healthVaultCheck.value)[1]).toMatchObject({
+      reasonCode: "vault-ready",
+    });
+  });
+
+  it("never carries the fingerprint, the salt or the base path into a row", async () => {
+    const response = await readyResponse(BASE);
+    const row = applyVaultOverlay(response.rows[0], "mismatch");
+    const text = JSON.stringify(rowsFor(LIVE, response, "mismatch"));
+    expect(text).not.toContain(response.vaultFingerprint?.digest ?? "x");
+    expect(text).not.toContain(response.vaultFingerprint?.salt ?? "x");
+    expect(text).not.toContain("Vaults");
+    expect(JSON.stringify(row)).not.toContain("Vaults");
+  });
+
+  it("clears the check with the answer", async () => {
+    const response = await readyResponse(BASE);
+    configureHealth({ api: { get: () => Promise.resolve(response) } });
+    await refreshHealth("gesture", { vaultBasePath: `${BASE}-other` });
+    clearHealth();
+    expect(healthVaultCheck.value).toBe("unavailable");
   });
 });

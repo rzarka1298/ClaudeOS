@@ -267,3 +267,8 @@ export async function fingerprintFor(
   );
   return { salt, digest: hex.slice(0, 16) };
 }
+
+/** Everything working, with the vault fingerprint of `basePath` (so a host with that path matches). */
+export async function allOkHealthFor(basePath: string): Promise<DiagnosticsHealthResponse> {
+  return allOkHealth({ vaultFingerprint: await fingerprintFor(basePath) });
+}
