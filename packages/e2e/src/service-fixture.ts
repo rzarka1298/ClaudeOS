@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { startServiceForTest } from "@ccc/test-fixtures";
 import { buildServiceEnv, refuseRealPaths, type ServiceKind } from "./isolation-guards.js";
 import { SERVICE_ENTRY } from "./repo-paths.js";
-import { isResearchGuardEnv, type ResearchGuardEnv } from "./research-uat-fixture.js";
+import {
+  isResearchGuardEnv,
+  RESEARCH_TEST_ENV,
+  type ResearchGuardEnv,
+} from "./research-uat-fixture.js";
 import type { RunRootPaths } from "./run-root.js";
 import {
   realWait,
@@ -115,6 +119,28 @@ export function createServiceFixture(
   let current: Stoppable | undefined;
   let lastOptions: StartOptions = {};
 
+  /**
+   * The isolation variables come last, so a research variable can never replace one. The one
+   * exception is the research-key account: the research fixture's own empty `-research` account
+   * replaces the runner's default `-nokey` account, because the research drills (07-UAT, 08-UAT
+   * item 36) read and write that one. Both are nonexistent `ccc-uat-` accounts (FIX4A M2).
+   */
+  function serviceEnv(
+    researchEnv: ResearchGuardEnv | undefined,
+    kind: ServiceKind,
+  ): Record<string, string> {
+    const isolated = buildServiceEnv(paths, sandbox.account, kind, {
+      base: deps.base,
+      home: deps.home,
+    });
+    const research = researchEnv?.[RESEARCH_TEST_ENV.keyAccount];
+    return {
+      ...(researchEnv ?? {}),
+      ...isolated,
+      ...(research === undefined ? {} : { [RESEARCH_TEST_ENV.keyAccount]: research }),
+    };
+  }
+
   async function start(options: StartOptions = {}): Promise<void> {
     if (current !== undefined) throw new Error("The throwaway service is already running.");
     lastOptions = options;
@@ -138,13 +164,7 @@ export function createServiceFixture(
       socketPath: paths.socketPath,
       dbPath: paths.dbPath,
       // The isolation variables come last, so a research variable can never replace one.
-      env: {
-        ...(options.researchEnv ?? {}),
-        ...buildServiceEnv(paths, sandbox.account, options.kind ?? "normal", {
-          base: deps.base,
-          home: deps.home,
-        }),
-      },
+      env: serviceEnv(options.researchEnv, options.kind ?? "normal"),
     };
     if (options.waitAttempts !== undefined) args.waitAttempts = options.waitAttempts;
     const record = sandbox.recordSpawn;

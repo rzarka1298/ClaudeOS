@@ -994,9 +994,13 @@ export interface OverviewCardFacts {
  * market intelligence unavailable. Both cards are live now. Today is service-fed (ready, stale or
  * empty), carries the Partial badge and the note that Google Calendar and Gmail are not part of
  * this version; after the long report's run the technology card is ready with the latest report
- * and shows it as Cached, never Live. Returns what is wrong; an empty list is a pass.
+ * and shows it as Cached, never Live. `newest` is the newest report as the service lists it: the card
+ * must show that report, not an earlier one. Returns what is wrong; an empty list is a pass.
  */
-export function checkOverviewCards(cards: readonly OverviewCardFacts[]): string[] {
+export function checkOverviewCards(
+  cards: readonly OverviewCardFacts[],
+  newest: { readonly title: string },
+): string[] {
   const problems: string[] = [];
   const today = cards.find((card) => card.title === RESEARCH_TEXT.todayTitle);
   if (today === undefined) problems.push("there is no Today card");
@@ -1027,6 +1031,12 @@ export function checkOverviewCards(cards: readonly OverviewCardFacts[]): string[
   } else {
     if (intel.intel === null) {
       problems.push("the technology and market intelligence card shows no report");
+    } else if (intel.intel.title !== newest.title) {
+      // A stale earlier report would pass every other check (FIX4A m5): compare with the newest one,
+      // as the Phase 8 item 4 check does.
+      problems.push(
+        `the technology and market intelligence card shows "${intel.intel.title}", not the newest report "${newest.title}"`,
+      );
     }
     if (intel.footer.freshness !== "cached") {
       problems.push(

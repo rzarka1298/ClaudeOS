@@ -19,6 +19,7 @@ import {
   checkNextOpen,
   checkNoFailures,
   checkNoFixtureOnCards,
+  checkOnlyPressedChanged,
   checkRecovered,
   checkSliceCards,
   checkTechEmpty,
@@ -654,6 +655,10 @@ describe("assertNoLauncherSaved and pressLaunchControl (T-08-48, D-46)", () => {
   function fakeBrowser(scripted: {
     cards: OverviewCard[];
     activeLabel?: string | null;
+    /** What holds focus when it is re-read just before Enter (FIX4A m4); defaults to the control. */
+    activeNow?: string | null;
+    /** The cards after the press; defaults to `cards`. */
+    after?: OverviewCard[];
     found?: boolean;
   }): { browser: OverviewBrowser; keys: unknown[]; executed: string[] } {
     const keys: unknown[] = [];
@@ -661,7 +666,13 @@ describe("assertNoLauncherSaved and pressLaunchControl (T-08-48, D-46)", () => {
     const browser = {
       execute: async (fn: { name: string }) => {
         executed.push(fn.name);
-        if (fn.name === "rendererReadOverviewCards") return scripted.cards;
+        if (fn.name === "rendererReadOverviewCards") {
+          // The first reads are before the press; once Enter was sent the scripted `after` cards.
+          return keys.length > 0 && scripted.after !== undefined ? scripted.after : scripted.cards;
+        }
+        if (fn.name === "rendererActiveLabel") {
+          return scripted.activeNow === undefined ? LABEL : scripted.activeNow;
+        }
         if (fn.name === "rendererFocusControl") {
           return { found: scripted.found ?? true, activeLabel: scripted.activeLabel ?? LABEL };
         }
@@ -721,6 +732,60 @@ describe("assertNoLauncherSaved and pressLaunchControl (T-08-48, D-46)", () => {
     expect(result.status).toContain("isn't set up yet");
   });
 
+  it("re-reads the focused control just before Enter and does not press when it moved (FIX4A m4)", async () => {
+    const { browser, keys, executed } = fakeBrowser({
+      cards: outcomeCards,
+      activeNow: "Reveal uat-slice-project in Finder",
+    });
+    await expect(
+      pressLaunchControl(browser, {
+        projectName: "uat-slice-project",
+        action: "antigravity",
+        readLauncherRows: async () => [],
+        poll: FAST,
+      }),
+    ).rejects.toThrow(/moved|focus/);
+    expect(keys).toEqual([]);
+    // The re-read comes after the focus call and before any key.
+    expect(executed.indexOf("rendererActiveLabel")).toBeGreaterThan(
+      executed.indexOf("rendererFocusControl"),
+    );
+  });
+
+  it("does not press when nothing holds focus any more", async () => {
+    const { browser, keys } = fakeBrowser({ cards: outcomeCards, activeNow: null });
+    await expect(
+      pressLaunchControl(browser, {
+        projectName: "uat-slice-project",
+        action: "antigravity",
+        readLauncherRows: async () => [],
+        poll: FAST,
+      }),
+    ).rejects.toThrow(/moved|focus/);
+    expect(keys).toEqual([]);
+  });
+
+  it("fails when the Finder control's status shows after the press (FIX4A m4)", async () => {
+    const finderCards = readCards(
+      mapCard(BASE_HTML, PROJECTS, (card) =>
+        card.replace(
+          '<p role="status" class="ccc-launch-status"></p>',
+          '<p role="status" class="ccc-launch-status">▲Antigravity isn\'t set up yet.Set it up in Settings → Launchers, then try again. ✓ Revealed in Finder</p>',
+        ),
+      ),
+    );
+    const { browser, keys } = fakeBrowser({ cards: outcomeCards, after: finderCards });
+    await expect(
+      pressLaunchControl(browser, {
+        projectName: "uat-slice-project",
+        action: "antigravity",
+        readLauncherRows: async () => [],
+        poll: FAST,
+      }),
+    ).rejects.toThrow(/Finder|changed/);
+    expect(keys).toEqual([Key.Enter]);
+  });
+
   it("does not press when focus did not land on the named control", async () => {
     const { browser, keys } = fakeBrowser({ cards: outcomeCards, activeLabel: "Something else" });
     await expect(
@@ -778,6 +843,49 @@ describe("assertNoLauncherSaved and pressLaunchControl (T-08-48, D-46)", () => {
       }),
     ).rejects.toThrow(/not a launcher/);
     expect(keys).toEqual([]);
+  });
+});
+
+describe("checkOnlyPressedChanged (FIX4A m4)", () => {
+  const before = readCards(BASE_HTML);
+  const withStatus = (text: string) =>
+    readCards(
+      mapCard(BASE_HTML, PROJECTS, (card) =>
+        card.replace(
+          '<p role="status" class="ccc-launch-status"></p>',
+          `<p role="status" class="ccc-launch-status">${text}</p>`,
+        ),
+      ),
+    );
+
+  it("accepts a status line that holds only the pressed launcher's not-set-up outcome", () => {
+    const after = withStatus(
+      "▲Antigravity isn't set up yet.Set it up in Settings → Launchers, then try again.",
+    );
+    expect(checkOnlyPressedChanged(before, after, "antigravity")).toEqual([]);
+  });
+
+  it("flags the Finder control's opening or success line on the status line", () => {
+    for (const text of ["Revealing uat-slice-project in Finder…", "✓ Revealed in Finder"]) {
+      const problems = checkOnlyPressedChanged(before, withStatus(text), "antigravity");
+      expect(problems.join(" "), text).toContain("Finder");
+    }
+  });
+
+  it("flags a change on any card other than the project shortcuts", () => {
+    const changed = before.map((card) =>
+      card.title === OVERVIEW_TEXT.todayTitle
+        ? { ...card, launchStatus: "Opening Antigravity…" }
+        : card,
+    );
+    expect(checkOnlyPressedChanged(before, changed, "antigravity").join(" ")).toContain(
+      OVERVIEW_TEXT.todayTitle,
+    );
+  });
+
+  it("flags a status line that already held a Finder outcome before the press", () => {
+    const stale = withStatus("✓ Revealed in Finder");
+    expect(checkOnlyPressedChanged(stale, stale, "antigravity").join(" ")).toContain("Finder");
   });
 });
 

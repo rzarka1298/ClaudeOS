@@ -71,6 +71,8 @@ export const OVERVIEW_TEXT_TABLE = {
   launcherNextStep: ["Set it up in Settings → Launchers, then try again.", LAUNCH_COPY, "literal"],
   serviceUnreachable: ["Couldn't reach the command center service.", LAUNCH_COPY, "literal"],
   toolbarRole: ["toolbar", TOOLBAR, "fragment"],
+  // The Finder control, which a launch press must never touch (FIX4A m4).
+  finderWord: ["Finder", TOOLBAR, "literal"],
 } as const satisfies CopyTable;
 
 export const OVERVIEW_CLASSES_TABLE = {

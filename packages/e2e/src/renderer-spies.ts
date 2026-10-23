@@ -43,6 +43,8 @@ interface RendererWindow {
   PerformanceObserver?: unknown;
   activeDocument?: RendererDocument;
   addEventListener?: (type: string, listener: (event: unknown) => void) => void;
+  /** Obsidian's desktop renderer has Node's `require` on the window. */
+  require?: (name: string) => unknown;
   __cccUatSpies?: Record<string, unknown>;
 }
 
@@ -296,5 +298,126 @@ export function restoreDocumentHasFocus(): boolean {
     }
   }
   ns["focusSaved"] = undefined;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// The save dialog (plan 08-20, D-12, T-08-51)
+
+/** What the stubbed save dialog answers: a path the test chose, or a cancel. */
+export type SaveDialogAnswer =
+  | { readonly kind: "picked"; readonly path: string }
+  | { readonly kind: "cancelled" };
+
+/** What the stub recorded about one call: fixed fields only, never a title or a directory. */
+export interface SaveDialogCall {
+  readonly defaultPath: string | null;
+  /** The default path is a bare file name: not empty and holding no folder separator. */
+  readonly bareDefaultName: boolean;
+  readonly filters: Array<{ name: string; extensions: string[] }>;
+  readonly properties: string[];
+}
+
+interface RemoteDialogLike {
+  showSaveDialog?: ((options?: unknown) => Promise<unknown>) | undefined;
+}
+
+/**
+ * Replaces ONLY `showSaveDialog` of Electron's remote dialog, in this window, with a function that
+ * records the options it is given and answers `answer` without opening anything. The real function
+ * and the dialog object are kept in the spy namespace (so the remote proxy stays referenced) and
+ * {@link restoreSaveDialog} puts the real one back. The runner cannot drive the native save sheet;
+ * this is how the save path is exercised against a path inside the run root (never the vault).
+ * A bad answer (not a cancel, or not an absolute `.json` path) installs nothing. Returns whether it
+ * installed, and why not.
+ */
+export function installSaveDialogStub(answer: SaveDialogAnswer): {
+  installed: boolean;
+  reason: string | null;
+} {
+  const w = window as RendererWindow;
+  const ns = w.__cccUatSpies ?? {};
+  w.__cccUatSpies = ns;
+  const valid =
+    answer !== null &&
+    typeof answer === "object" &&
+    (answer.kind === "cancelled" ||
+      (answer.kind === "picked" &&
+        typeof answer.path === "string" &&
+        answer.path.startsWith("/") &&
+        answer.path.endsWith(".json")));
+  if (!valid) return { installed: false, reason: "bad-answer" };
+  if (ns["saveDialog"] !== undefined) return { installed: false, reason: "already-installed" };
+  if (typeof w.require !== "function") return { installed: false, reason: "no-require" };
+  let dialog: RemoteDialogLike | undefined;
+  try {
+    const electron = w.require("electron") as
+      | { remote?: { dialog?: RemoteDialogLike } }
+      | undefined;
+    dialog = electron?.remote?.dialog;
+  } catch {
+    dialog = undefined;
+  }
+  if (dialog === undefined || typeof dialog.showSaveDialog !== "function") {
+    return { installed: false, reason: "no-dialog" };
+  }
+  const original = dialog.showSaveDialog;
+  const calls: SaveDialogCall[] = [];
+  // Array elements are not a naming context, so esbuild keepNames leaves this arrow alone.
+  const S = [
+    (options?: { defaultPath?: unknown; filters?: unknown; properties?: unknown }) => {
+      const defaultPath = typeof options?.defaultPath === "string" ? options.defaultPath : null;
+      const filters = Array.isArray(options?.filters)
+        ? (options.filters as Array<{ name?: unknown; extensions?: unknown }>).map((entry) => ({
+            name: String(entry?.name),
+            extensions: Array.isArray(entry?.extensions) ? entry.extensions.map(String) : [],
+          }))
+        : [];
+      const properties = Array.isArray(options?.properties)
+        ? (options.properties as unknown[]).map(String)
+        : [];
+      calls.push({
+        defaultPath,
+        bareDefaultName: defaultPath !== null && defaultPath !== "" && !defaultPath.includes("/"),
+        filters,
+        properties,
+      });
+      return Promise.resolve(
+        answer.kind === "picked" ? { canceled: false, filePath: answer.path } : { canceled: true },
+      );
+    },
+  ];
+  ns["saveDialog"] = { dialog, original, calls };
+  dialog.showSaveDialog = S[0] as RemoteDialogLike["showSaveDialog"];
+  return { installed: true, reason: null };
+}
+
+/** The calls the stub recorded since it was installed (a copy); empty when it is not installed. */
+export function readSaveDialogCalls(): SaveDialogCall[] {
+  const held = (window as RendererWindow).__cccUatSpies?.["saveDialog"] as
+    | { calls: SaveDialogCall[] }
+    | undefined;
+  return held === undefined
+    ? []
+    : held.calls.map((call) => ({
+        defaultPath: call.defaultPath,
+        bareDefaultName: call.bareDefaultName,
+        filters: call.filters.map((entry) => ({
+          name: entry.name,
+          extensions: [...entry.extensions],
+        })),
+        properties: [...call.properties],
+      }));
+}
+
+/** Puts the real `showSaveDialog` back; false when the stub was not installed. */
+export function restoreSaveDialog(): boolean {
+  const ns = (window as RendererWindow).__cccUatSpies;
+  const held = ns?.["saveDialog"] as
+    | { dialog: RemoteDialogLike; original: RemoteDialogLike["showSaveDialog"] }
+    | undefined;
+  if (ns === undefined || held === undefined) return false;
+  held.dialog.showSaveDialog = held.original;
+  ns["saveDialog"] = undefined;
   return true;
 }

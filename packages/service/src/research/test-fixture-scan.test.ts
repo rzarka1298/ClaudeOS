@@ -37,6 +37,10 @@ export const RESEARCH_VARIABLE_FILES: Readonly<
 > = {
   "packages/service/src/research/test-fixture-guard.ts": [...VARIABLES],
   "packages/e2e/src/research-uat-fixture.ts": [...VARIABLES],
+  // Plan 08-20 FIX4A M2: the runner's service environment gives EVERY sandboxed service a
+  // nonexistent `ccc-uat-<run>-nokey` research-key account, so a gesture health check can never ask
+  // the owner's Keychain about the owner's research key. It names the account variable and no other.
+  "packages/e2e/src/isolation-guards.ts": ["CCC_RESEARCH_KEY_ACCOUNT"],
 };
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -210,8 +214,9 @@ describe("the research test variables are confined to their guard (Test 2)", () 
     expect(findListProblems(RESEARCH_VARIABLE_FILES, real)).toEqual([]);
   });
 
-  it("pins exactly the guard and the runner's fixture module, no third file", () => {
+  it("pins exactly the guard, the runner's fixture module and its service environment, no fourth file", () => {
     expect(Object.keys(RESEARCH_VARIABLE_FILES).sort()).toEqual([
+      "packages/e2e/src/isolation-guards.ts",
       "packages/e2e/src/research-uat-fixture.ts",
       "packages/service/src/research/test-fixture-guard.ts",
     ]);
