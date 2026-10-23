@@ -1,0 +1,345 @@
+{
+  "_comment": "Synthetic data for the Overview slice cells (plan 08-21). The Today and Technology cards are fed through the plugin's own state mappings (todayStateFor, techIntelStateFor) from the feed answers below, so the strings on the cards are the shipped ones. Every name, title and time is invented.",
+  "now": "2026-10-22T09:00:30.000Z",
+  "zone": "UTC",
+  "feeds": {
+    "dueToday": {
+      "ready": {
+        "due": [
+          {
+            "taskId": "0mfk1a2b300000000000000a1",
+            "title": "Review release notes",
+            "dueAt": "2026-10-22T17:00:00.000Z"
+          },
+          {
+            "taskId": "0mfk1a2b300000000000000a2",
+            "title": "Plan the Q4 review",
+            "dueAt": "2026-10-22T20:00:00.000Z"
+          }
+        ],
+        "overdue": [
+          {
+            "taskId": "0mfk1a2b300000000000000a3",
+            "title": "Pay invoice",
+            "dueDate": "2026-10-20"
+          }
+        ],
+        "nextOpen": null
+      },
+      "nextopen": {
+        "due": [],
+        "overdue": [],
+        "nextOpen": {
+          "taskId": "0mfk1a2b300000000000000a4",
+          "title": "Plan the Q4 review",
+          "dueDate": "2026-10-28"
+        }
+      },
+      "empty": {
+        "due": [],
+        "overdue": [],
+        "nextOpen": null
+      }
+    },
+    "automation": {
+      "clean": {
+        "lastSuccess": {
+          "runId": "2f06800000c4b000615f20381",
+          "endedAt": "2026-10-22T06:00:00.000Z",
+          "outcome": "success",
+          "sourceCount": 6,
+          "sourceTotal": 6,
+          "reportNoteId": "2931ac00348e6c004d8c2c004"
+        },
+        "lastFailure": null,
+        "inFlight": null,
+        "latestUnknown": null,
+        "configuredSources": [],
+        "topicLabel": "Developer tooling and open-source releases"
+      },
+      "none": {
+        "lastSuccess": null,
+        "lastFailure": null,
+        "inFlight": null,
+        "latestUnknown": null,
+        "configuredSources": [],
+        "topicLabel": null
+      },
+      "failed": {
+        "lastSuccess": {
+          "runId": "2f06800000c4b000615f20381",
+          "endedAt": "2026-10-21T06:00:00.000Z",
+          "outcome": "success",
+          "sourceCount": 6,
+          "sourceTotal": 6,
+          "reportNoteId": "2931ac00348e6c004d8c2c004"
+        },
+        "lastFailure": {
+          "runId": "4c300000107030004e64a0403",
+          "endedAt": "2026-10-22T07:30:00.000Z",
+          "errorCode": "summariser-failed"
+        },
+        "inFlight": null,
+        "latestUnknown": null,
+        "configuredSources": [],
+        "topicLabel": "Developer tooling and open-source releases"
+      }
+    },
+    "reports": {
+      "ready": {
+        "latest": {
+          "readable": true,
+          "noteId": "2931ac00348e6c004d8c2c004",
+          "notePath": "global/output/research-2026-10-22-2f06800000c4b000615f20381.md",
+          "title": "Developer tooling and open-source releases — Oct 22, 2026",
+          "generatedAt": "2026-10-22T06:00:00.000Z",
+          "partial": false,
+          "sourceCount": 6,
+          "sourceTotal": 6,
+          "itemCount": 12,
+          "unavailableCount": 0
+        },
+        "unreadableCount": 0
+      },
+      "stale": {
+        "latest": {
+          "readable": true,
+          "noteId": "2931ac00348e6c004d8c2c004",
+          "notePath": "global/output/research-2026-10-20-2f06800000c4b000615f20381.md",
+          "title": "Developer tooling and open-source releases — Oct 20, 2026",
+          "generatedAt": "2026-10-20T17:00:00.000Z",
+          "partial": true,
+          "sourceCount": 5,
+          "sourceTotal": 6,
+          "itemCount": 9,
+          "unavailableCount": 1
+        },
+        "unreadableCount": 0
+      },
+      "empty": { "latest": null, "unreadableCount": 0 }
+    }
+  },
+  "cards": {
+    "projectShortcuts": {
+      "ready": {
+        "projects": [
+          {
+            "id": "Lantern",
+            "name": "Lantern",
+            "pinned": true,
+            "git": {
+              "kind": "repo",
+              "branch": "main",
+              "detached": false,
+              "dirty": false,
+              "commits": [],
+              "remote": null
+            },
+            "gitReadFailed": false,
+            "github": { "kind": "github", "label": "github.com/example/lantern", "source": "remote" },
+            "observedAt": "2026-10-22T08:58:30.000Z",
+            "openItems": null,
+            "sessionCount": null,
+            "nextTask": null
+          },
+          {
+            "id": "Quarry",
+            "name": "Quarry",
+            "pinned": false,
+            "git": {
+              "kind": "repo",
+              "branch": "index-rebuild",
+              "detached": false,
+              "dirty": true,
+              "commits": [],
+              "remote": null
+            },
+            "gitReadFailed": false,
+            "github": { "kind": "github", "label": "github.com/example/quarry", "source": "remote" },
+            "observedAt": "2026-10-22T08:58:30.000Z",
+            "openItems": null,
+            "sessionCount": null,
+            "nextTask": null
+          },
+          {
+            "id": "Tidewater",
+            "name": "Tidewater",
+            "pinned": false,
+            "git": {
+              "kind": "repo",
+              "branch": null,
+              "detached": true,
+              "dirty": false,
+              "commits": [],
+              "remote": null
+            },
+            "gitReadFailed": false,
+            "github": { "kind": "none" },
+            "observedAt": "2026-10-22T08:58:30.000Z",
+            "openItems": null,
+            "sessionCount": null,
+            "nextTask": null
+          }
+        ],
+        "launchers": {
+          "antigravity": "set-up",
+          "claude-code": { "status": "set-up", "terminalLabel": "Terminal" },
+          "claude-desktop": "set-up"
+        }
+      },
+      "empty": {
+        "projects": [],
+        "launchers": {
+          "antigravity": "not-set-up",
+          "claude-code": { "status": "not-set-up", "terminalLabel": "Terminal" },
+          "claude-desktop": "not-set-up"
+        }
+      }
+    },
+    "quickActions": {
+      "launchers": {
+        "antigravity": "set-up",
+        "claude-code": { "status": "set-up", "terminalLabel": "Terminal" },
+        "claude-desktop": "set-up"
+      }
+    },
+    "activeSessions": {
+      "ready": {
+        "sessions": [
+          {
+            "runId": "0mfk1a2b3c4d5e6f7a8b9c0d1",
+            "revision": 1,
+            "claudeSessionId": "fixture-lantern-session",
+            "state": "running",
+            "activity": null,
+            "projectId": "Lantern",
+            "projectName": "Lantern",
+            "name": "refactor-ingest",
+            "model": "Opus",
+            "effort": null,
+            "launchSource": "terminal",
+            "permissionMode": null,
+            "claudeVersion": null,
+            "startedAt": "2026-10-22T08:42:00.000Z",
+            "endedAt": null,
+            "lastActivityAt": "2026-10-22T08:59:50.000Z",
+            "subagents": { "active": 0, "lastType": null },
+            "lastError": null,
+            "linkKind": null,
+            "linkedFromRunId": null,
+            "cwdBasename": null,
+            "worktreeBasename": null,
+            "hasTranscript": false,
+            "terminateRequested": false,
+            "hasConversation": true
+          },
+          {
+            "runId": "0mfk1a2b3c4d5e6f7a8b9c0d2",
+            "revision": 1,
+            "claudeSessionId": "fixture-quarry-session",
+            "state": "waiting-for-approval",
+            "activity": null,
+            "projectId": "Quarry",
+            "projectName": "Quarry",
+            "name": "quarry-index-rebuild",
+            "model": "Sonnet",
+            "effort": null,
+            "launchSource": "terminal",
+            "permissionMode": null,
+            "claudeVersion": null,
+            "startedAt": "2026-10-22T08:18:00.000Z",
+            "endedAt": null,
+            "lastActivityAt": "2026-10-22T08:59:30.000Z",
+            "subagents": { "active": 0, "lastType": null },
+            "lastError": null,
+            "linkKind": null,
+            "linkedFromRunId": null,
+            "cwdBasename": null,
+            "worktreeBasename": null,
+            "hasTranscript": false,
+            "terminateRequested": false,
+            "hasConversation": true
+          },
+          {
+            "runId": "0mfk1a2b3c4d5e6f7a8b9c0d3",
+            "revision": 1,
+            "claudeSessionId": "fixture-tidewater-session",
+            "state": "running",
+            "activity": null,
+            "projectId": "Tidewater",
+            "projectName": "Tidewater",
+            "name": "tidewater-migration",
+            "model": "Opus",
+            "effort": null,
+            "launchSource": "terminal",
+            "permissionMode": null,
+            "claudeVersion": null,
+            "startedAt": "2026-10-22T08:54:00.000Z",
+            "endedAt": null,
+            "lastActivityAt": "2026-10-22T08:59:58.000Z",
+            "subagents": { "active": 0, "lastType": null },
+            "lastError": null,
+            "linkKind": null,
+            "linkedFromRunId": null,
+            "cwdBasename": null,
+            "worktreeBasename": null,
+            "hasTranscript": false,
+            "terminateRequested": false,
+            "hasConversation": true
+          }
+        ]
+      },
+      "empty": { "sessions": [] }
+    }
+  },
+  "cases": {
+    "overview-slice-ready": {
+      "connection": "live",
+      "today": { "tasks": "ready", "automation": "clean", "ageMs": 0 },
+      "tech": { "reports": "ready", "ageMs": 0 },
+      "others": "ready"
+    },
+    "overview-slice-nextopen": {
+      "connection": "live",
+      "today": { "tasks": "nextopen", "automation": "clean", "ageMs": 0 },
+      "tech": { "reports": "ready", "ageMs": 0 },
+      "others": "ready"
+    },
+    "overview-slice-failure": {
+      "connection": "live",
+      "today": { "tasks": "ready", "automation": "failed", "ageMs": 0 },
+      "tech": { "reports": "ready", "ageMs": 0 },
+      "others": "ready"
+    },
+    "overview-slice-empty": {
+      "connection": "live",
+      "today": { "tasks": "empty", "automation": "none", "ageMs": 0 },
+      "tech": { "reports": "empty", "ageMs": 0 },
+      "others": "empty"
+    },
+    "overview-slice-partial-stale": {
+      "connection": "live",
+      "today": { "tasks": "ready", "automation": "clean", "ageMs": 600000 },
+      "tech": { "reports": "stale", "ageMs": 0 },
+      "others": "stale"
+    },
+    "overview-slice-disconnected": {
+      "connection": "disconnected",
+      "today": { "tasks": "ready", "automation": "clean", "ageMs": 0 },
+      "tech": { "reports": "ready", "ageMs": 0 },
+      "others": "ready"
+    },
+    "overview-slice-loading": {
+      "connection": "live",
+      "today": null,
+      "tech": null,
+      "others": "loading"
+    },
+    "overview-slice-error": {
+      "connection": "live",
+      "today": { "tasks": "error", "automation": "error", "ageMs": 0 },
+      "tech": { "reports": "error", "ageMs": 0 },
+      "others": "error"
+    }
+  }
+}

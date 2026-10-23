@@ -66,11 +66,18 @@ const PRESENTATIONS = [
   "unavailable",
 ] as const;
 
-// 8 registered widgets x 8 presentations. The ids come from the registry
+// Combinations the production mapping can no longer produce, so a baseline of them would bless a
+// contract the product dropped (plan 08-21). The Today card used to ask for a Google Calendar and
+// Gmail grant; since plan 08-14 it is service-fed and always partial, and those two sources read
+// `not part of this version`, so `permission-required` is no longer a state it can be in.
+const NOT_PRODUCIBLE: ReadonlySet<string> = new Set(["today-permission-required"]);
+
+// 9 registered widgets x 8 presentations, less the combinations above. The ids come from the registry
 // itself, never a hand-typed list, so a widget a later phase registers joins
 // the matrix — and needs a baseline — automatically.
 for (const widgetId of WIDGET_IDS) {
   for (const presentation of PRESENTATIONS) {
+    if (NOT_PRODUCIBLE.has(`${widgetId}-${presentation}`)) continue;
     cell(
       `${widgetId} — ${presentation}`,
       `${widgetId}-${presentation}.png`,

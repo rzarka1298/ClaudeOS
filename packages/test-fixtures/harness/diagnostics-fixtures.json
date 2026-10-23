@@ -1,0 +1,577 @@
+{
+  "_comment": "Synthetic health answers for the Diagnostics cells (plan 08-21). Built with the plugin's own test-support builders (strict domain schema); every value is invented. src/phase8-fixtures.test.ts parses each one and builds a bundle from it with the real builder.",
+  "now": "2026-10-22T09:00:30.000Z",
+  "staleNow": "2026-10-22T09:06:30.000Z",
+  "responses": {
+    "fresh": {
+      "generatedAt": "2026-10-22T09:00:00.000Z",
+      "service": {
+        "version": "0.1.0",
+        "startedAt": "2026-10-22T06:00:00.000Z",
+        "storeSchemaVersion": 12
+      },
+      "rows": [
+        {
+          "id": "vault",
+          "status": "setup-needed",
+          "reasonCode": "vault-not-set-up",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "setupAction": {
+            "kind": "run-plugin-command",
+            "command": "vault-setup"
+          }
+        },
+        {
+          "id": "hooks",
+          "status": "setup-needed",
+          "reasonCode": "hooks-not-installed",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "setupAction": {
+            "kind": "copy-command",
+            "command": "claude-hooks-install"
+          }
+        },
+        {
+          "id": "collectors",
+          "status": "setup-needed",
+          "reasonCode": "statusline-not-installed",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "parts": [
+            {
+              "partId": "telemetry",
+              "status": "ok",
+              "reasonCode": "telemetry-ok"
+            },
+            {
+              "partId": "status-line",
+              "status": "setup-needed",
+              "reasonCode": "statusline-not-installed",
+              "setupAction": {
+                "kind": "copy-command",
+                "command": "claude-hooks-install"
+              }
+            },
+            {
+              "partId": "transcript-analysis",
+              "status": "setup-needed",
+              "reasonCode": "analysis-off",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "security"
+              }
+            },
+            {
+              "partId": "spool",
+              "status": "ok",
+              "reasonCode": "spool-clean"
+            },
+            {
+              "partId": "codex-install",
+              "status": "setup-needed",
+              "reasonCode": "codex-not-installed"
+            },
+            {
+              "partId": "codex-hooks",
+              "status": "setup-needed",
+              "reasonCode": "codex-hooks-not-installed",
+              "setupAction": {
+                "kind": "copy-command",
+                "command": "codex-hooks-install"
+              }
+            },
+            {
+              "partId": "codex-bridge",
+              "status": "setup-needed",
+              "reasonCode": "codex-bridge-not-installed",
+              "setupAction": {
+                "kind": "copy-command",
+                "command": "codex-bridge-install"
+              }
+            },
+            {
+              "partId": "codex-doctor",
+              "status": "setup-needed",
+              "reasonCode": "codex-doctor-not-run",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            }
+          ],
+          "setupAction": {
+            "kind": "copy-command",
+            "command": "claude-hooks-install"
+          }
+        },
+        {
+          "id": "scheduler",
+          "status": "setup-needed",
+          "reasonCode": "never-run",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "parts": [
+            {
+              "partId": "last-run",
+              "status": "setup-needed",
+              "reasonCode": "never-run",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "research"
+              }
+            },
+            {
+              "partId": "research-key",
+              "status": "setup-needed",
+              "reasonCode": "research-key-missing",
+              "setupAction": {
+                "kind": "copy-command",
+                "command": "research-key-setup"
+              }
+            },
+            {
+              "partId": "sources",
+              "status": "ok",
+              "reasonCode": "sources-configured",
+              "facts": {
+                "sourceCount": 5
+              }
+            }
+          ],
+          "setupAction": {
+            "kind": "go-to-section",
+            "section": "research"
+          }
+        },
+        {
+          "id": "launchers",
+          "status": "setup-needed",
+          "reasonCode": "launcher-not-set-up",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "parts": [
+            {
+              "partId": "antigravity",
+              "status": "setup-needed",
+              "reasonCode": "launcher-not-set-up",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            },
+            {
+              "partId": "claude-code",
+              "status": "setup-needed",
+              "reasonCode": "launcher-not-set-up",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            },
+            {
+              "partId": "claude-desktop",
+              "status": "setup-needed",
+              "reasonCode": "launcher-not-set-up",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            },
+            {
+              "partId": "codex",
+              "status": "setup-needed",
+              "reasonCode": "launcher-not-set-up",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            }
+          ],
+          "setupAction": {
+            "kind": "go-to-section",
+            "section": "launchers"
+          }
+        }
+      ],
+      "keychain": {
+        "installSecret": "present",
+        "researchKey": "unknown"
+      },
+      "paths": {
+        "vault": "~/ExampleVault",
+        "runtimeDir": "~/ExampleService",
+        "socket": "~/ExampleService/svc.sock"
+      },
+      "vaultFingerprint": {
+        "salt": "0123456789abcdef0123456789abcdef",
+        "digest": "2b1e56ad70088d47"
+      },
+      "counts": {
+        "projects": null,
+        "scanFolders": null,
+        "openTasks": null,
+        "reports": null
+      }
+    },
+    "mixed": {
+      "generatedAt": "2026-10-22T09:00:00.000Z",
+      "service": {
+        "version": "0.1.0",
+        "startedAt": "2026-10-22T06:00:00.000Z",
+        "storeSchemaVersion": 12
+      },
+      "rows": [
+        {
+          "id": "vault",
+          "status": "degraded",
+          "reasonCode": "managed-tree-incomplete",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "setupAction": {
+            "kind": "run-plugin-command",
+            "command": "vault-setup"
+          }
+        },
+        {
+          "id": "hooks",
+          "status": "failing",
+          "reasonCode": "hook-runtime-missing",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "setupAction": {
+            "kind": "copy-command",
+            "command": "claude-hooks-install"
+          }
+        },
+        {
+          "id": "collectors",
+          "status": "degraded",
+          "reasonCode": "codex-bridge-outdated",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "parts": [
+            {
+              "partId": "telemetry",
+              "status": "ok",
+              "reasonCode": "telemetry-ok"
+            },
+            {
+              "partId": "status-line",
+              "status": "unknown",
+              "reasonCode": "statusline-awaiting-report"
+            },
+            {
+              "partId": "transcript-analysis",
+              "status": "setup-needed",
+              "reasonCode": "analysis-off",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "security"
+              }
+            },
+            {
+              "partId": "spool",
+              "status": "degraded",
+              "reasonCode": "spool-dropped-records",
+              "facts": {
+                "dropCount": 3,
+                "lastDropAt": "2026-10-22T08:30:00.000Z"
+              }
+            },
+            {
+              "partId": "codex-install",
+              "status": "ok",
+              "reasonCode": "codex-installed"
+            },
+            {
+              "partId": "codex-hooks",
+              "status": "unknown",
+              "reasonCode": "codex-hooks-no-events"
+            },
+            {
+              "partId": "codex-bridge",
+              "status": "degraded",
+              "reasonCode": "codex-bridge-outdated",
+              "setupAction": {
+                "kind": "copy-command",
+                "command": "codex-bridge-install"
+              }
+            },
+            {
+              "partId": "codex-doctor",
+              "status": "ok",
+              "reasonCode": "codex-doctor-ok"
+            }
+          ],
+          "setupAction": {
+            "kind": "copy-command",
+            "command": "codex-bridge-install"
+          }
+        },
+        {
+          "id": "scheduler",
+          "status": "unknown",
+          "reasonCode": "research-key-check-failed",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "parts": [
+            {
+              "partId": "last-run",
+              "status": "ok",
+              "reasonCode": "last-run-succeeded",
+              "facts": {
+                "lastSuccessAt": "2026-10-22T08:00:00.000Z"
+              }
+            },
+            {
+              "partId": "research-key",
+              "status": "unknown",
+              "reasonCode": "research-key-check-failed"
+            },
+            {
+              "partId": "sources",
+              "status": "ok",
+              "reasonCode": "sources-configured",
+              "facts": {
+                "sourceCount": 5
+              }
+            }
+          ]
+        },
+        {
+          "id": "launchers",
+          "status": "setup-needed",
+          "reasonCode": "launcher-not-set-up",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "parts": [
+            {
+              "partId": "antigravity",
+              "status": "setup-needed",
+              "reasonCode": "launcher-not-set-up",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            },
+            {
+              "partId": "claude-code",
+              "status": "setup-needed",
+              "reasonCode": "launcher-not-set-up",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            },
+            {
+              "partId": "claude-desktop",
+              "status": "setup-needed",
+              "reasonCode": "launcher-not-set-up",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            },
+            {
+              "partId": "codex",
+              "status": "setup-needed",
+              "reasonCode": "launcher-not-set-up",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            },
+            {
+              "partId": "terminal",
+              "status": "setup-needed",
+              "reasonCode": "launcher-not-set-up",
+              "setupAction": {
+                "kind": "go-to-section",
+                "section": "launchers"
+              }
+            }
+          ],
+          "setupAction": {
+            "kind": "go-to-section",
+            "section": "launchers"
+          }
+        }
+      ],
+      "keychain": {
+        "installSecret": "present",
+        "researchKey": "unknown"
+      },
+      "paths": {
+        "vault": "~/ExampleVault",
+        "runtimeDir": "~/ExampleService",
+        "socket": "~/ExampleService/svc.sock"
+      },
+      "vaultFingerprint": {
+        "salt": "0123456789abcdef0123456789abcdef",
+        "digest": "2b1e56ad70088d47"
+      },
+      "counts": {
+        "projects": null,
+        "scanFolders": null,
+        "openTasks": null,
+        "reports": null
+      }
+    },
+    "ok": {
+      "generatedAt": "2026-10-22T09:00:00.000Z",
+      "service": {
+        "version": "0.1.0",
+        "startedAt": "2026-10-22T06:00:00.000Z",
+        "storeSchemaVersion": 12
+      },
+      "rows": [
+        {
+          "id": "vault",
+          "status": "ok",
+          "reasonCode": "vault-ready",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live"
+        },
+        {
+          "id": "hooks",
+          "status": "ok",
+          "reasonCode": "hooks-receiving",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live"
+        },
+        {
+          "id": "collectors",
+          "status": "ok",
+          "reasonCode": "statusline-reporting",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "parts": [
+            {
+              "partId": "telemetry",
+              "status": "ok",
+              "reasonCode": "telemetry-ok"
+            },
+            {
+              "partId": "status-line",
+              "status": "ok",
+              "reasonCode": "statusline-reporting"
+            },
+            {
+              "partId": "transcript-analysis",
+              "status": "ok",
+              "reasonCode": "analysis-on"
+            },
+            {
+              "partId": "spool",
+              "status": "ok",
+              "reasonCode": "spool-clean"
+            },
+            {
+              "partId": "codex-install",
+              "status": "ok",
+              "reasonCode": "codex-installed"
+            },
+            {
+              "partId": "codex-hooks",
+              "status": "ok",
+              "reasonCode": "codex-hooks-receiving"
+            },
+            {
+              "partId": "codex-bridge",
+              "status": "ok",
+              "reasonCode": "codex-bridge-ready"
+            },
+            {
+              "partId": "codex-doctor",
+              "status": "ok",
+              "reasonCode": "codex-doctor-ok"
+            }
+          ]
+        },
+        {
+          "id": "scheduler",
+          "status": "ok",
+          "reasonCode": "last-run-succeeded",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "parts": [
+            {
+              "partId": "last-run",
+              "status": "ok",
+              "reasonCode": "last-run-succeeded",
+              "facts": {
+                "lastSuccessAt": "2026-10-22T08:00:00.000Z"
+              }
+            },
+            {
+              "partId": "research-key",
+              "status": "ok",
+              "reasonCode": "research-key-present"
+            },
+            {
+              "partId": "sources",
+              "status": "ok",
+              "reasonCode": "sources-configured",
+              "facts": {
+                "sourceCount": 5
+              }
+            }
+          ],
+          "facts": {
+            "lastSuccessAt": "2026-10-22T08:00:00.000Z"
+          }
+        },
+        {
+          "id": "launchers",
+          "status": "ok",
+          "reasonCode": "launcher-ready",
+          "checkedAt": "2026-10-22T09:00:00.000Z",
+          "freshness": "live",
+          "parts": [
+            {
+              "partId": "antigravity",
+              "status": "ok",
+              "reasonCode": "launcher-ready"
+            },
+            {
+              "partId": "claude-code",
+              "status": "ok",
+              "reasonCode": "launcher-ready"
+            },
+            {
+              "partId": "claude-desktop",
+              "status": "ok",
+              "reasonCode": "launcher-ready"
+            },
+            {
+              "partId": "codex",
+              "status": "ok",
+              "reasonCode": "launcher-ready"
+            }
+          ]
+        }
+      ],
+      "keychain": {
+        "installSecret": "present",
+        "researchKey": "present"
+      },
+      "paths": {
+        "vault": "~/ExampleVault",
+        "runtimeDir": "~/ExampleService",
+        "socket": "~/ExampleService/svc.sock"
+      },
+      "vaultFingerprint": {
+        "salt": "0123456789abcdef0123456789abcdef",
+        "digest": "2b1e56ad70088d47"
+      },
+      "counts": {
+        "projects": null,
+        "scanFolders": null,
+        "openTasks": null,
+        "reports": null
+      }
+    }
+  }
+}

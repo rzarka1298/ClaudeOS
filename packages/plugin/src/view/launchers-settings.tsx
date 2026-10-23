@@ -1,5 +1,5 @@
 import type { DetectedApp, LaunchAction, LauncherConfigView } from "@ccc/domain";
-import { BundleIdSchema } from "@ccc/domain";
+import { BundleIdSchema } from "@ccc/domain/browser";
 import type { VNode } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import type { ConnectionState } from "../connection-state.js";

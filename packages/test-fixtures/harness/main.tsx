@@ -87,7 +87,10 @@ import { render } from "preact";
 import fixtureFile from "../src/widget-fixtures.json";
 import approvalFixtureFile from "./approval-fixtures.json";
 import { CodexCell, isCodexView } from "./codex-cells";
+import { DiagnosticsCell, isDiagnosticsView } from "./diagnostics-cells";
+import { isOverviewView, OverviewCell } from "./overview-cells";
 import { isResearchView, ResearchCell } from "./research-cells";
+import { isSettingsView, SettingsCell } from "./settings-cells";
 import taskFixtureFile from "./task-fixtures.json";
 
 // ---------------------------------------------------------------------------
@@ -1742,6 +1745,13 @@ function HarnessCell() {
 
   // The Research destination cells (plan 07-16) likewise live in their own module.
   if (isResearchView(view)) return <ResearchCell params={params} />;
+
+  // The Settings destination cells (plan 08-21) likewise live in their own module.
+  if (isSettingsView(view)) return <SettingsCell params={params} />;
+
+  // The Diagnostics states and the Overview slice cells (plan 08-21) do too.
+  if (isDiagnosticsView(view)) return <DiagnosticsCell params={params} />;
+  if (isOverviewView(view)) return <OverviewCell params={params} />;
 
   if ((view === "tasks" || view === "projects") && isTasksCase(params.get("case") ?? "")) {
     const width = params.get("width") ?? "full";

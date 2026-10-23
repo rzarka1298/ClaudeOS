@@ -59,12 +59,22 @@ const CONTRAST_SPEC_PATH = join(
   "visual",
   "contrast.spec.ts",
 );
+/** The Phase 8 matrix (plan 08-21): a sixth spec file over the same harness page, under the
+ * identical purity contract. */
+const SETTINGS_SPEC_PATH = join(
+  REPO_ROOT,
+  "packages",
+  "test-fixtures",
+  "visual",
+  "settings.spec.ts",
+);
 const SPEC_PATHS = [
   ["widgets.spec.ts", SPEC_PATH],
   ["agent-runs.spec.ts", AGENT_RUNS_SPEC_PATH],
   ["codex.spec.ts", CODEX_SPEC_PATH],
   ["research.spec.ts", RESEARCH_SPEC_PATH],
   ["contrast.spec.ts", CONTRAST_SPEC_PATH],
+  ["settings.spec.ts", SETTINGS_SPEC_PATH],
 ] as const;
 
 /** The exact set of modules the visual spec may import. */
@@ -95,6 +105,26 @@ const CODEX_FIXTURE_PATH = join(
 const RESEARCH_CELLS_PATH = join(HARNESS_DIR, "research-cells.tsx");
 const RESEARCH_FIXTURE_PATH = join(HARNESS_DIR, "research-fixtures.json");
 
+/** The Phase 8 harness modules (plan 08-21): Settings, Diagnostics and the Overview slice. Each may
+ * import preact, the plugin barrel and its own synthetic fixture file, nothing else (T-08-52). */
+const PHASE8_CELLS = [
+  { file: "settings-cells.tsx", fixture: "./settings-fixtures.json", siblings: [] },
+  // The Diagnostics cells reuse the Settings frame and its fixture seams from the sibling module,
+  // itself held to the same three imports.
+  {
+    file: "diagnostics-cells.tsx",
+    fixture: "./diagnostics-fixtures.json",
+    siblings: ["./settings-cells"],
+  },
+  { file: "overview-cells.tsx", fixture: "./overview-fixtures.json", siblings: [] },
+].map((cells) => ({
+  file: cells.file,
+  path: join(HARNESS_DIR, cells.file),
+  fixtureSpecifier: cells.fixture,
+  fixturePath: join(HARNESS_DIR, cells.fixture.slice(2)),
+  siblings: cells.siblings as readonly string[],
+}));
+
 /** The exact set of modules the harness entry may import (order irrelevant).
  * `./task-fixtures.json` was added deliberately by plan 06-22 for the Tasks and
  * project tasks cells: a third synthetic-only fixture file, validated against
@@ -106,13 +136,18 @@ const RESEARCH_FIXTURE_PATH = join(HARNESS_DIR, "research-fixtures.json");
  * 05.1-27: the one delegating import for the Codex card, toolbar and pair-launch
  * cells; that module's own imports are pinned separately below. `./research-cells`
  * was added deliberately by plan 07-16: the one delegating import for the Research
- * destination cells; its own imports are pinned separately below. Nothing else was
- * added to the set. */
+ * destination cells; its own imports are pinned separately below. `./settings-cells`,
+ * `./diagnostics-cells` and `./overview-cells` were added deliberately by plan 08-21: the
+ * delegating imports for the Settings destination, the Diagnostics states and the Overview slice;
+ * their own imports are pinned by `PHASE8_CELLS` above. Nothing else was added to the set. */
 const ALLOWED_IMPORTS = [
   "../src/widget-fixtures.json",
   "./approval-fixtures.json",
   "./codex-cells",
+  "./diagnostics-cells",
+  "./overview-cells",
   "./research-cells",
+  "./settings-cells",
   "./task-fixtures.json",
   "@ccc/plugin",
   "preact",
@@ -172,7 +207,7 @@ function importSpecifiers(source: string): string[] {
 }
 
 describe("visual harness purity (PRIV-04 layer 1, T-03-03)", () => {
-  it("imports exactly preact, @ccc/plugin, the three synthetic fixture files and the Codex and Research cells modules", () => {
+  it("imports exactly preact, @ccc/plugin, the three synthetic fixture files and the Codex, Research, Settings, Diagnostics and Overview cells modules", () => {
     const specifiers = importSpecifiers(readIfPresent(MAIN_PATH)).filter(
       (specifier) => !TOLERATED_IMPORTS.has(specifier),
     );
@@ -257,6 +292,39 @@ describe("visual harness purity (PRIV-04 layer 1, T-03-03)", () => {
     ).toEqual([]);
     expect(code.filter((line) => line.includes("obsidian"))).toEqual([]);
     expect(code.filter((line) => line.includes("@ccc/service-api-client"))).toEqual([]);
+  });
+
+  describe.each(PHASE8_CELLS)("$file (plan 08-21, T-08-52)", (cells) => {
+    it("imports exactly preact, @ccc/plugin, its own synthetic fixture file and (Diagnostics only) the Settings cells", () => {
+      expect(existsSync(cells.path)).toBe(true);
+      const specifiers = importSpecifiers(readIfPresent(cells.path)).filter(
+        (specifier) => !TOLERATED_IMPORTS.has(specifier),
+      );
+
+      expect(specifiers).toEqual(
+        [cells.fixtureSpecifier, "@ccc/plugin", "preact", ...cells.siblings].sort(),
+      );
+      expect(resolve(dirname(cells.path), cells.fixtureSpecifier)).toBe(cells.fixturePath);
+    });
+
+    it("names no network call, no Obsidian API and no companion-service client", () => {
+      expect(existsSync(cells.path)).toBe(true);
+      const code = codeLines(readIfPresent(cells.path));
+
+      expect(code.filter((line) => /\bfetch\s*\(/.test(line))).toEqual([]);
+      expect(
+        code.filter((line) => /\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b/.test(line)),
+      ).toEqual([]);
+      expect(code.filter((line) => line.includes("obsidian"))).toEqual([]);
+      expect(code.filter((line) => line.includes("@ccc/service-api-client"))).toEqual([]);
+    });
+
+    it("has a fixture file that is plain data: no remote reference of any kind", () => {
+      const fixtureText = readIfPresent(cells.fixturePath);
+
+      expect(fixtureText.length).toBeGreaterThan(0);
+      expect(fixtureText.match(/[a-z][a-z0-9+.-]*:\/\//gi)).toBeNull();
+    });
   });
 
   it("reads the same fixture file the determinism test pins", () => {
