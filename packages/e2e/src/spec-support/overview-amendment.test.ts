@@ -27,12 +27,13 @@ function phaseFile(prefix: string, name: string): string {
  * digest was taken from that commit's copy in the red step, so it pins every line the amendment
  * may not touch.
  */
-const BASE_DIGEST = "e11eee93595a1c54b18514ffddf9a399721c2a884493dbfc0cf4a6e5501c3265";
+const BASE_DIGEST = "7412d37edc718af2562b643466981f7c5eca5e29092511a095d5601d6f1a21a3";
 
 /**
  * 07-UAT.md without the lines the amendment may change or that other tools own: item 20's heading
  * and its `expected` block, every `result:` and `auto-result:` line (the owner's and the runner's)
- * and the front matter's `updated:` line. What is left must equal the base copy byte for byte.
+ * and the front matter's `updated:` line, and the Summary's run counters (`passed`, `pending`, `auto-passed` and the other
+ * counts the runner and ratification rewrite). What is left must equal the base copy byte for byte.
  */
 function normalise(text: string): string {
   const out: string[] = [];
@@ -53,6 +54,13 @@ function normalise(text: string): string {
       out.push(line);
       continue;
     }
+    // The Summary's run counters are rewritten by the runner and by ratification.
+    if (
+      /^(passed|pending|failed|skipped|issues|blocked|auto-passed|auto-failed|auto-pending):/.test(
+        line,
+      )
+    )
+      continue;
     const heading = /^### (\d+)\. /.exec(line);
     if (heading !== null) {
       inItem20 = heading[1] === "20";
