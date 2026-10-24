@@ -50,7 +50,6 @@ import {
 import {
   asHealthBrowser,
   CHECK_CACHE_GAP_MS,
-  checkCachedReopen,
   checkChecked,
   checkFreshInstall,
   checkOffers,
@@ -73,9 +72,10 @@ import {
   readSection,
   recheck,
   rendererPressRunChecksTwice,
-  reopenDiagnostics,
+  reopenCachedWithRetry,
   rowOf,
   settingsWithAllHooksDisabled,
+  waitForCheckedAnswer,
   waitForHealth,
   waitForLive,
   withRestore,
@@ -94,6 +94,7 @@ import {
   startResearchEnvironment,
   watchDescendants,
 } from "../src/spec-support/research-support.js";
+import { installSessionGuard, type SessionGuardHooks } from "../src/spec-support/session-guard.js";
 import {
   asTasksBrowser,
   recordResults,
@@ -116,6 +117,10 @@ describe("health drills", function () {
   const clock = newCheckClock();
 
   recordResults(loadRunContext(), (hook) => afterEach(hook as Mocha.Func));
+  // A closed Obsidian stops the file with one clear message, not a cascade of timeouts (FIX8).
+  installSessionGuard({ beforeEach, afterEach } as unknown as SessionGuardHooks, () =>
+    browser.execute(() => true),
+  );
 
   const context = loadRunContext();
   const paths = context.paths;
@@ -259,21 +264,31 @@ describe("health drills", function () {
       intervalMs: 50,
       describe: "the previous answer to be older than the answer cache",
     });
+    const pressedAt = Date.now();
     const presses = await browser.execute(rendererPressRunChecksTwice, HEALTH_DOM_CONFIG);
     expect(checkRunChecksPresses(presses)).toEqual([]);
 
-    // The line then reads "Checked just now." and the button is free again.
-    const first = await waitForHealth(hb, checkChecked, "the finished check", {
-      timeoutMs: 30_000,
-      intervalMs: 100,
+    // The line then reads "Checked just now." and the button is free again. The service caches an
+    // answer from when its run finished: the clock records both when the page showed it and when the
+    // last look without it began (FIX8), which bound the answer's age from either side.
+    const first = await waitForCheckedAnswer(hb, clock, checkChecked, {
+      pressedAt,
+      wait: { timeoutMs: 30_000, intervalMs: 100 },
     });
     expect(checkChecked(first)).toEqual([]);
-    // The service caches an answer from when its run finished, which is no later than now (FIX6A M2).
-    clock.lastPressAt = Date.now();
 
     // Reopening Diagnostics within two seconds shows the rows as Cached with the same checked time.
-    const second = await reopenDiagnostics(hb, { timeoutMs: 5_000, intervalMs: 100 });
-    expect(checkCachedReopen(first, second)).toEqual([]);
+    // A reopening that came inside the window must read Cached (no loosening); one that the machine
+    // delayed past the window is retried (press, wait out the cache, reopen at once), at most 3 times.
+    const reopened = await reopenCachedWithRetry(hb, clock, first, {
+      maxAttempts: 3,
+      reopenWait: { timeoutMs: 5_000, intervalMs: 100 },
+    });
+    // Printed so a run shows how close the reopening came to the window and whether it was retried.
+    console.log(
+      `[FIX8 item 30] reopen attempts=${reopened.attempts} spans(ms from the answer)=${reopened.spansMs.join(",")}`,
+    );
+    expect(reopened.problems).toEqual([]);
   });
 
   it("[08-UAT#23] Service stopped and restarted", async () => {

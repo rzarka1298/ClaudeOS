@@ -49,6 +49,7 @@ import {
   checkSaveDialogCall,
   checkSavedFile,
   checkSettled,
+  copyBundleWithRetry,
   findRawErrorText,
   hostileProjectNames,
   newCheckClock,
@@ -61,6 +62,7 @@ import {
   reopenDiagnostics,
   waitForBundle,
   waitForHealth,
+  waitForLive,
   withRestore,
 } from "../src/spec-support/health-support.js";
 import {
@@ -72,6 +74,7 @@ import {
   type ResearchEnvironment,
   startResearchEnvironment,
 } from "../src/spec-support/research-support.js";
+import { installSessionGuard, type SessionGuardHooks } from "../src/spec-support/session-guard.js";
 import { asTasksBrowser, recordResults, WAIT } from "../src/spec-support/tasks-support.js";
 
 const tb = asTasksBrowser(browser);
@@ -83,6 +86,10 @@ describe("bundle export", function () {
   const clock = newCheckClock();
 
   recordResults(loadRunContext(), (hook) => afterEach(hook as Mocha.Func));
+  // A closed Obsidian stops the file with one clear message, not a cascade of timeouts (FIX8).
+  installSessionGuard({ beforeEach, afterEach } as unknown as SessionGuardHooks, () =>
+    browser.execute(() => true),
+  );
 
   const context = loadRunContext();
   const paths = context.paths;
@@ -93,6 +100,10 @@ describe("bundle export", function () {
   before(async () => {
     await assertSandboxConnected(tb, { expectedSocketPath: context.socketPath });
     env = await startResearchEnvironment();
+    // The environment restarted the service and the plugin reconnects a moment later, which reloads
+    // Diagnostics. Let that happen now, not under the first press of item 31 (FIX8).
+    await openDiagnostics(hb);
+    await waitForLive(hb);
   });
 
   after(async () => {
@@ -131,18 +142,27 @@ describe("bundle export", function () {
     return openBundlePreview(hb);
   }
 
-  /** Presses Copy bundle and returns the text the clipboard spy recorded. */
-  async function copied(): Promise<string> {
+  /**
+   * Presses Copy bundle on `block` and returns the text the clipboard spy recorded with the block
+   * that was on the page for the press that worked. If the page reloaded under a press (the research
+   * environment restarts the service and the plugin reconnects a moment later) and nothing was
+   * copied, `reoffer` brings the block back and the press is made again (FIX8).
+   */
+  async function copied(
+    block: BundleRead,
+    reoffer: () => Promise<BundleRead>,
+  ): Promise<{ block: BundleRead; text: string; attempts: number }> {
     await hb.execute(rendererInstallSpies);
-    await hb.execute(rendererClearSpies);
-    await pressBundleButton(hb, HEALTH_TEXT.copyBundle);
-    await pollUntil(async () => (await readHealth(hb)).statusLine === HEALTH_TEXT.bundleCopied, {
-      ...WAIT.short,
-      describe: "the copied notice",
+    return copyBundleWithRetry({
+      block,
+      reoffer,
+      press: async () => {
+        await hb.execute(rendererClearSpies);
+        await pressBundleButton(hb, HEALTH_TEXT.copyBundle);
+      },
+      clipboard: async () => (await hb.execute(rendererReadSpies)).clipboard.at(-1),
+      noticeShown: async () => (await readHealth(hb)).statusLine === HEALTH_TEXT.bundleCopied,
     });
-    const text = (await hb.execute(rendererReadSpies)).clipboard.at(-1);
-    if (text === undefined) throw new Error("Copy bundle wrote nothing to the clipboard.");
-    return text;
   }
 
   /** Presses Save bundle with the dialog stubbed to `answer`; restores the dialog in a finally. */
@@ -183,8 +203,11 @@ describe("bundle export", function () {
     // Save is there; when it is disabled it says why (the native sheet is the owner's item 35).
     expect(checkSaveButton(block)).toEqual([]);
 
-    const preview = block.preview?.text ?? "";
-    const text = await copied();
+    const copy = await copied(block, offered);
+    // Printed so a run shows whether a press landed on a reloading page and was repeated.
+    console.log(`[FIX8 item 31] copy attempts=${copy.attempts}`);
+    const text = copy.text;
+    const preview = copy.block.preview?.text ?? "";
     expect(bundleTextsEqual(preview, text)).toEqual([]);
     // The preview did not move under the copy.
     const after = await readBundle(hb);
@@ -240,8 +263,15 @@ describe("bundle export", function () {
         const block = await openBundlePreview(hb);
         expect(checkBundleOffered(block)).toEqual([]);
 
-        const text = await copied();
-        expect(bundleTextsEqual(block.preview?.text ?? "", text)).toEqual([]);
+        const copy = await copied(block, async () => {
+          await openDiagnostics(hb);
+          await reopenDiagnostics(hb);
+          clock.lastPressAt = Date.now();
+          await recheck(hb, clock);
+          return openBundlePreview(hb);
+        });
+        const text = copy.text;
+        expect(bundleTextsEqual(copy.block.preview?.text ?? "", text)).toEqual([]);
         const facts = leakFacts({
           projectNames: [...hostile.projectNames, ...hostile.displayNames],
           folderBasenames: [...hostile.folderBasenames, ...hostile.folders],

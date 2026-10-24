@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertSandboxConnected,
   type DriverBrowser,
+  isSessionLostError,
   parseCountInWords,
   pollUntil,
   runPluginCommand,
@@ -20,6 +21,50 @@ function fakeClock() {
     },
   };
 }
+
+describe("session loss (FIX8)", () => {
+  const LOST =
+    "invalid session id: session deleted as the browser has closed the connection\nfrom disconnected: not connected to DevTools";
+
+  it("recognises the errors a closed Obsidian produces, and nothing else", () => {
+    expect(isSessionLostError(new Error(LOST))).toBe(true);
+    expect(isSessionLostError(new Error("invalid session id"))).toBe(true);
+    expect(isSessionLostError("no such window: target window already closed")).toBe(true);
+    expect(isSessionLostError(new Error("element not interactable"))).toBe(false);
+    expect(isSessionLostError(new Error("Timed out after 15000ms"))).toBe(false);
+    expect(isSessionLostError(undefined)).toBe(false);
+  });
+
+  it("pollUntil stops at once with a clear message when the session is gone, not after the timeout", async () => {
+    const clock = fakeClock();
+    let calls = 0;
+    await expect(
+      pollUntil(
+        () => {
+          calls += 1;
+          throw new Error(LOST);
+        },
+        { timeoutMs: 15_000, intervalMs: 250, describe: "the copied notice", ...clock },
+      ),
+    ).rejects.toThrow(/Obsidian closed.*the copied notice/s);
+    expect(calls).toBe(1);
+    expect(clock.sleeps).toEqual([]);
+  });
+
+  it("pollUntil still treats an ordinary throw as not ready yet", async () => {
+    const clock = fakeClock();
+    let calls = 0;
+    const value = await pollUntil(
+      () => {
+        calls += 1;
+        if (calls < 3) throw new Error("element not interactable");
+        return "ok";
+      },
+      { timeoutMs: 15_000, intervalMs: 250, describe: "x", ...clock },
+    );
+    expect(value).toBe("ok");
+  });
+});
 
 describe("pollUntil (Test 6)", () => {
   it("resolves with the first truthy value, polling at the interval", async () => {
