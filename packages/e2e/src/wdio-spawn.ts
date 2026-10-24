@@ -1,7 +1,8 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { scrubInheritedEnv } from "./isolation-guards.js";
 import type { SandboxHandle, Stoppable } from "./sandbox.js";
 
@@ -115,21 +116,44 @@ const CAFFEINATE = "/usr/bin/caffeinate";
 
 /**
  * What keeps the display awake while a live run drives Obsidian (FIX8). When the display goes to
- * sleep, macOS takes the display away from Obsidian's window and Obsidian exits within a second or
- * two, mid-case, with no crash report: every unexplained "invalid session id" death of the Phase 8
- * runs came one to two seconds after a `kCGSDisplayWillSleep` in the system log. The first command
- * wakes a sleeping display (`-u`, 3 seconds); the second holds the display and the system awake
- * (`-d -i`) until the wdio process exits (`-w`). Only macOS has the tool; elsewhere nothing runs.
+ * sleep, Obsidian exits within a second or two, mid-case, with no crash report: every unexplained
+ * "invalid session id" death of the Phase 8 runs came one to two seconds after a
+ * `kCGSDisplayWillSleep` in the system log. This holds the display and the system awake (`-d -i`)
+ * until the wdio process exits (`-w`), which covers an ordinary idle display sleep. It does NOT
+ * cover a closed lid (see `lidClosedWarning`): that turns the display off whatever is asserted.
+ * Only macOS has the tool; elsewhere nothing runs.
  */
 export function keepAwakeCommands(
   wdioPid: number | undefined,
   platform: NodeJS.Platform = process.platform,
 ): Array<{ file: string; args: string[] }> {
   if (platform !== "darwin" || wdioPid === undefined) return [];
-  return [
-    { file: CAFFEINATE, args: ["-u", "-t", "3"] },
-    { file: CAFFEINATE, args: ["-d", "-i", "-w", String(wdioPid)] },
-  ];
+  return [{ file: CAFFEINATE, args: ["-d", "-i", "-w", String(wdioPid)] }];
+}
+
+/** True when `ioreg -r -k AppleClamshellState` output says the lid is closed. */
+export function parseLidClosed(ioregText: string): boolean {
+  return /"AppleClamshellState"\s*=\s*Yes/.test(ioregText);
+}
+
+/** What a run prints when the lid is closed: the display then turns off at every wake and Obsidian dies with it. */
+export const LID_CLOSED_WARNING =
+  "WARNING: the Mac's lid is closed. Each time the display wakes (any notification) it turns off again within about 10 seconds, and Obsidian exits when it does, ending the live session mid-case. Open the lid, or attach an external display and use clamshell mode, before a live run.";
+
+async function detectLidClosed(platform: NodeJS.Platform): Promise<boolean> {
+  if (platform !== "darwin") return false;
+  try {
+    const { stdout } = await promisify(execFile)("/usr/sbin/ioreg", [
+      "-r",
+      "-k",
+      "AppleClamshellState",
+      "-d",
+      "1",
+    ]);
+    return parseLidClosed(stdout);
+  } catch {
+    return false;
+  }
 }
 
 /** Starts the keep-awake commands; returns a stop for the holders. A tool that cannot start is ignored. */
@@ -171,6 +195,9 @@ export interface SpawnWdioOptions {
   spawnFn?: typeof spawn;
   locate?: () => string;
   platform?: NodeJS.Platform;
+  /** Whether the lid is closed (real `ioreg` check by default); a warning is printed when it is. */
+  lidClosed?: () => Promise<boolean>;
+  warn?: (message: string) => void;
 }
 
 /** Runs wdio to completion; the child is ledgered before this resolves. */
@@ -178,6 +205,10 @@ export async function spawnWdio(options: SpawnWdioOptions): Promise<WdioResult> 
   const wdioBin = (options.locate ?? locateWdioBin)();
   const argv = buildWdioArgv(wdioBin, options.configPath, options.extraArgs ?? []);
   const env = buildWdioProcessEnv(options.inherited ?? process.env, options.wdioEnv);
+  const platform = options.platform ?? process.platform;
+  if (await (options.lidClosed ?? (() => detectLidClosed(platform)))()) {
+    (options.warn ?? ((message: string) => console.error(message)))(LID_CLOSED_WARNING);
+  }
   const spawnFn = options.spawnFn ?? spawn;
   const child = spawnFn(process.execPath, argv, {
     env,
@@ -185,7 +216,7 @@ export async function spawnWdio(options: SpawnWdioOptions): Promise<WdioResult> 
     stdio: "inherit",
     shell: false,
   });
-  const stopKeepAwake = startKeepAwake(spawnFn, child.pid, options.platform ?? process.platform);
+  const stopKeepAwake = startKeepAwake(spawnFn, child.pid, platform);
   const done = new Promise<WdioResult>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (exitCode, signal) => resolve({ exitCode, signal }));
