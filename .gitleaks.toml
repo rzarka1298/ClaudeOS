@@ -43,4 +43,7 @@ paths = [
 ]
 regexes = [
   '''/Users/USERNAME/''',
+  # The research UAT fixture's synthetic query-string session value (packages/e2e/src/research-uat-fixture.ts,
+  # served only from an .example.invalid host): fixed `uatq-` prefix plus eight hex digits, never a real credential.
+  '''uatq-[0-9a-f]{8}''',
 ]
