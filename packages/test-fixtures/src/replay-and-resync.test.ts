@@ -71,29 +71,33 @@ function tokenGetter(socketPath: string): () => Promise<string> {
 
 /**
  * Opens the raw event stream (optionally carrying a last-event header) and
- * resolves with the first record matching `predicate`, then tears the
- * request down. Task 2's own replay/resync end-to-end proof needs to set
- * `X-Last-Event-Id` explicitly on a fresh connection — `createEventClient`
+ * resolves with every schema-valid event seen, in order, up to and including
+ * the first record matching `predicate`, then tears the request down.
+ * Task 2's own replay/resync end-to-end proof needs to set
+ * `X-Last-Event-Id` explicitly on a fresh connection -- `createEventClient`
  * doesn't expose that yet (it tracks its own `lastEventId` internally,
  * Task 3), so this is a minimal, test-only stand-in for exactly that one
  * capability, using the same wire format the production parser reads.
  *
  * A predicate (rather than "just the first record") is required because
  * Task 2 makes every connection carrying no last-event header resolve to
- * resync (`resolveReplayMode`) — including a client's very first-ever
+ * resync (`resolveReplayMode`) -- including a client's very first-ever
  * connect. The first record on such a connection is always the
  * `stream.resync` control event, not the first real `service.heartbeat`;
  * callers that want the first heartbeat specifically must filter for it.
+ * The timeout rejection lists the sequence seen so far so a failure names
+ * what actually arrived.
  */
-function waitForMatchingEvent(
+function collectUntilMatch(
   socketPath: string,
   token: string,
   predicate: (event: ServiceEvent) => boolean,
   lastEventId?: number,
   timeoutMs = 5000,
-): Promise<ServiceEvent> {
+): Promise<ServiceEvent[]> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    const seen: ServiceEvent[] = [];
     const headers: Record<string, string> = { [AUTH_HEADER]: `Bearer ${token}` };
     if (lastEventId !== undefined) {
       headers[LAST_EVENT_ID_HEADER] = String(lastEventId);
@@ -113,12 +117,15 @@ function waitForMatchingEvent(
           if (dataLine) {
             const parsed: unknown = JSON.parse(dataLine[1] as string);
             const result = ServiceEventSchema.safeParse(parsed);
-            if (result.success && predicate(result.data)) {
-              settled = true;
-              clearTimeout(timer);
-              req.destroy();
-              resolve(result.data);
-              return;
+            if (result.success) {
+              seen.push(result.data);
+              if (predicate(result.data)) {
+                settled = true;
+                clearTimeout(timer);
+                req.destroy();
+                resolve(seen);
+                return;
+              }
             }
           }
           idx = buffer.indexOf("\n\n");
@@ -138,9 +145,126 @@ function waitForMatchingEvent(
       if (settled) return;
       settled = true;
       req.destroy();
-      reject(new Error("timed out waiting for a matching event"));
+      reject(new Error(`timed out waiting for a matching event; saw: [${describeEvents(seen)}]`));
     }, timeoutMs);
   });
+}
+
+/** Resolves with the first record matching `predicate` (the last of `collectUntilMatch`). */
+async function waitForMatchingEvent(
+  socketPath: string,
+  token: string,
+  predicate: (event: ServiceEvent) => boolean,
+  lastEventId?: number,
+  timeoutMs = 5000,
+): Promise<ServiceEvent> {
+  const seen = await collectUntilMatch(socketPath, token, predicate, lastEventId, timeoutMs);
+  return seen[seen.length - 1] as ServiceEvent;
+}
+
+/** `type#id` items, comma separated -- the sequence a failure message reports. */
+function describeEvents(events: ServiceEvent[]): string {
+  return events.map((e) => `${e.type}#${e.id}`).join(", ");
+}
+
+/** One entry in the ordered log a real `EventClient` produced: a snapshot adoption or a delivered event. */
+type ClientLogEntry =
+  | { kind: "snapshot"; lastEventId: number }
+  | { kind: "event"; id: number; type: string; event: ServiceEvent };
+
+function describeLog(log: ClientLogEntry[]): string {
+  return log
+    .map((e) =>
+      e.kind === "snapshot" ? `snapshot(lastEventId=${e.lastEventId})` : `${e.type}#${e.id}`,
+    )
+    .join(", ");
+}
+
+/**
+ * Subscribes through `createEventClient` (the same client the plugin uses)
+ * and resolves with the ordered log of snapshot adoptions and delivered
+ * events up to the `heartbeats`-th heartbeat. Bounded at 5000 ms, with the
+ * log in the rejection message; the client is disposed on every path.
+ */
+function collectClientLog(
+  socketPath: string,
+  heartbeats: number,
+  timeoutMs = 5000,
+): Promise<ClientLogEntry[]> {
+  return new Promise((resolve, reject) => {
+    const log: ClientLogEntry[] = [];
+    let seenHeartbeats = 0;
+    const client = createEventClient({ socketPath, getToken: tokenGetter(socketPath) });
+    const timeout = setTimeout(() => {
+      client.dispose();
+      reject(
+        new Error(
+          `timed out waiting for ${heartbeats} heartbeat(s); client log: [${describeLog(log)}]`,
+        ),
+      );
+    }, timeoutMs);
+    client.subscribe(
+      (event) => {
+        log.push({ kind: "event", id: event.id, type: event.type, event });
+        if (event.type === "service.heartbeat") {
+          seenHeartbeats += 1;
+          if (seenHeartbeats === heartbeats) {
+            clearTimeout(timeout);
+            client.dispose();
+            resolve(log);
+          }
+        }
+      },
+      () => {},
+      (snapshot) => {
+        log.push({ kind: "snapshot", lastEventId: snapshot.lastEventId });
+      },
+    );
+  });
+}
+
+/**
+ * Shared assertions (a) to (d): the log starts with the bootstrap snapshot;
+ * the first delivered event is no later than the id right after that
+ * snapshot; ids then advance by exactly one; and the first delivered
+ * heartbeat is a schema-valid `service.heartbeat`. None of these depends on
+ * whether the first service tick fired before the client subscribed.
+ */
+function expectContiguousFromSnapshot(log: ClientLogEntry[]): {
+  snapshot: { lastEventId: number };
+  firstHeartbeat: ServiceEvent;
+} {
+  const seq = `client log: [${describeLog(log)}]`;
+  const snapshot = log[0];
+  expect(snapshot?.kind, `(a) the log starts with a snapshot; ${seq}`).toBe("snapshot");
+  if (snapshot?.kind !== "snapshot") throw new Error(`(a) ${seq}`);
+
+  const events = log.filter(
+    (e): e is Extract<ClientLogEntry, { kind: "event" }> => e.kind === "event",
+  );
+  const first = events[0];
+  if (first === undefined) throw new Error(`no event delivered; ${seq}`);
+  expect(first.id, `(b) first event id is at least 1; ${seq}`).toBeGreaterThanOrEqual(1);
+  expect(
+    first.id,
+    `(b) first event id is at most snapshot.lastEventId + 1; ${seq}`,
+  ).toBeLessThanOrEqual(snapshot.lastEventId + 1);
+
+  for (let i = 1; i < events.length; i += 1) {
+    expect(
+      (events[i] as { id: number }).id,
+      `(c) ids advance by exactly one at position ${i}; ${seq}`,
+    ).toBe((events[i - 1] as { id: number }).id + 1);
+  }
+
+  const firstHeartbeat = events.find((e) => e.type === "service.heartbeat");
+  if (firstHeartbeat === undefined) throw new Error(`no heartbeat delivered; ${seq}`);
+  expect(
+    ServiceEventSchema.safeParse(firstHeartbeat.event).success,
+    `(d) the first heartbeat's envelope validates; ${seq}`,
+  ).toBe(true);
+  expect(firstHeartbeat.type, `(d) ${seq}`).toBe("service.heartbeat");
+  return { snapshot, firstHeartbeat: firstHeartbeat.event };
 }
 
 const isHeartbeat = (event: ServiceEvent): boolean => event.type === "service.heartbeat";
@@ -178,36 +302,54 @@ function waitForState(
 }
 
 describe("live push: one event, pushed from the service, received by the same client the plugin uses", () => {
-  it("the client receives a heartbeat event whose envelope validates and whose id is 1", async () => {
+  it("the client receives a heartbeat event whose envelope validates, and the stream numbers its events from 1", async () => {
     await withTempSocketDir(async ({ dir, socketPath }) => {
       const dbPath = join(dir, "operational.db");
       const handle = await startServiceForTest({ socketPath, dbPath });
       try {
-        const client = createEventClient({ socketPath, getToken: tokenGetter(socketPath) });
+        // The service's heartbeat timer starts before its socket opens, so a
+        // client joining on a loaded machine can legitimately see id 2 or
+        // later first. The client is therefore asserted only on what is
+        // guaranteed regardless of join time (a to d); that the stream
+        // really numbers from 1 is proven by a replay from 0 (e).
+        const log = await collectClientLog(socketPath, 2);
+        expectContiguousFromSnapshot(log);
 
-        // The very first connection carries no last-event header, so it
-        // always resolves to resync (Task 2) -- the client may see that
-        // bootstrap control event before its first real heartbeat; only
-        // the heartbeat itself is asserted on here.
-        const firstHeartbeat = await new Promise<ServiceEvent>((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("timed out waiting for the first heartbeat")),
-            5000,
-          );
-          client.subscribe(
-            (event) => {
-              if (event.type === "service.heartbeat") {
-                clearTimeout(timeout);
-                resolve(event);
-              }
-            },
-            () => {},
-          );
-        });
+        const token = await tokenGetter(socketPath)();
+        const probe = await collectUntilMatch(socketPath, token, isHeartbeat, 0);
+        expect(
+          probe[0]?.id,
+          `(e) a replay from 0 starts at id 1; saw: [${describeEvents(probe)}]`,
+        ).toBe(1);
+        expect(probe[0]?.type, `(e) saw: [${describeEvents(probe)}]`).toBe("service.heartbeat");
+      } finally {
+        await handle.stop();
+      }
+    });
+  });
 
-        expect(firstHeartbeat.id).toBe(1);
-        expect(firstHeartbeat.type).toBe("service.heartbeat");
-        client.dispose();
+  it("a client that subscribes after heartbeats have already fired still receives a valid heartbeat, after its snapshot, with no gap in the identifiers", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      const dbPath = join(dir, "operational.db");
+      const handle = await startServiceForTest({ socketPath, dbPath });
+      try {
+        // Precondition shown by an event, not a sleep: a from-0 probe sees
+        // heartbeat 1, so the client below is guaranteed to join late.
+        const token = await tokenGetter(socketPath)();
+        const probe = await collectUntilMatch(socketPath, token, isHeartbeat, 0);
+        expect(probe[0]?.id, `saw: [${describeEvents(probe)}]`).toBe(1);
+
+        const log = await collectClientLog(socketPath, 2);
+        const { snapshot, firstHeartbeat } = expectContiguousFromSnapshot(log);
+        const seq = `client log: [${describeLog(log)}]`;
+        expect(
+          snapshot.lastEventId,
+          `snapshot reflects heartbeats already fired; ${seq}`,
+        ).toBeGreaterThanOrEqual(1);
+        expect(
+          firstHeartbeat.id,
+          `a late client's first heartbeat is id 2 or later; ${seq}`,
+        ).toBeGreaterThanOrEqual(2);
       } finally {
         await handle.stop();
       }
@@ -237,8 +379,15 @@ describe("recovery: reconnect resumes from a held identifier, or resynchronizes 
       try {
         const token = await tokenGetter(socketPath)();
 
-        const firstHeartbeat = await waitForMatchingEvent(socketPath, token, isHeartbeat);
-        expect(firstHeartbeat.id).toBe(1);
+        // A replay from 0 is used because a header-less first connection
+        // joins at an unpredictable point in the sequence (the heartbeat
+        // timer starts before the socket opens); since(0) replays everything
+        // while event 1 is still held, so id 1 is exact, not luck.
+        const firstEvents = await collectUntilMatch(socketPath, token, isHeartbeat, 0);
+        const firstHeartbeat = firstEvents[firstEvents.length - 1] as ServiceEvent;
+        expect(firstEvents.length, `saw: [${describeEvents(firstEvents)}]`).toBe(1);
+        expect(firstHeartbeat.type).toBe("service.heartbeat");
+        expect(firstHeartbeat.id, `saw: [${describeEvents(firstEvents)}]`).toBe(1);
 
         // Reconnect presenting id 1 (still well within the default
         // capacity) -- the replay branch (no resync control event mixed
