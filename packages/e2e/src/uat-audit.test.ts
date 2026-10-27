@@ -930,7 +930,7 @@ const planned = existsSync(join(REPO_ROOT, ".planning", "ROADMAP.md"));
 const real = planned ? describe : describe.skip;
 
 real("the real tree (Test 4, private checkouts only)", () => {
-  it("exits 0 with phases 01 to 06 recorded and 07 and 08 pending, and prints no item text", async () => {
+  it("exits 0 with every phase recorded after the owner's sitting, and prints no item text", async () => {
     const out = join(scratch, "REAL-AUDIT.md");
     const { code, lines } = await audit(["--out", out], {}, { realCounts: true });
     expect(code).toBe(0);
@@ -945,9 +945,9 @@ real("the real tree (Test 4, private checkouts only)", () => {
       "05.1": "16/16",
       "05.2": "1/1",
       "06": "26/26",
-      // 07 and 08 fill in as the ratified automated runs and the owner's sitting record results.
-      "07": "\\d+/24",
-      "08": "\\d+/39",
+      // 07 and 08 were completed by the ratified automated runs and the owner's sitting (2026-10-26).
+      "07": "24/24",
+      "08": "39/39",
     };
     for (const [phase, count] of Object.entries(counts)) {
       expect(text, phase).toMatch(
@@ -974,7 +974,7 @@ real("the real tree (Test 4, private checkouts only)", () => {
       ].sort(),
     );
     expect(text).not.toMatch(/unregistered UAT file: 08-/);
-    for (const phase of ["01", "02", "03", "04", "05", "05.1", "05.2", "06"]) {
+    for (const phase of ["01", "02", "03", "04", "05", "05.1", "05.2", "06", "07", "08"]) {
       expect(text, phase).toMatch(
         new RegExp(
           `^\\| ${phase.replace(".", "\\.")} \\|.*\\| (?:recorded|recorded-with-exceptions) \\|`,
@@ -982,9 +982,7 @@ real("the real tree (Test 4, private checkouts only)", () => {
         ),
       );
     }
-    for (const phase of ["07", "08"]) {
-      expect(text, phase).toMatch(new RegExp(`^\\| ${phase} \\|.*\\| pending-live-uat \\|`, "m"));
-    }
+    expect(text).not.toMatch(/pending-live-uat \|/);
     // Console output is counts and statuses only: no item title and no result text.
     const phasesDir = join(REPO_ROOT, ".planning", "phases");
     const folder = readdirSync(phasesDir).find((name) => name.startsWith("07-")) ?? "";
