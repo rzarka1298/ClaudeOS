@@ -375,8 +375,13 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
     );
     // Phase 7 and Phase 8 planning/execution bookkeeping (plan lists and progress rows), edited as the phases run.
     roadmapRemainder = roadmapRemainder.replace(
-      /\n\nPlans:\n(?:- \[[ x]\] 0[78]-\d\d-PLAN\.md[^\n]*\n)+/g,
+      /\n\nPlans:\n(?:- \[[ x]\] 0[78]-\d\d-PLAN\.md[^\n]*\n)+\n?/g,
       "\n",
+    );
+    // Phase 8 completion mark (gsd phase complete 08, 2026-10-27), like the 05.1 line above.
+    roadmapRemainder = roadmapRemainder.replace(
+      /^- \[x\] \*\*Phase 8: (Slice Proof, Settings & Health\*\*[^\n]*?) \(completed \d{4}-\d\d-\d\d\)$/m,
+      "- [ ] **Phase 8: $1",
     );
     roadmapRemainder = roadmapRemainder.replace(
       /^\| 7\. Cited Research Report[^\n]*$/m,
@@ -385,6 +390,11 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
     roadmapRemainder = roadmapRemainder.replace(
       /^\| 8\. Slice Proof, Settings & Health[^\n]*$/m,
       "| 8. Slice Proof, Settings & Health | 0/TBD | Not started | - |",
+    );
+    // Phase 7 and 8 completion marks in the phase list (gsd-tools phase complete).
+    roadmapRemainder = roadmapRemainder.replace(
+      /^- \[x\] (\*\*Phase [78]:[^\n]*?)(?: \(completed \d{4}-\d{2}-\d{2}\))?$/gm,
+      "- [ ] $1",
     );
     // Phases 9 and 10, added 2026-10-27 to close milestone 1 (list lines, progress rows, sections).
     roadmapRemainder = roadmapRemainder.replace(/^- \[[ x]\] \*\*Phase (?:9|10):[^\n]*\n/gm, "");
