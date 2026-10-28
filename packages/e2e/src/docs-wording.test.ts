@@ -151,10 +151,16 @@ run("PROJECT.md and REQUIREMENTS.md (Test 3)", () => {
 
   it("raises the v1 total by 11, adds the 05.2 distribution row and updates the footer", () => {
     const requirements = read(".planning/REQUIREMENTS.md");
-    expect(requirements).toContain("- v1 requirements: 176 total");
-    expect(requirements).toContain("- Mapped to phases: 176");
+    // Later phases add their own rows (Phase 9, 2026-10-27); the 05.2 baseline is 176 before them.
+    const later = [...requirements.matchAll(/^\| (?:9|10) \| [^|]+\| (\d+) \|$/gm)].reduce(
+      (sum, m) => sum + Number(m[1]),
+      0,
+    );
+    const total = 176 + later;
+    expect(requirements).toContain(`- v1 requirements: ${total} total`);
+    expect(requirements).toContain(`- Mapped to phases: ${total}`);
     expect(requirements).toMatch(/^\| 05\.2 \| Automated Live UAT Runner[^|]*\| 11 \|$/m);
-    expect(requirements).toContain("| **Total** | | **176** |");
+    expect(requirements).toContain(`| **Total** | | **${total}** |`);
     const footer = requirements.slice(requirements.lastIndexOf("*Last updated"));
     expect(footer).toContain("05.2");
     expect(footer).toContain("E2E-01");
