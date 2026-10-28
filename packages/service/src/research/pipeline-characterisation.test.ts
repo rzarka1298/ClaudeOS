@@ -37,7 +37,7 @@ const WRITE_MODE = process.env.CCC_WRITE_CHARACTERISATION === "1";
 const SCENARIOS = [
   "success",
   "all-sources-failed at capture",
-  "all-sources-failed at fetch",
+  "fetch-cancelled-in-flight",
   "all-sources-failed at prepare",
   "all-sources-failed at raw write",
   "summariser-failed",
@@ -184,7 +184,7 @@ const SCENARIO_RUNNERS: Record<ScenarioName, () => Promise<Observed>> = {
 
   // The run is ended under the pipeline while its fetch is in flight (the watchdog's flag): the
   // unexpected stop is attributed to the phase it happened in, which is `fetch`.
-  "all-sources-failed at fetch": async () => {
+  "fetch-cancelled-in-flight": async () => {
     const kit = createKit();
     const responses = defaultResponses();
     return {
