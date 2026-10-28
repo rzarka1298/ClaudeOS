@@ -834,3 +834,33 @@ describe("07-05 Task 3 Test 3: the requirement is ticked", () => {
     },
   );
 });
+
+describe("09-07 Task 2: the glossary defines job run and Probe", () => {
+  const NO_IMPLEMENTATION_DETAIL = /\.ts\b|SQLite|table|route|socket|packages\//i;
+
+  it("Test 1: Job run is one execution of a job for one window or one press, with an avoid list", () => {
+    const entry = glossaryEntry("Job run");
+    expect(entry).toMatch(/One execution of a (named )?job/);
+    expect(entry).toMatch(/schedule window/);
+    expect(entry).toMatch(/one press/);
+    expect(entry).toMatch(/second press[^.]*or a retry for the same[^.]*window[^.]*same Job run/i);
+    expect(entry).toContain("_Avoid_:");
+  });
+
+  it("Test 2: Probe is a read-only, time-bounded check that answers with a reason", () => {
+    const entry = glossaryEntry("Probe");
+    expect(entry).toMatch(/read-only/);
+    expect(entry).toMatch(/time-bounded/);
+    expect(entry).toMatch(/one subsystem/);
+    expect(entry).toMatch(/reason/);
+    expect(entry).toMatch(/never changes anything/);
+    expect(entry).toMatch(/unfinished one reads unknown/);
+    expect(entry).toContain("_Avoid_:");
+  });
+
+  it("Test 3: neither entry carries implementation detail", () => {
+    for (const name of ["Job run", "Probe"]) {
+      expect(glossaryEntry(name), name).not.toMatch(NO_IMPLEMENTATION_DETAIL);
+    }
+  });
+});
