@@ -179,6 +179,9 @@ export function DiagnosticBundleBlock({
   const [bundleStatus, setBundleStatus] = useState("");
   const shownRef = useRef("");
   const repeatTimerRef = useRef<number | null>(null);
+  // The bundle text a copy or save message described; null when the line holds nothing about a
+  // bundle (empty, or a checks line). A rebuild to different text or hiding the preview clears it.
+  const describedTextRef = useRef<string | null>(null);
   const previewId = useId();
   const reasonId = useId();
   const saveReasonId = useId();
@@ -206,6 +209,8 @@ export function DiagnosticBundleBlock({
 
   /** The one way a bundle action speaks: its own line, beside its buttons (D-09). */
   function announce(message: string): void {
+    // A press that finishes after unmount must not set a timer or touch state.
+    if (!mountedRef.current) return;
     if (repeatTimerRef.current !== null) window.clearTimeout(repeatTimerRef.current);
     repeatTimerRef.current = null;
     if (message === shownRef.current && message !== "") {
@@ -220,6 +225,22 @@ export function DiagnosticBundleBlock({
     }
     shownRef.current = message;
     setBundleStatus(message);
+  }
+
+  /** A copy or save outcome: announced, and remembered as describing this exact bundle text. */
+  function announceAbout(bundleText: string, message: string): void {
+    if (!mountedRef.current) return;
+    announce(message);
+    describedTextRef.current = bundleText;
+  }
+
+  /** Empties the bundle line (and any pending repeat) without announcing anything. */
+  function clearBundleLine(): void {
+    if (repeatTimerRef.current !== null) window.clearTimeout(repeatTimerRef.current);
+    repeatTimerRef.current = null;
+    describedTextRef.current = null;
+    shownRef.current = "";
+    setBundleStatus("");
   }
 
   /** Builds from the values as they are at this moment (signals read with `peek`). */
@@ -262,7 +283,14 @@ export function DiagnosticBundleBlock({
   // so the preview never shows an older answer than the one the plugin holds. The string is replaced
   // as a whole: the preview, Copy and Save move together.
   useEffect(() => {
-    if (openRef.current) setOutcome(build());
+    if (!openRef.current) return;
+    const next = build();
+    setOutcome(next);
+    // A copy or save message is about one string; once the preview shows a different one it is stale.
+    const described = describedTextRef.current;
+    if (described !== null && (next?.kind !== "offered" || next.text !== described)) {
+      clearBundleLine();
+    }
   }, [
     response,
     phase,
@@ -290,6 +318,7 @@ export function DiagnosticBundleBlock({
   function close(): void {
     setOpen(false);
     setOutcome(null);
+    clearBundleLine();
   }
 
   function toggle(): void {
@@ -305,9 +334,12 @@ export function DiagnosticBundleBlock({
     if (outcome?.kind !== "offered" || !copyGate.begin()) return;
     try {
       await host.copyText(outcome.text);
-      announce("Bundle copied.");
+      announceAbout(outcome.text, "Bundle copied.");
     } catch {
-      announce("Couldn't copy the bundle. Select the text in the preview and copy it by hand.");
+      announceAbout(
+        outcome.text,
+        "Couldn't copy the bundle. Select the text in the preview and copy it by hand.",
+      );
     } finally {
       copyGate.end();
     }
@@ -321,9 +353,9 @@ export function DiagnosticBundleBlock({
     if (outcome?.kind !== "offered" || !saveAvailable || !saveGate.begin()) return;
     try {
       const result = await exporter.save(outcome.text, host.display.vaultBasePath, nowRef.current);
-      announce(SAVE_NOTICES[result.kind]);
+      announceAbout(outcome.text, SAVE_NOTICES[result.kind]);
     } catch {
-      announce(SAVE_FAILED);
+      announceAbout(outcome.text, SAVE_FAILED);
     } finally {
       saveGate.end();
     }
@@ -332,6 +364,7 @@ export function DiagnosticBundleBlock({
   /** `Run checks again` (stale line and refusal panel): the owner's press re-runs the read-only checks. */
   async function runChecks(): Promise<void> {
     if (!live || !checkGate.begin()) return;
+    describedTextRef.current = null;
     announce(CHECKING_LINE);
     const result = await refreshHealth("gesture", { vaultBasePath: host.display.vaultBasePath });
     checkGate.end();
