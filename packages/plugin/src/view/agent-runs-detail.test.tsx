@@ -298,7 +298,7 @@ describe("Test 4: the fields dl", () => {
     });
     expect(
       screen.getByText(
-        "No end event arrived and the process is gone. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.",
+        "No end event arrived, and the process is gone or couldn't be checked. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.",
       ),
     ).toBeTruthy();
     expect(screen.getByText("At least 30 min")).toBeTruthy();
@@ -675,5 +675,25 @@ describe("Test 4 (View the request): a pending force-terminate request is one pr
     const terminate = controls.find((c) => c.capability === "session:terminate");
     expect(terminate?.disabledReason).toBe(REASON);
     expect(terminate?.requestId).toBe("abc");
+  });
+});
+
+describe("Phase 9 Task 2 Test 1: the detail pane states a quiet session honestly (D-05, R-04)", () => {
+  const QUIET_AT = new Date(NOW_MS - 41 * 60_000).toISOString();
+
+  it("reads the quiet label at both the heading line and the State field", () => {
+    renderPane({ state: "running", activity: "idle", lastActivityAt: QUIET_AT });
+    const body = document.querySelector(".ccc-state-body");
+    expect(body?.textContent).toBe("⋯ Idle — last event 41 min ago");
+    const dl = document.querySelector(".ccc-detail-fields");
+    const dts = [...(dl?.querySelectorAll("dt") ?? [])].map((el) => el.textContent);
+    const dds = [...(dl?.querySelectorAll("dd") ?? [])].map((el) => el.textContent);
+    expect(dds[dts.indexOf("State")]).toBe("⋯ Idle — last event 41 min ago");
+    expect(document.body.textContent ?? "").not.toContain("▸ Running");
+  });
+
+  it("a non-quiet running session reads exactly what it read before", () => {
+    renderPane({ state: "running", activity: "working" });
+    expect(document.querySelector(".ccc-state-body")?.textContent).toBe("▸ Running");
   });
 });

@@ -2,6 +2,7 @@ import type { LaunchConflictResult, ProjectId } from "@ccc/domain";
 import { requestSessionAction, type SocketApiClient } from "@ccc/service-api-client";
 import type { App } from "obsidian";
 import type { ConflictChoice } from "../projects/launch-client.js";
+import { sessionQuietAfterMs } from "../widgets/session-signals.js";
 import { concurrentChoiceViewModel, createObsidianSessionActionUi } from "./session-modals.js";
 
 /**
@@ -18,7 +19,12 @@ export function createLaunchConflictChooser(
   const ui = createObsidianSessionActionUi(app);
   return (conflict, projectId) => {
     return ui.openConcurrentChoice(
-      concurrentChoiceViewModel(conflict.conflicts, conflict.projectName, Date.now()),
+      concurrentChoiceViewModel(
+        conflict.conflicts,
+        conflict.projectName,
+        Date.now(),
+        sessionQuietAfterMs.value,
+      ),
       async () => {
         try {
           return (await requestSessionAction(client, "worktrees", { projectId })).worktrees;

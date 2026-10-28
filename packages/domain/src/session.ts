@@ -236,6 +236,57 @@ export const RUN_STATE_DISPLAY: Readonly<Record<RunState, RunStateDisplay>> = {
 export const SESSION_QUIET_AFTER_MS = 30 * 60 * 1000;
 
 /**
+ * The glyph a quiet running session carries (D-05, R-04). A text-presentation code point distinct
+ * from every {@link RUN_STATE_DISPLAY} glyph and from the freshness glyphs `● ◐ ◷ ○`, so a quiet
+ * session is never told apart by colour alone: it always has this glyph and its words.
+ */
+export const QUIET_RUN_GLYPH = "⋯";
+
+/**
+ * A run state's display plus whether it is presented as quiet. `quiet` is `null` for anything
+ * shown as its plain state, `"idle"` for a quiet session whose last signal was idle (or absent),
+ * and `"silent"` for one whose last signal was `working` (it said it was busy, then went quiet).
+ */
+export interface RunStatePresentation extends RunStateDisplay {
+  readonly quiet: null | "idle" | "silent";
+}
+
+function quietAgoText(ageMs: number): string {
+  if (ageMs < 60_000) return "less than a minute";
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h`;
+}
+
+/**
+ * The one place a Claude session's state word is decided (D-05, R-04, SESS-19). The stored state
+ * stays `running` (a live process at its prompt has not ended); presentation says what is true:
+ * once the last lifecycle signal is `quietAfterMs` old, the row reads Idle or "No events" with the
+ * age. Pure and browser-safe: `nowMs` is a parameter, so quietness appears without any new event
+ * and disappears on the next one. Only `running` can be quiet; `waiting-for-approval`, `stale`,
+ * `queued`, `starting` and the ended states always read as themselves. An unparseable instant
+ * returns the plain display, never NaN text.
+ */
+export function presentRunState(
+  view: Pick<SessionView, "state" | "activity" | "lastActivityAt" | "startedAt">,
+  nowMs: number,
+  quietAfterMs: number = SESSION_QUIET_AFTER_MS,
+): RunStatePresentation {
+  const base = RUN_STATE_DISPLAY[view.state];
+  if (view.state !== "running") return { ...base, quiet: null };
+  const ageMs = nowMs - Date.parse(view.lastActivityAt ?? view.startedAt);
+  if (!Number.isFinite(ageMs) || ageMs < quietAfterMs) return { ...base, quiet: null };
+  const ago = quietAgoText(ageMs);
+  const silent = view.activity === "working";
+  return {
+    label: silent ? `No events for ${ago}` : `Idle — last event ${ago} ago`,
+    glyph: QUIET_RUN_GLYPH,
+    group: "active",
+    quiet: silent ? "silent" : "idle",
+  };
+}
+
+/**
  * The states a Run never leaves. `stale` is deliberately absent: it is the
  * absence of evidence, and a later event or a live process can revive it.
  */
@@ -248,7 +299,7 @@ export function isTerminalRunState(state: RunState): state is TerminalRunState {
 
 /** Shown under a stale Run's state in the detail pane (UI-SPEC, fixed string). */
 export const STALE_RUN_EXPLANATION =
-  "No end event arrived and the process is gone. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.";
+  "No end event arrived, and the process is gone or couldn't be checked. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.";
 
 /** Shown for any field the source did not provide. Never blank, never `0`, never a dash. */
 export const NOT_REPORTED = "Not reported";

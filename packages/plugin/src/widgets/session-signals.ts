@@ -10,6 +10,7 @@ import type { RunState } from "@ccc/domain/run.js";
 import {
   isSessionListed,
   isTerminalRunState,
+  SESSION_QUIET_AFTER_MS,
   SessionUpsertedPayloadSchema,
   type SessionView,
 } from "@ccc/domain/session.js";
@@ -42,6 +43,13 @@ export const claudeIntegration = signal<ClaudeIntegrationStatus | null>(null);
  * that, `activeSessionsStateFor` falls back to the caller's `now`.
  */
 export const lastSessionEventAt = signal<string | null>(null);
+
+/**
+ * How old a running session's last event must be before it reads as quiet (D-05, D-07, R-04).
+ * Set from the snapshot's `sessionQuietAfterMs` on every resync (see `service-event-router.ts`),
+ * falling back to {@link SESSION_QUIET_AFTER_MS}; every session surface reads this one signal.
+ */
+export const sessionQuietAfterMs = signal<number>(SESSION_QUIET_AFTER_MS);
 
 /**
  * Applies a `session.upserted` payload (ADR-0007 revision monotonicity,
@@ -210,7 +218,7 @@ export function activeSessionsStateFor(
   const rows = orderSessionRows([...sessions.values()], nowMs);
   return {
     kind: "ready",
-    data: { sessions: rows, nowMs },
+    data: { sessions: rows, nowMs, quietAfterMs: sessionQuietAfterMs.value },
     observedAt: lastSessionEventAt.value ?? new Date(nowMs).toISOString(),
     freshness: "live",
     partiality: { partial: false },

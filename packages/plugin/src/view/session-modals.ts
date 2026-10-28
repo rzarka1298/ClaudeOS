@@ -1,5 +1,5 @@
 import type { GuardConflict } from "@ccc/domain/ports.js";
-import { NOT_REPORTED, RUN_STATE_DISPLAY } from "@ccc/domain/session.js";
+import { NOT_REPORTED, presentRunState, SESSION_QUIET_AFTER_MS } from "@ccc/domain/session.js";
 import { WORKTREE_NAME_PATTERN, type WorktreeListResponse } from "@ccc/domain/session-actions.js";
 import {
   type App,
@@ -85,13 +85,31 @@ export interface ConcurrentChoiceViewModel {
   readonly initialFocus: "cancel";
 }
 
-function concurrentConflictItemText(conflict: GuardConflict, nowMs: number): string {
+function concurrentConflictItemText(
+  conflict: GuardConflict,
+  nowMs: number,
+  quietAfterMs: number,
+): string {
+  // The conflict carries no activity signal and no start instant: only the last event decides
+  // quietness, and a conflict without one reads as its plain state (never a guessed age).
+  const presented = presentRunState(
+    {
+      state: conflict.state,
+      activity: null,
+      lastActivityAt: conflict.lastActivityAt,
+      startedAt: conflict.lastActivityAt ?? "",
+    },
+    nowMs,
+    quietAfterMs,
+  );
+  // The quiet label already carries the age of the last event, so it is not repeated.
+  if (presented.quiet !== null) return `${conflict.sessionName} — ${presented.label}`;
   const active =
     conflict.lastActivityAt === null
       ? NOT_REPORTED
       : formatRelativeTime(conflict.lastActivityAt, nowMs);
   const staleSuffix = conflict.state === "stale" ? " — it may still be running" : "";
-  return `${conflict.sessionName} — ${RUN_STATE_DISPLAY[conflict.state].label}, active ${active}${staleSuffix}`;
+  return `${conflict.sessionName} — ${presented.label}, active ${active}${staleSuffix}`;
 }
 
 /**
@@ -104,6 +122,7 @@ export function concurrentChoiceViewModel(
   conflicts: readonly GuardConflict[],
   projectName: string,
   nowMs: number,
+  quietAfterMs: number = SESSION_QUIET_AFTER_MS,
 ): ConcurrentChoiceViewModel {
   const lead =
     conflicts.length === 1
@@ -114,7 +133,7 @@ export function concurrentChoiceViewModel(
     lead,
     items: conflicts.map((conflict) => ({
       runId: conflict.runId,
-      text: concurrentConflictItemText(conflict, nowMs),
+      text: concurrentConflictItemText(conflict, nowMs, quietAfterMs),
     })),
     choices: CONCURRENT_CHOICE_BUTTONS,
     initialFocus: "cancel",

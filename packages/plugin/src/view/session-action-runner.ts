@@ -12,6 +12,7 @@ import { ClaudeRequestError, CodexRequestError } from "@ccc/service-api-client";
 import { windowLaunchTimers } from "../projects/launch-client.js";
 import type { LaunchTimerControls } from "../projects/launch-status.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
+import { sessionQuietAfterMs } from "../widgets/session-signals.js";
 import { clearCodexActionStatus, setCodexActionStatus } from "./codex-action-status.js";
 import {
   CODEX_FOLLOW_COPY,
@@ -390,7 +391,12 @@ async function runLaunch(
     }
     const resolution = await openSafely(() =>
       deps.ui.openConcurrentChoice(
-        concurrentChoiceViewModel(first.conflicts, first.projectName, Date.now()),
+        concurrentChoiceViewModel(
+          first.conflicts,
+          first.projectName,
+          Date.now(),
+          sessionQuietAfterMs.value,
+        ),
         () => loadWorktrees(deps, runId),
       ),
     );

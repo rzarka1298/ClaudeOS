@@ -1,11 +1,16 @@
 import type { ClaudeIntegrationStatus, RunId, SessionView } from "@ccc/domain";
+import { SESSION_QUIET_AFTER_MS } from "@ccc/domain/session.js";
 import type { UsageSummary } from "@ccc/domain/usage.js";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { adoptApprovalsSnapshot, resetApprovalsState } from "../approvals/signals.js";
 import { connectionState } from "../connection-state.js";
 import { approvalsSnapshot, summary } from "../test-support/approval-fixtures.js";
-import { claudeIntegration, sessionsById } from "../widgets/session-signals.js";
+import {
+  claudeIntegration,
+  sessionQuietAfterMs,
+  sessionsById,
+} from "../widgets/session-signals.js";
 import { usageSummary } from "../widgets/usage-signals.js";
 import { AgentRuns } from "./agent-runs.js";
 import { selectedRunId } from "./agent-runs-state.js";
@@ -59,6 +64,7 @@ function resetSignals(): void {
   connectionState.value = { kind: "connecting" };
   selectedRunId.value = null;
   usageSummary.value = null;
+  sessionQuietAfterMs.value = SESSION_QUIET_AFTER_MS;
 }
 
 beforeEach(resetSignals);
@@ -647,5 +653,97 @@ describe("Plan 06-17 Task 3: the Approvals section inside Agent runs", () => {
     const banner = render(<AgentRuns now={NOW_MS} />);
     expect(banner.container.querySelector("section.ccc-approvals")).not.toBeNull();
     expect(screen.getByText("Session tracking paused")).toBeTruthy();
+  });
+});
+
+describe("Phase 9 Task 1 (tracer): a quiet session never reads as plain Running (D-05, SESS-19)", () => {
+  const MIN = 60_000;
+  const quietAgo = (ms: number): string => new Date(NOW_MS - ms).toISOString();
+
+  it("Test 1: a running idle session whose last event was 41 minutes ago reads the quiet label, not Running", () => {
+    seed([
+      session({
+        runId: runId(1),
+        name: "Sitting session",
+        state: "running",
+        activity: "idle",
+        lastActivityAt: quietAgo(41 * MIN),
+      }),
+    ]);
+    render(<AgentRuns now={NOW_MS} />);
+    const cell = screen.getByText("⋯ Idle — last event 41 min ago");
+    expect(cell.tagName).toBe("TD");
+    expect(cell.textContent).not.toContain("Running");
+  });
+
+  it("Test 6: the same session revived by a fresh event reads Running again", () => {
+    seed([
+      session({
+        runId: runId(1),
+        name: "Sitting session",
+        state: "running",
+        activity: "idle",
+        lastActivityAt: quietAgo(1000),
+      }),
+    ]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(screen.getByText("▸ Running · Idle")).toBeTruthy();
+  });
+});
+
+describe("Phase 9 Task 2 Test 2: the caption counts quiet sessions apart from active ones (R-04)", () => {
+  it("two running sessions, one quiet, read '1 active · 1 quiet · …'", () => {
+    seed([
+      session({ runId: runId(1), name: "Fresh", state: "running" }),
+      session({
+        runId: runId(2),
+        name: "Sitting",
+        state: "running",
+        activity: "idle",
+        lastActivityAt: new Date(NOW_MS - 41 * 60_000).toISOString(),
+      }),
+    ]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(
+      screen.getByText("1 active · 1 quiet · 0 waiting for approval · 0 unknown"),
+    ).toBeTruthy();
+  });
+
+  it("the quiet segment is omitted at zero, so today's caption is unchanged", () => {
+    seed([session({ runId: runId(1), name: "Fresh", state: "running" })]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(screen.getByText("1 active · 0 waiting for approval · 0 unknown")).toBeTruthy();
+  });
+});
+
+describe("Phase 9 Task 3 Test 2: the threshold signal reaches the rows and the caption (D-07)", () => {
+  it("with the signal at 2 minutes, a session idle for 3 minutes reads quiet and is not counted active", () => {
+    sessionQuietAfterMs.value = 120_000;
+    seed([
+      session({
+        runId: runId(1),
+        state: "running",
+        activity: "idle",
+        lastActivityAt: new Date(NOW_MS - 3 * 60_000).toISOString(),
+      }),
+    ]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(screen.getByText("⋯ Idle — last event 3 min ago")).toBeTruthy();
+    expect(
+      screen.getByText("0 active · 1 quiet · 0 waiting for approval · 0 unknown"),
+    ).toBeTruthy();
+  });
+
+  it("at the 30-minute default the same session reads Running", () => {
+    seed([
+      session({
+        runId: runId(1),
+        state: "running",
+        activity: "idle",
+        lastActivityAt: new Date(NOW_MS - 3 * 60_000).toISOString(),
+      }),
+    ]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(screen.getByText("▸ Running · Idle")).toBeTruthy();
   });
 });
