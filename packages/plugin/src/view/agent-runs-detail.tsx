@@ -8,8 +8,9 @@
 // `loadSessionUsage` prop — never a client constructed here.
 import {
   NOT_REPORTED,
-  RUN_STATE_DISPLAY,
+  presentRunState,
   type RunLinkKind,
+  SESSION_QUIET_AFTER_MS,
   type SessionView,
   STALE_RUN_EXPLANATION,
   sessionDisplayName,
@@ -305,7 +306,7 @@ function DetailFields({
   readonly session: SessionView;
   readonly nowMs: number;
 }): VNode {
-  const display = RUN_STATE_DISPLAY[session.state];
+  const display = presentRunState(session, nowMs, SESSION_QUIET_AFTER_MS);
   const lastActivityIso = session.lastActivityAt ?? session.startedAt;
 
   return (
@@ -599,7 +600,7 @@ export function DetailPane({
   loadSessionUsage,
   headingRef,
 }: DetailPaneProps): VNode {
-  const display = RUN_STATE_DISPLAY[session.state];
+  const display = presentRunState(session, nowMs, SESSION_QUIET_AFTER_MS);
 
   // A Run leaving this detail pane (a new selection, or a status outcome
   // fully shown) clears its own status line rather than leaking a stale

@@ -72,6 +72,17 @@ describe("concurrentChoiceViewModel (Test 1)", () => {
     expect(vm.items).toEqual([{ runId: RUN_ID_1, text: "beta — Running, active 5 minutes ago" }]);
   });
 
+  it("Phase 9 Test 4: names the quiet presentation, not Running, for a quiet conflict", () => {
+    const vm = concurrentChoiceViewModel(
+      [makeConflict({ lastActivityAt: "2026-09-25T23:24:00.000Z" })],
+      "alpha",
+      NOW_MS,
+    );
+
+    expect(vm.items[0]?.text).toBe("beta — Idle — last event 41 min ago");
+    expect(vm.items[0]?.text).not.toContain("Running");
+  });
+
   it("appends the stale suffix only for a stale conflict", () => {
     const vm = concurrentChoiceViewModel([makeConflict({ state: "stale" })], "alpha", NOW_MS);
 

@@ -684,3 +684,28 @@ describe("Phase 9 Task 1 (tracer): a quiet session never reads as plain Running 
     expect(screen.getByText("▸ Running · Idle")).toBeTruthy();
   });
 });
+
+describe("Phase 9 Task 2 Test 2: the caption counts quiet sessions apart from active ones (R-04)", () => {
+  it("two running sessions, one quiet, read '1 active · 1 quiet · …'", () => {
+    seed([
+      session({ runId: runId(1), name: "Fresh", state: "running" }),
+      session({
+        runId: runId(2),
+        name: "Sitting",
+        state: "running",
+        activity: "idle",
+        lastActivityAt: new Date(NOW_MS - 41 * 60_000).toISOString(),
+      }),
+    ]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(
+      screen.getByText("1 active · 1 quiet · 0 waiting for approval · 0 unknown"),
+    ).toBeTruthy();
+  });
+
+  it("the quiet segment is omitted at zero, so today's caption is unchanged", () => {
+    seed([session({ runId: runId(1), name: "Fresh", state: "running" })]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(screen.getByText("1 active · 0 waiting for approval · 0 unknown")).toBeTruthy();
+  });
+});

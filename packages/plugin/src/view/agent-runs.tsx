@@ -473,14 +473,19 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
   const dimmed = presentation.kind === "disconnected" ? "true" : undefined;
 
   const totalSessions = allSessions.length;
-  const runningCount = allSessions.filter((s) => s.state === "running").length;
+  // A quiet session is still `running` in the store (D-05) but is neither counted as active nor
+  // hidden: it gets its own `N quiet` segment so the caption agrees with the rows (R-04).
+  const quietCount = allSessions.filter(
+    (s) => presentRunState(s, now, SESSION_QUIET_AFTER_MS).quiet !== null,
+  ).length;
+  const runningCount = allSessions.filter((s) => s.state === "running").length - quietCount;
   const waitingCount = allSessions.filter((s) => s.state === "waiting-for-approval").length;
   const unknownCount = allSessions.filter((s) => s.state === "stale").length;
   // Phase 5's three segments are untouched; the inbox adds its own distinct
   // phrase, omitted until the first snapshot and at zero (D-41 rule 3).
   const pendingRequests = pendingApprovalCount.value;
   const summaryLine =
-    `${runningCount} active · ${waitingCount} waiting for approval · ${unknownCount} unknown` +
+    `${runningCount} active${quietCount > 0 ? ` · ${quietCount} quiet` : ""} · ${waitingCount} waiting for approval · ${unknownCount} unknown` +
     (pendingRequests !== null && pendingRequests > 0
       ? ` · ${needsDecisionText(pendingRequests)}`
       : "");
