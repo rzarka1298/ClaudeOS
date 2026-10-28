@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RunId } from "@ccc/domain/ids.js";
-import type { SessionView } from "@ccc/domain/session.js";
+import { SESSION_QUIET_AFTER_MS, type SessionView } from "@ccc/domain/session.js";
 import type { FocusResponse } from "@ccc/domain/session-actions.js";
 import { ClaudeRequestError } from "@ccc/service-api-client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
+import { sessionQuietAfterMs } from "../widgets/session-signals.js";
 import { REASON_COPY, runSessionAction, type SessionActionDeps } from "./session-action-runner.js";
 import { sessionActionStatus } from "./session-action-status.js";
 
@@ -741,5 +742,47 @@ describe("Task 3 (Test 4): one-click transcript analysis", () => {
     expect(notify).toHaveBeenLastCalledWith(
       "Couldn't turn on transcript analysis. Check the service in Settings → Diagnostics, then try again.",
     );
+  });
+});
+
+describe("the concurrent-choice modal reads the quiet-threshold signal (FIX3B Q6)", () => {
+  const NOW = Date.parse("2026-09-25T12:00:00.000Z");
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    sessionQuietAfterMs.value = SESSION_QUIET_AFTER_MS;
+  });
+
+  async function itemText(): Promise<string> {
+    const requestSessionAction = vi
+      .fn()
+      .mockResolvedValueOnce({
+        outcome: "conflict",
+        projectName: "alpha",
+        conflicts: [conflict({ lastActivityAt: new Date(NOW - 3 * 60_000).toISOString() })],
+      })
+      .mockResolvedValue({ outcome: "launched" });
+    const openConcurrentChoice = vi.fn().mockResolvedValue({ kind: "cancel" });
+    const deps = makeDeps({
+      requestSessionAction,
+      ui: fakeUi({ openConcurrentChoice }),
+      getSession: () => view({ name: "Fix parser" }),
+    });
+    await runSessionAction(descriptor("session:resume", "r1"), deps);
+    const model = openConcurrentChoice.mock.calls[0]?.[0] as { items: { text: string }[] };
+    return model.items[0]?.text ?? "";
+  }
+
+  it("at the default threshold a 3-minute-old session reads as its plain state", async () => {
+    sessionQuietAfterMs.value = SESSION_QUIET_AFTER_MS;
+    expect(await itemText()).toBe("beta — Running, active 3 minutes ago");
+  });
+
+  it("with the signal at 2 minutes the same session reads quiet", async () => {
+    sessionQuietAfterMs.value = 120_000;
+    expect(await itemText()).toBe("beta — Idle — last event 3 min ago");
   });
 });
