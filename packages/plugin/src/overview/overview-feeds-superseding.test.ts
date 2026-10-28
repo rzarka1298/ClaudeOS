@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { ResearchListResponse, ResearchStatusResponse } from "@ccc/domain/research-routes.js";
 import type { TaskDueTodayResponse } from "@ccc/domain/tasks.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { connectionState } from "../connection-state.js";
 import { configureResearch } from "../research/api.js";
 import { configureTasksApi } from "../tasks/api.js";
 import { fakeResearchApi } from "../test-support/research-api-fake.js";
@@ -16,6 +17,7 @@ import {
   refreshAutomation,
   refreshDueToday,
   refreshLatestReport,
+  refreshOnTick,
   resetOverviewFeeds,
 } from "./overview-feeds.js";
 
@@ -47,6 +49,7 @@ afterEach(() => {
   configureResearch(null);
   configureOverviewZone(null);
   resetOverviewFeeds();
+  connectionState.value = { kind: "connecting" };
 });
 
 describe("Task 1 (tracer): due today", () => {
@@ -155,5 +158,29 @@ describe("Task 2: automation, latest report and reset", () => {
       .join("\n");
     expect(source).not.toMatch(/\b(dueSeq|automationSeq|reportSeq)\b/);
     expect(source.match(/\bsuperseding\(/g) ?? []).toHaveLength(3);
+  });
+
+  it("FIX2A R7: the module-level refreshers do not share a name with a local (`automation` in todayStateFor)", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/overview/overview-feeds.ts"), "utf8");
+    expect(source).not.toMatch(/^const (dueToday|automation|latestReport) = /m);
+    expect(source).toMatch(/^const dueTodayRefresher = superseding\(/m);
+    expect(source).toMatch(/^const automationRefresher = superseding\(/m);
+    expect(source).toMatch(/^const latestReportRefresher = superseding\(/m);
+  });
+
+  it("FIX2A R8c: resetOverviewFeeds() resets the tick gap, so a tick right after a reset refreshes", async () => {
+    const dueToday = vi.fn(() => Promise.resolve({ due: [], overdue: [] }));
+    configureTasksApi(fakeTasksApi([], { dueToday }));
+    useResearch(fakeResearchApi({}));
+    connectionState.value = { kind: "live" };
+    refreshOnTick();
+    expect(dueToday).toHaveBeenCalledTimes(1);
+    // Inside the gap: the tick is skipped.
+    refreshOnTick();
+    expect(dueToday).toHaveBeenCalledTimes(1);
+    resetOverviewFeeds();
+    refreshOnTick();
+    expect(dueToday).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
   });
 });

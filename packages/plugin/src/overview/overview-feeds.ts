@@ -14,6 +14,7 @@ import { safeLine } from "../view/research-format.js";
 import { nowTick } from "../widgets/clock.js";
 import type { WidgetState } from "../widgets/contract.js";
 import type { TechIntelData, TodayAutomation, TodayData } from "../widgets/panels.js";
+import type { FeedSnapshot } from "./feed-snapshot.js";
 import { ms, nextOpenMeta, ranked, rowMeta, todayTask } from "./overview-format.js";
 import { superseding } from "./superseding.js";
 
@@ -37,17 +38,7 @@ import { superseding } from "./superseding.js";
  * card `loading` and delays nothing else.
  */
 
-/** What one feed currently knows. */
-export interface FeedSnapshot<T> {
-  /** True once at least one attempt has finished, whatever its outcome. */
-  readonly settled: boolean;
-  /** The last answer that arrived. Kept when a later refresh fails, so a stale view stays readable. */
-  readonly value: T | null;
-  /** When `value` arrived (epoch ms), or `null` when none has. */
-  readonly fetchedAt: number | null;
-  /** True when the most recent attempt failed. */
-  readonly failed: boolean;
-}
+export type { FeedSnapshot } from "./feed-snapshot.js";
 
 const NEVER: FeedSnapshot<never> = { settled: false, value: null, fetchedAt: null, failed: false };
 
@@ -102,17 +93,19 @@ let lastRefreshAt = 0;
  * one still in flight (sequence token), so a slow answer can never overwrite a
  * newer one. A failure keeps the last good value and marks the feed failed.
  */
-const dueToday = superseding(dueTodayFeed, () => tasksApi().dueToday({ zone: currentZone() }));
+const dueTodayRefresher = superseding(dueTodayFeed, () =>
+  tasksApi().dueToday({ zone: currentZone() }),
+);
 
 export function refreshDueToday(): Promise<void> {
-  return dueToday.refresh();
+  return dueTodayRefresher.refresh();
 }
 
 /** Asks the service for the research status. Same contract as {@link refreshDueToday}. */
-const automation = superseding(automationFeed, () => researchApi().status());
+const automationRefresher = superseding(automationFeed, () => researchApi().status());
 
 export function refreshAutomation(): Promise<void> {
-  return automation.refresh();
+  return automationRefresher.refresh();
 }
 
 /**
@@ -122,16 +115,19 @@ export function refreshAutomation(): Promise<void> {
  * It reads through the `researchApi()` holder, never the Research view's own
  * `reportRows` signal, which is reset when the last Research view unmounts.
  */
-const latestReport = superseding(latestReportFeed, async (): Promise<LatestReportAnswer> => {
-  const page = await researchApi().list(undefined);
-  return {
-    latest: page.rows.find((row): row is ReadableReportRow => row.readable) ?? null,
-    unreadableCount: page.rows.filter((row) => !row.readable).length,
-  };
-});
+const latestReportRefresher = superseding(
+  latestReportFeed,
+  async (): Promise<LatestReportAnswer> => {
+    const page = await researchApi().list(undefined);
+    return {
+      latest: page.rows.find((row): row is ReadableReportRow => row.readable) ?? null,
+      unreadableCount: page.rows.filter((row) => !row.readable).length,
+    };
+  },
+);
 
 export function refreshLatestReport(): Promise<void> {
-  return latestReport.refresh();
+  return latestReportRefresher.refresh();
 }
 
 /** Refreshes every Overview feed. */
@@ -143,9 +139,9 @@ export function refreshOverviewFeeds(): void {
 
 /** Clears every feed and invalidates answers still in flight (tests, and unload). */
 export function resetOverviewFeeds(): void {
-  dueToday.invalidate();
-  automation.invalidate();
-  latestReport.invalidate();
+  dueTodayRefresher.invalidate();
+  automationRefresher.invalidate();
+  latestReportRefresher.invalidate();
   dueTodayFeed.value = NEVER;
   automationFeed.value = NEVER;
   latestReportFeed.value = NEVER;

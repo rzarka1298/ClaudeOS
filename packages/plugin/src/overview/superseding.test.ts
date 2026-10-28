@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { signal } from "@preact/signals";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FeedSnapshot } from "./overview-feeds.js";
+import type { FeedSnapshot } from "./feed-snapshot.js";
 import { superseding } from "./superseding.js";
 
 /**
@@ -89,5 +91,41 @@ describe("superseding(feed, fetcher)", () => {
     (calls[1] as Deferred).resolve("fresh");
     await again;
     expect(feed.value.value).toBe("fresh");
+  });
+
+  it("FIX2A R8a: an older answer that REJECTS after a newer success leaves the newer value and does not mark the feed failed", async () => {
+    const feed = signal<FeedSnapshot<string>>(NEVER);
+    const calls = [deferred(), deferred()];
+    let next = 0;
+    const { refresh } = superseding(feed, () => (calls[next++] as Deferred).promise);
+    const older = refresh();
+    const newer = refresh();
+    (calls[1] as Deferred).resolve("newer");
+    await newer;
+    (calls[0] as Deferred).reject(new Error("late failure"));
+    await older;
+    expect(feed.value).toEqual({ settled: true, value: "newer", fetchedAt: NOW, failed: false });
+  });
+
+  it("FIX2A R8b: a newer failure while an older success is in flight is recorded, and the older success is ignored", async () => {
+    const feed = signal<FeedSnapshot<string>>(NEVER);
+    const calls = [deferred(), deferred()];
+    let next = 0;
+    const { refresh } = superseding(feed, () => (calls[next++] as Deferred).promise);
+    const older = refresh();
+    const newer = refresh();
+    (calls[1] as Deferred).reject(new Error("service away"));
+    await newer;
+    expect(feed.value).toEqual({ settled: true, value: null, fetchedAt: null, failed: true });
+    (calls[0] as Deferred).resolve("older success");
+    await older;
+    // The newer attempt is the latest word: its failure stands and the stale success does not undo it.
+    expect(feed.value).toEqual({ settled: true, value: null, fetchedAt: null, failed: true });
+  });
+
+  it("FIX2A R6: the helper takes FeedSnapshot from the shared module, so it and overview-feeds do not import each other", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/overview/superseding.ts"), "utf8");
+    expect(source).not.toMatch(/from\s+["']\.\/overview-feeds\.js["']/);
+    expect(source).toMatch(/from\s+["']\.\/feed-snapshot\.js["']/);
   });
 });
