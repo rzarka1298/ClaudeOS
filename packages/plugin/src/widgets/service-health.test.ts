@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import type { LastEventInfo } from "../connection-state.js";
+import type { EventClientState } from "@ccc/service-api-client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { connectionState, type LastEventInfo } from "../connection-state.js";
+import { attachEventClient, configureConnectionDisplayHome } from "../service-connection.js";
 import { serviceHealthStateFor } from "./service-health.js";
 
 /**
@@ -56,5 +58,36 @@ describe("serviceHealthStateFor", () => {
       partiality: { partial: false },
       isEmpty: false,
     });
+  });
+});
+
+describe("the Service health card shows the scrubbed disconnect reason (D-11, DIAG-06)", () => {
+  afterEach(() => {
+    configureConnectionDisplayHome(null);
+    connectionState.value = { kind: "connecting" };
+  });
+
+  it("carries a state that came through the event-client mapping with the socket path as ~/", () => {
+    configureConnectionDisplayHome("/Users/USERNAME");
+    let emit: ((state: EventClientState) => void) | undefined;
+    attachEventClient({
+      subscribe(_onEvent, onStateChange) {
+        emit = onStateChange;
+      },
+      dispose: vi.fn(),
+    });
+    emit?.({
+      kind: "disconnected",
+      reason: "connect ENOENT /Users/USERNAME/.claude-command-center/service.sock",
+    });
+
+    const state = serviceHealthStateFor(connectionState.value, undefined, CHANGED_AT);
+    if (state.kind !== "ready") throw new Error("expected ready");
+    expect(state.data).toEqual({
+      connection: "disconnected",
+      reason: "connect ENOENT ~/.claude-command-center/service.sock",
+    });
+    expect(JSON.stringify(state)).not.toContain("/Users/");
+    expect(JSON.stringify(state)).not.toContain("USERNAME");
   });
 });

@@ -93,7 +93,7 @@ describe("Shell", () => {
     expect(screen.getByText(/Disconnected — connect ECONNREFUSED/)).toBeTruthy();
   });
 
-  it("renders a disconnect reason that came through the event client with the socket path as ~/ (D-11, DIAG-06)", () => {
+  it("renders a disconnect reason that came through the event client with the socket path as ~/ (D-11, DIAG-06)", async () => {
     configureConnectionDisplayHome("/Users/USERNAME");
     try {
       let emit: ((state: EventClientState) => void) | undefined;
@@ -104,7 +104,7 @@ describe("Shell", () => {
         dispose: vi.fn(),
       });
       const { container } = render(<Shell />);
-      act(() => {
+      await act(async () => {
         emit?.({
           kind: "disconnected",
           reason: "connect ENOENT /Users/USERNAME/.claude-command-center/service.sock",

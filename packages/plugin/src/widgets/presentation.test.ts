@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import type { ConnectionState } from "../connection-state.js";
+import type { EventClientState } from "@ccc/service-api-client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { type ConnectionState, connectionState } from "../connection-state.js";
+import { attachEventClient, configureConnectionDisplayHome } from "../service-connection.js";
 import type { DataDependencyKey, WidgetState } from "./contract.js";
 import type { CardPresentation } from "./presentation.js";
 import { resolveCardPresentation } from "./presentation.js";
@@ -317,5 +319,35 @@ describe("a source that is not part of this version (plan 08-14, UI-SPEC R-12)",
       });
       expect(presentation.footer.sources[0]?.status).not.toBe("not-in-version");
     }
+  });
+});
+
+describe("the widget presentation text carries the scrubbed disconnect reason (D-11, DIAG-06)", () => {
+  afterEach(() => {
+    configureConnectionDisplayHome(null);
+    connectionState.value = { kind: "connecting" };
+  });
+
+  it("has no absolute path or user segment for a reason that came through the event-client mapping", () => {
+    configureConnectionDisplayHome("/Users/USERNAME");
+    let emit: ((state: EventClientState) => void) | undefined;
+    attachEventClient({
+      subscribe(_onEvent, onStateChange) {
+        emit = onStateChange;
+      },
+      dispose: vi.fn(),
+    });
+    emit?.({
+      kind: "disconnected",
+      reason: "connect ENOENT /Users/USERNAME/.claude-command-center/service.sock",
+    });
+
+    const presentation = resolveCardPresentation({ kind: "unavailable" }, connectionState.value, [
+      SERVICE_KEY,
+    ]);
+    if (presentation.kind !== "disconnected") throw new Error("expected disconnected");
+    expect(presentation.reason).toBe("connect ENOENT ~/.claude-command-center/service.sock");
+    expect(JSON.stringify(presentation)).not.toContain("/Users/");
+    expect(JSON.stringify(presentation)).not.toContain("USERNAME");
   });
 });
