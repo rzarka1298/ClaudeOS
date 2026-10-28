@@ -90,6 +90,11 @@ export function createEventClient({
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
   let lastEventId: number | undefined;
+  // The id of the last snapshot this client adopted. Events at or below it are already contained
+  // in that snapshot, so they are neither delivered nor allowed to move the position back. Reset
+  // to 0 wherever `lastEventId` is forgotten: a restarted service restarts its ids (see
+  // SnapshotResponseSchema), and its first events must not be mistaken for old ones.
+  let deliveryFloor = 0;
   let parser = createEventStreamParser();
 
   // Liveness watchdog (#PLUG-04 UAT fix): a `launchctl bootout` SIGTERM
@@ -182,6 +187,7 @@ export function createEventClient({
                       return;
                     }
                     lastEventId = result.data.lastEventId;
+                    deliveryFloor = result.data.lastEventId;
                     onSnapshotCb?.(result.data);
                     resolve(true);
                   } catch (err) {
@@ -226,13 +232,16 @@ export function createEventClient({
           // for a full resync (the service answers a header-less connection
           // with `stream.resync`), and retry the whole flow from scratch.
           lastEventId = undefined;
+          deliveryFloor = 0;
           conn.end("snapshot fetch failed");
           return;
         }
         res.resume();
         continue;
       }
-      if (event.id > 0) lastEventId = event.id;
+      // Queued behind a resync in the same chunk, but already inside the snapshot just adopted.
+      if (event.id > 0 && event.id <= deliveryFloor) continue;
+      if (event.id > 0) lastEventId = Math.max(lastEventId ?? 0, event.id);
       onEventCb?.(event);
     }
   }

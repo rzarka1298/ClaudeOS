@@ -176,6 +176,137 @@ describe("createEventClient", () => {
     client.dispose();
   });
 
+  describe("the position is monotonic across a resync (folded todo 2026-10-25-event-client-last-id-regress)", () => {
+    function answerSnapshot(call: PendingCall | undefined, lastEventId: number): void {
+      call?.respond();
+      call?.res.emit(
+        "data",
+        Buffer.from(
+          JSON.stringify({
+            lastEventId,
+            state: { serviceStartedAt: "t", projects: EMPTY_PROJECTS_SNAPSHOT },
+          }),
+        ),
+      );
+      call?.res.emit("end");
+    }
+
+    async function reconnectHeader(): Promise<string | undefined> {
+      const before = pendingCalls.length;
+      pendingCalls[0]?.res.emit("end");
+      await flush();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await flush();
+      return pendingCalls.slice(before).find((call) => call.options.path !== SNAPSHOT_PATH)?.options
+        .headers?.["X-Last-Event-Id"];
+    }
+
+    it("does not deliver events already in the snapshot that were queued in the same chunk, and keeps the position at the snapshot", async () => {
+      const getToken = vi.fn().mockResolvedValue("tok");
+      const events: Array<{ id: number }> = [];
+      const client = createEventClient({ socketPath: "/tmp/sock", getToken });
+      client.subscribe(
+        (e) => events.push(e as { id: number }),
+        () => {},
+        () => {},
+      );
+      await flush();
+
+      const stream = pendingCalls[0];
+      stream?.respond();
+      // One chunk: the resync, then two deltas the snapshot (lastEventId 9) already contains.
+      stream?.res.emit("data", resyncRecord(5) + heartbeatRecord(7) + heartbeatRecord(8));
+      await flush();
+      answerSnapshot(pendingCalls[1], 9);
+      await flush();
+
+      expect(events.map((e) => e.id)).toEqual([]);
+      expect(await reconnectHeader()).toBe("9");
+      client.dispose();
+    });
+
+    it("delivers an event past the snapshot and moves the position to it", async () => {
+      const getToken = vi.fn().mockResolvedValue("tok");
+      const events: Array<{ id: number }> = [];
+      const client = createEventClient({ socketPath: "/tmp/sock", getToken });
+      client.subscribe(
+        (e) => events.push(e as { id: number }),
+        () => {},
+        () => {},
+      );
+      await flush();
+
+      const stream = pendingCalls[0];
+      stream?.respond();
+      stream?.res.emit("data", resyncRecord(5) + heartbeatRecord(8) + heartbeatRecord(10));
+      await flush();
+      answerSnapshot(pendingCalls[1], 9);
+      await flush();
+
+      expect(events.map((e) => e.id)).toEqual([10]);
+      expect(await reconnectHeader()).toBe("10");
+      client.dispose();
+    });
+
+    it("never reports an older position after a newer one", async () => {
+      const getToken = vi.fn().mockResolvedValue("tok");
+      const client = createEventClient({ socketPath: "/tmp/sock", getToken });
+      client.subscribe(
+        () => {},
+        () => {},
+      );
+      await flush();
+
+      const stream = pendingCalls[0];
+      stream?.respond();
+      stream?.res.emit("data", heartbeatRecord(12));
+      await flush();
+      stream?.res.emit("data", heartbeatRecord(11));
+      await flush();
+
+      expect(await reconnectHeader()).toBe("12");
+      client.dispose();
+    });
+
+    it("resets the floor with the position: a reconnect to a restarted service whose ids restart is accepted", async () => {
+      const getToken = vi.fn().mockResolvedValue("tok");
+      const events: Array<{ id: number }> = [];
+      const client = createEventClient({ socketPath: "/tmp/sock", getToken });
+      client.subscribe(
+        (e) => events.push(e as { id: number }),
+        () => {},
+        () => {},
+      );
+      await flush();
+
+      // First stream: a snapshot at 9 sets the floor to 9.
+      const first = pendingCalls[0];
+      first?.respond();
+      first?.res.emit("data", resyncRecord(5));
+      await flush();
+      answerSnapshot(pendingCalls[1], 9);
+      await flush();
+      // A second resync whose snapshot cannot be fetched sends the position back to undefined.
+      first?.res.emit("data", resyncRecord(11));
+      await flush();
+      pendingCalls[2]?.req.emit("error", connectionRefused());
+      await flush();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await flush();
+
+      const reconnect = pendingCalls.find(
+        (call, index) => index > 2 && call.options.path !== SNAPSHOT_PATH,
+      );
+      expect(reconnect?.options.headers?.["X-Last-Event-Id"]).toBeUndefined();
+      reconnect?.respond();
+      reconnect?.res.emit("data", heartbeatRecord(1));
+      await flush();
+
+      expect(events.map((e) => e.id)).toEqual([1]);
+      client.dispose();
+    });
+  });
+
   it.each([
     [
       "an unusable snapshot body",
