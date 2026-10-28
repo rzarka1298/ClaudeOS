@@ -608,6 +608,65 @@ function isRunGone(error: unknown): boolean {
   return error instanceof JobRunNotFoundError || error instanceof JobRunNotInFlightError;
 }
 
+/** What the synthesis stage needs: the usable sources, the run nonce, the summariser, the stored texts. */
+export interface SynthesisInput {
+  /** The sources whose raw note was written and read back, in allowlist order. */
+  readonly usable: readonly PreparedSource[];
+  readonly nonce: string;
+  readonly choice: SummariserChoice;
+  /** The stored raw text of each usable source, by source id: what a quote is checked against. */
+  readonly stored: ReadonlyMap<string, string>;
+}
+
+/** What the synthesis stage answers (a failure is thrown as a StageFailure). */
+export interface SynthesisOutput {
+  readonly items: ReportItem[];
+}
+
+/**
+ * The only model call of a run (Phase 10 replaces the summariser behind this one function): delimited
+ * evidence in, text out, then the trusted validation and a second quote check against the stored text.
+ * Throws a StageFailure with the run's error code; appends exactly one `synthesis` stage on success.
+ */
+export async function runSynthesisStage(
+  deps: ResearchPipelineDeps,
+  trace: RunTrace,
+  input: SynthesisInput,
+): Promise<SynthesisOutput> {
+  const { usable, nonce, choice, stored } = input;
+  trace.phase = "summarise";
+  assertLive(trace);
+  const sourceIds = usable.map((source) => source.sourceId);
+  const delimited = delimitSourcesWithReport(
+    usable.map((source) => ({ sourceId: source.sourceId, text: source.evidence })),
+    nonce,
+  );
+  nameEffect(deps.audit, PIPELINE_EFFECTS.summarise);
+  const answer = await summariseSources(
+    { delimitedContent: delimited.composed, sourceIds },
+    choice.transport,
+  );
+  assertLive(trace);
+  if (!answer.ok) throw new StageFailure(answer.code);
+  const validation = validateSummariserOutput(answer.text, {
+    sources: Object.fromEntries(usable.map((source) => [source.sourceId, source.evidence])),
+    nonce,
+  });
+  if (!validation.ok) throw new StageFailure(validation.code);
+  // Every quote is checked once more, with the one predicate, against the text that is stored.
+  const items: ReportItem[] = validation.items.filter(
+    (item) =>
+      item.quote === undefined ||
+      item.citedSourceIds.every((id) => quoteInSource(stored.get(id) ?? "", item.quote ?? "")),
+  );
+  // Zero surviving items is not a success: nothing was reported.
+  if (items.length === 0) throw new StageFailure("summariser-invalid-output");
+  const kindCounts: Record<string, number> = {};
+  for (const item of items) kindCounts[item.kind] = (kindCounts[item.kind] ?? 0) + 1;
+  appendStage(deps, trace, "synthesis", [], kindCounts);
+  return { items };
+}
+
 async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<PipelineResult> {
   // capture
   trace.phase = "capture";
@@ -752,36 +811,7 @@ async function runStages(deps: ResearchPipelineDeps, trace: RunTrace): Promise<P
   if (usable.length === 0) throw new StageFailure("all-sources-failed");
 
   // synthesis
-  trace.phase = "summarise";
-  assertLive(trace);
-  const sourceIds = usable.map((source) => source.sourceId);
-  const delimited = delimitSourcesWithReport(
-    usable.map((source) => ({ sourceId: source.sourceId, text: source.evidence })),
-    nonce,
-  );
-  nameEffect(deps.audit, PIPELINE_EFFECTS.summarise);
-  const answer = await summariseSources(
-    { delimitedContent: delimited.composed, sourceIds },
-    choice.transport,
-  );
-  assertLive(trace);
-  if (!answer.ok) throw new StageFailure(answer.code);
-  const validation = validateSummariserOutput(answer.text, {
-    sources: Object.fromEntries(usable.map((source) => [source.sourceId, source.evidence])),
-    nonce,
-  });
-  if (!validation.ok) throw new StageFailure(validation.code);
-  // Every quote is checked once more, with the one predicate, against the text that is stored.
-  const items: ReportItem[] = validation.items.filter(
-    (item) =>
-      item.quote === undefined ||
-      item.citedSourceIds.every((id) => quoteInSource(stored.get(id) ?? "", item.quote ?? "")),
-  );
-  // Zero surviving items is not a success: nothing was reported.
-  if (items.length === 0) throw new StageFailure("summariser-invalid-output");
-  const kindCounts: Record<string, number> = {};
-  for (const item of items) kindCounts[item.kind] = (kindCounts[item.kind] ?? 0) + 1;
-  appendStage(deps, trace, "synthesis", [], kindCounts);
+  const { items } = await runSynthesisStage(deps, trace, { usable, nonce, choice, stored });
 
   // Publication, all or nothing: the report first (so no wiki note ever cites a report that does
   // not exist), then the wiki notes, then the finalise. Any failure from the first report write
