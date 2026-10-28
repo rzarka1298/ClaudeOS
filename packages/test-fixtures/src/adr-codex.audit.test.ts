@@ -386,6 +386,10 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
       /^\| 8\. Slice Proof, Settings & Health[^\n]*$/m,
       "| 8. Slice Proof, Settings & Health | 0/TBD | Not started | - |",
     );
+    // Phases 9 and 10, added 2026-10-27 to close milestone 1 (list lines, progress rows, sections).
+    roadmapRemainder = roadmapRemainder.replace(/^- \[[ x]\] \*\*Phase (?:9|10):[^\n]*\n/gm, "");
+    roadmapRemainder = roadmapRemainder.replace(/^\| (?:9|10)\. [^\n]*\n/gm, "");
+    roadmapRemainder = roadmapRemainder.replace(/\n\n### Phase (?:9|10):[\s\S]*?(?=\n\n### Phase |\n\n---\n)/g, "");
     roadmapRemainder = roadmapRemainder.replace(/Phases (?:execute|merge) [^\n]+/gm, "MERGE-ORDER");
     roadmapRemainder = roadmapRemainder.replace(
       /\| 05\.1\. Codex Co-Work & Usage \(INSERTED\).*/gm,
