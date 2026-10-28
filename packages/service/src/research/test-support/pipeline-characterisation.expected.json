@@ -1,0 +1,616 @@
+[
+  {
+    "scenario": "success",
+    "result": {
+      "outcome": "success",
+      "errorCode": null,
+      "sourceCount": 3,
+      "sourceTotal": 3,
+      "reportNoteId": "<id:1>",
+      "unavailable": []
+    },
+    "trace": {
+      "stages": [
+        {
+          "stage": "capture",
+          "at": "<time:1>",
+          "noteIds": []
+        },
+        {
+          "stage": "raw",
+          "at": "<time:1>",
+          "noteIds": [
+            "<id:2>",
+            "<id:3>",
+            "<id:4>"
+          ]
+        },
+        {
+          "stage": "synthesis",
+          "at": "<time:1>",
+          "noteIds": []
+        },
+        {
+          "stage": "wiki",
+          "at": "<time:1>",
+          "noteIds": [
+            "<id:5>",
+            "<id:6>",
+            "<id:7>"
+          ]
+        },
+        {
+          "stage": "deliverable",
+          "at": "<time:1>",
+          "noteIds": [
+            "<id:1>"
+          ]
+        },
+        {
+          "stage": "output",
+          "at": "<time:1>",
+          "noteIds": [
+            "<id:1>"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "Alpha releases",
+          "contributed": true,
+          "code": null
+        },
+        {
+          "label": "Beta releases",
+          "contributed": true,
+          "code": null
+        },
+        {
+          "label": "Gamma releases",
+          "contributed": true,
+          "code": null
+        }
+      ],
+      "unavailable": [],
+      "sourceTotal": 3,
+      "sourceCount": 3,
+      "reportNoteId": "<id:1>",
+      "reportPath": "global/output/research-2026-10-15-<id:8>.md",
+      "phase": "write"
+    },
+    "audit": [
+      "automation-run.record",
+      "research.fetch-sources",
+      "research.write-notes",
+      "automation-run.record",
+      "research.summarise",
+      "automation-run.record",
+      "research.write-notes",
+      "automation-run.record",
+      "automation-run.record",
+      "research.write-notes",
+      "automation-run.record"
+    ],
+    "logs": []
+  },
+  {
+    "scenario": "all-sources-failed at capture",
+    "result": {
+      "outcome": "failure",
+      "errorCode": "all-sources-failed",
+      "sourceCount": 0,
+      "sourceTotal": 0,
+      "reportNoteId": null,
+      "unavailable": []
+    },
+    "trace": {
+      "stages": [],
+      "sources": [],
+      "unavailable": [],
+      "sourceTotal": 0,
+      "sourceCount": 0,
+      "reportNoteId": null,
+      "reportPath": null,
+      "phase": "capture"
+    },
+    "audit": [],
+    "logs": [
+      {
+        "level": "warn",
+        "event": "research-sources-unusable",
+        "code": "invalid"
+      }
+    ]
+  },
+  {
+    "scenario": "all-sources-failed at fetch",
+    "result": {
+      "outcome": "failure",
+      "errorCode": "all-sources-failed",
+      "sourceCount": 0,
+      "sourceTotal": 3,
+      "reportNoteId": null,
+      "unavailable": []
+    },
+    "trace": {
+      "stages": [
+        {
+          "stage": "capture",
+          "at": "<time:1>",
+          "noteIds": []
+        }
+      ],
+      "sources": [
+        {
+          "label": "Alpha releases",
+          "contributed": false,
+          "code": null,
+          "status": "pending"
+        },
+        {
+          "label": "Beta releases",
+          "contributed": false,
+          "code": null,
+          "status": "pending"
+        },
+        {
+          "label": "Gamma releases",
+          "contributed": false,
+          "code": null,
+          "status": "pending"
+        }
+      ],
+      "unavailable": [],
+      "sourceTotal": 3,
+      "sourceCount": 0,
+      "reportNoteId": null,
+      "reportPath": null,
+      "phase": "fetch"
+    },
+    "audit": [
+      "automation-run.record",
+      "research.fetch-sources"
+    ],
+    "logs": []
+  },
+  {
+    "scenario": "all-sources-failed at prepare",
+    "result": {
+      "outcome": "failure",
+      "errorCode": "all-sources-failed",
+      "sourceCount": 0,
+      "sourceTotal": 3,
+      "reportNoteId": null,
+      "unavailable": [
+        {
+          "sourceId": "2bf98c5d6cbdb720a9190da60d74c741",
+          "label": "Alpha releases",
+          "code": "network-error"
+        },
+        {
+          "sourceId": "1126dd9f8141cbccf8078b707f1fbd4f",
+          "label": "Beta releases",
+          "code": "network-error"
+        },
+        {
+          "sourceId": "54a9e9a4dd47a93eb2f3897e4c0ac3ac",
+          "label": "Gamma releases",
+          "code": "network-error"
+        }
+      ]
+    },
+    "trace": {
+      "stages": [
+        {
+          "stage": "capture",
+          "at": "<time:1>",
+          "noteIds": []
+        }
+      ],
+      "sources": [
+        {
+          "label": "Alpha releases",
+          "contributed": false,
+          "code": "network-error"
+        },
+        {
+          "label": "Beta releases",
+          "contributed": false,
+          "code": "network-error"
+        },
+        {
+          "label": "Gamma releases",
+          "contributed": false,
+          "code": "network-error"
+        }
+      ],
+      "unavailable": [
+        {
+          "sourceId": "2bf98c5d6cbdb720a9190da60d74c741",
+          "label": "Alpha releases",
+          "code": "network-error"
+        },
+        {
+          "sourceId": "1126dd9f8141cbccf8078b707f1fbd4f",
+          "label": "Beta releases",
+          "code": "network-error"
+        },
+        {
+          "sourceId": "54a9e9a4dd47a93eb2f3897e4c0ac3ac",
+          "label": "Gamma releases",
+          "code": "network-error"
+        }
+      ],
+      "sourceTotal": 3,
+      "sourceCount": 0,
+      "reportNoteId": null,
+      "reportPath": null,
+      "phase": "prepare"
+    },
+    "audit": [
+      "automation-run.record",
+      "research.fetch-sources"
+    ],
+    "logs": []
+  },
+  {
+    "scenario": "all-sources-failed at raw write",
+    "result": {
+      "outcome": "failure",
+      "errorCode": "all-sources-failed",
+      "sourceCount": 0,
+      "sourceTotal": 3,
+      "reportNoteId": null,
+      "unavailable": [
+        {
+          "sourceId": "2bf98c5d6cbdb720a9190da60d74c741",
+          "label": "Alpha releases",
+          "code": "parse-failure"
+        },
+        {
+          "sourceId": "1126dd9f8141cbccf8078b707f1fbd4f",
+          "label": "Beta releases",
+          "code": "parse-failure"
+        },
+        {
+          "sourceId": "54a9e9a4dd47a93eb2f3897e4c0ac3ac",
+          "label": "Gamma releases",
+          "code": "parse-failure"
+        }
+      ]
+    },
+    "trace": {
+      "stages": [
+        {
+          "stage": "capture",
+          "at": "<time:1>",
+          "noteIds": []
+        }
+      ],
+      "sources": [
+        {
+          "label": "Alpha releases",
+          "contributed": false,
+          "code": "parse-failure"
+        },
+        {
+          "label": "Beta releases",
+          "contributed": false,
+          "code": "parse-failure"
+        },
+        {
+          "label": "Gamma releases",
+          "contributed": false,
+          "code": "parse-failure"
+        }
+      ],
+      "unavailable": [
+        {
+          "sourceId": "2bf98c5d6cbdb720a9190da60d74c741",
+          "label": "Alpha releases",
+          "code": "parse-failure"
+        },
+        {
+          "sourceId": "1126dd9f8141cbccf8078b707f1fbd4f",
+          "label": "Beta releases",
+          "code": "parse-failure"
+        },
+        {
+          "sourceId": "54a9e9a4dd47a93eb2f3897e4c0ac3ac",
+          "label": "Gamma releases",
+          "code": "parse-failure"
+        }
+      ],
+      "sourceTotal": 3,
+      "sourceCount": 0,
+      "reportNoteId": null,
+      "reportPath": null,
+      "phase": "write"
+    },
+    "audit": [
+      "automation-run.record",
+      "research.fetch-sources",
+      "research.write-notes"
+    ],
+    "logs": [
+      {
+        "level": "warn",
+        "event": "research-raw-snapshot-refused",
+        "code": "parse-failure",
+        "errorName": "SourceNoteError"
+      },
+      {
+        "level": "warn",
+        "event": "research-raw-snapshot-refused",
+        "code": "parse-failure",
+        "errorName": "SourceNoteError"
+      },
+      {
+        "level": "warn",
+        "event": "research-raw-snapshot-refused",
+        "code": "parse-failure",
+        "errorName": "SourceNoteError"
+      }
+    ]
+  },
+  {
+    "scenario": "summariser-failed",
+    "result": {
+      "outcome": "failure",
+      "errorCode": "summariser-failed",
+      "sourceCount": 0,
+      "sourceTotal": 3,
+      "reportNoteId": null,
+      "unavailable": []
+    },
+    "trace": {
+      "stages": [
+        {
+          "stage": "capture",
+          "at": "<time:1>",
+          "noteIds": []
+        },
+        {
+          "stage": "raw",
+          "at": "<time:1>",
+          "noteIds": [
+            "<id:1>",
+            "<id:2>",
+            "<id:3>"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "Alpha releases",
+          "contributed": false,
+          "code": null,
+          "status": "fetched"
+        },
+        {
+          "label": "Beta releases",
+          "contributed": false,
+          "code": null,
+          "status": "fetched"
+        },
+        {
+          "label": "Gamma releases",
+          "contributed": false,
+          "code": null,
+          "status": "fetched"
+        }
+      ],
+      "unavailable": [],
+      "sourceTotal": 3,
+      "sourceCount": 0,
+      "reportNoteId": null,
+      "reportPath": null,
+      "phase": "summarise"
+    },
+    "audit": [
+      "automation-run.record",
+      "research.fetch-sources",
+      "research.write-notes",
+      "automation-run.record",
+      "research.summarise"
+    ],
+    "logs": []
+  },
+  {
+    "scenario": "summariser-invalid-output",
+    "result": {
+      "outcome": "failure",
+      "errorCode": "summariser-invalid-output",
+      "sourceCount": 0,
+      "sourceTotal": 3,
+      "reportNoteId": null,
+      "unavailable": []
+    },
+    "trace": {
+      "stages": [
+        {
+          "stage": "capture",
+          "at": "<time:1>",
+          "noteIds": []
+        },
+        {
+          "stage": "raw",
+          "at": "<time:1>",
+          "noteIds": [
+            "<id:1>",
+            "<id:2>",
+            "<id:3>"
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "Alpha releases",
+          "contributed": false,
+          "code": null,
+          "status": "fetched"
+        },
+        {
+          "label": "Beta releases",
+          "contributed": false,
+          "code": null,
+          "status": "fetched"
+        },
+        {
+          "label": "Gamma releases",
+          "contributed": false,
+          "code": null,
+          "status": "fetched"
+        }
+      ],
+      "unavailable": [],
+      "sourceTotal": 3,
+      "sourceCount": 0,
+      "reportNoteId": null,
+      "reportPath": null,
+      "phase": "summarise"
+    },
+    "audit": [
+      "automation-run.record",
+      "research.fetch-sources",
+      "research.write-notes",
+      "automation-run.record",
+      "research.summarise"
+    ],
+    "logs": []
+  },
+  {
+    "scenario": "vault-write-failed",
+    "result": {
+      "outcome": "failure",
+      "errorCode": "vault-write-failed",
+      "sourceCount": 0,
+      "sourceTotal": 3,
+      "reportNoteId": null,
+      "unavailable": []
+    },
+    "trace": {
+      "stages": [
+        {
+          "stage": "capture",
+          "at": "<time:1>",
+          "noteIds": []
+        },
+        {
+          "stage": "raw",
+          "at": "<time:1>",
+          "noteIds": [
+            "<id:1>",
+            "<id:2>",
+            "<id:3>"
+          ]
+        },
+        {
+          "stage": "synthesis",
+          "at": "<time:1>",
+          "noteIds": []
+        }
+      ],
+      "sources": [
+        {
+          "label": "Alpha releases",
+          "contributed": false,
+          "code": null,
+          "status": "fetched"
+        },
+        {
+          "label": "Beta releases",
+          "contributed": false,
+          "code": null,
+          "status": "fetched"
+        },
+        {
+          "label": "Gamma releases",
+          "contributed": false,
+          "code": null,
+          "status": "fetched"
+        }
+      ],
+      "unavailable": [],
+      "sourceTotal": 3,
+      "sourceCount": 0,
+      "reportNoteId": null,
+      "reportPath": null,
+      "phase": "write"
+    },
+    "audit": [
+      "automation-run.record",
+      "research.fetch-sources",
+      "research.write-notes",
+      "automation-run.record",
+      "research.summarise",
+      "automation-run.record",
+      "research.write-notes"
+    ],
+    "logs": [
+      {
+        "level": "warn",
+        "event": "research-pipeline-error",
+        "phase": "write",
+        "errorName": "Error"
+      }
+    ]
+  },
+  {
+    "scenario": "interrupted",
+    "result": {
+      "outcome": "failure",
+      "errorCode": "interrupted",
+      "sourceCount": 0,
+      "sourceTotal": 3,
+      "reportNoteId": null,
+      "unavailable": []
+    },
+    "trace": {
+      "stages": [
+        {
+          "stage": "capture",
+          "at": "<time:1>",
+          "noteIds": []
+        }
+      ],
+      "sources": [
+        {
+          "label": "Alpha releases",
+          "contributed": false,
+          "code": null,
+          "status": "pending"
+        },
+        {
+          "label": "Beta releases",
+          "contributed": false,
+          "code": null,
+          "status": "pending"
+        },
+        {
+          "label": "Gamma releases",
+          "contributed": false,
+          "code": null,
+          "status": "pending"
+        }
+      ],
+      "unavailable": [],
+      "sourceTotal": 3,
+      "sourceCount": 0,
+      "reportNoteId": null,
+      "reportPath": null,
+      "phase": "fetch"
+    },
+    "audit": [
+      "automation-run.record",
+      "research.fetch-sources"
+    ],
+    "logs": [
+      {
+        "level": "warn",
+        "event": "research-fetch-threw",
+        "errorName": "Error"
+      }
+    ]
+  }
+]
