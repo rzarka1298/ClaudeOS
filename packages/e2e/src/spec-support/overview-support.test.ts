@@ -154,7 +154,7 @@ describe("rendererReadOverviewCards (Test 2)", () => {
   it("reads the Today sections, the task rows by accessible name and the note", () => {
     const today = cardByTitle(cards, OVERVIEW_TEXT.todayTitle) as OverviewCard;
     expect(today.sections).toEqual([
-      { text: "Due today", focal: true },
+      { text: OVERVIEW_TEXT.dueTodayOverdueHeading, focal: true },
       { text: "Automation", focal: false },
     ]);
     expect(today.rows.map((row) => row.label)).toEqual([
@@ -449,7 +449,7 @@ const NEXT_OPEN_INNER =
 function withToday(inner: string): string {
   return mapCard(BASE_HTML, TODAY, (card) =>
     card.replace(
-      /(<div class="ccc-card-body">\s*)<h4 class="ccc-today-section" data-focal="true">Due today<\/h4>[\s\S]*?(<h4 class="ccc-today-section">Automation<\/h4>)/,
+      /(<div class="ccc-card-body">\s*)<h4 class="ccc-today-section" data-focal="true">Due today(?: and overdue)?<\/h4>[\s\S]*?(<h4 class="ccc-today-section">Automation<\/h4>)/,
       `$1${inner}$2`,
     ),
   );

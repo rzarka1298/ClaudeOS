@@ -292,4 +292,14 @@ describe("StatusLine", () => {
     expect(screen.getByRole("status")).toBe(line);
     expect(line.textContent).toBe("Bundle copied.");
   });
+
+  it("without a region renders the markup it always rendered; with region=bundle it adds only data-status-region", () => {
+    const plain = render(<StatusLine message="x" />);
+    expect(plain.container.innerHTML).toBe('<p class="ccc-settings-status" role="status">x</p>');
+    plain.unmount();
+    const bundle = render(<StatusLine message="x" region="bundle" />);
+    expect(bundle.container.innerHTML).toBe(
+      '<p class="ccc-settings-status" role="status" data-status-region="bundle">x</p>',
+    );
+  });
 });

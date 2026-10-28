@@ -44,6 +44,7 @@ const VIEW_FILES = [
  * implementation. Everything else, the views above all, reaches it through `export-port.ts`.
  */
 const EXPORT_FILE = "health/export.ts";
+const BUNDLE_FILE = "view/diagnostics-bundle.tsx";
 const FILE_SYSTEM_IMPORT = /^(electron|node:fs|node:fs\/promises|node:path)$/;
 
 /** The component files (the a11y floor below applies to every one of them). */
@@ -170,8 +171,11 @@ describe("no health fetch runs on a timer (D-05)", () => {
     expect(source).not.toMatch(/\bsetInterval\s*\(/);
     // FIX6B: the one exception is the export seam's containment bound, a single `setTimeout` that
     // fails a stalled file-system walk. It drives no fetch and is cleared when the walk answers.
+    // 09-04 (D-09): the bundle block's own status line makes an identical repeated message audible
+    // with one `setTimeout` (clear, then set again a beat later, the destination line's rule). It
+    // drives no fetch and is cleared on unmount.
     const timeouts = source.match(/\bsetTimeout\s*\(/g) ?? [];
-    expect(timeouts).toHaveLength(name === EXPORT_FILE ? 1 : 0);
+    expect(timeouts).toHaveLength(name === EXPORT_FILE || name === BUNDLE_FILE ? 1 : 0);
     expect(source).not.toMatch(/\bregistry\.(?:interval|timer)\b/);
     expect(source).not.toMatch(/\bDate\.now\s*\(/);
     expect(source).not.toMatch(/\bnowTick\b/);

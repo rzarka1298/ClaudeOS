@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { DetectionResponse, LauncherConfigView } from "@ccc/domain";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -768,5 +770,36 @@ describe("the Codex panel in the section (plan 05.1-31)", () => {
     });
     expect(screen.getByText("0 of 3 launchers set up")).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Codex" })).getByText("Set up")).toBeTruthy();
+  });
+});
+
+describe("Phase 8 polish items 1 and 4 (09-04)", () => {
+  it("Test 1: the Launchers heading is a sentence-case h3.ccc-settings-section-title, outside any card header", async () => {
+    mount(fakeActions());
+    await settle();
+    const heading = screen.getByRole("heading", { level: 3, name: "Launchers" });
+    expect(heading.tagName).toBe("H3");
+    expect(heading.className).toBe("ccc-settings-section-title");
+    expect(heading.textContent).toBe("Launchers");
+    // `.ccc-card-header h3` uppercases its heading (card labels); this heading must not sit in one.
+    expect(heading.closest(".ccc-card-header")).toBeNull();
+  });
+
+  it("Test 3: the Which Antigravity? radios are aligned with their label text by a scoped, non-important rule", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8").replace(
+      /\/\*[\s\S]*?\*\//g,
+      "",
+    );
+    const rule = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .map((m) => ({ selector: (m[1] ?? "").trim(), body: m[2] ?? "" }))
+      .find(
+        (r) =>
+          r.selector.startsWith(".ccc-command-center") &&
+          r.selector.includes(".ccc-radio-group") &&
+          r.selector.includes("input"),
+      );
+    expect(rule).toBeDefined();
+    expect(rule?.body).toMatch(/vertical-align:\s*middle/);
+    expect(rule?.body).not.toContain("!important");
   });
 });

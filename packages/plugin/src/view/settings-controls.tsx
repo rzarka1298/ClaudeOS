@@ -224,13 +224,21 @@ export function SettingSelect({
 }
 
 /**
- * The destination's one polite status line: a `role="status"` paragraph that is mounted before
- * its first message and only ever changes its text. It announces outcomes (a setting saved or
- * reverted, a copy, a check, a rebuild, a bundle) and never a section change.
+ * A polite status line: a `role="status"` paragraph that is mounted before its first message and
+ * only ever changes its text. The destination's top line announces outcomes (a setting saved or
+ * reverted, a copy, a check, a rebuild) and never a section change. The one other announcer is the
+ * diagnostic bundle block's own line (`region="bundle"`, D-09), which sits beside the bundle
+ * buttons so their outcome is visible where the owner pressed; readers find it by the attribute.
  */
-export function StatusLine({ message }: { readonly message: string }): VNode {
+export function StatusLine({
+  message,
+  region,
+}: {
+  readonly message: string;
+  readonly region?: "bundle";
+}): VNode {
   return (
-    <p className="ccc-settings-status" role="status">
+    <p className="ccc-settings-status" role="status" data-status-region={region}>
       {message}
     </p>
   );
