@@ -50,7 +50,31 @@ sed \
 # re-running install.sh after the plist changed (a rebuilt SERVICE_MAIN
 # path, a different NODE_PATH after an upgrade) actually takes effect
 # instead of silently keeping the previous registration alive.
+#
+# `bootout` returns before launchd has finished unloading the old job, so an
+# immediate `bootstrap` can fail with "Bootstrap failed: 5: Input/output
+# error" (the 08-UAT sitting saw this twice in a row). Poll `launchctl print`
+# until the label is gone before bootstrapping (D-10, SVC-12). The first poll
+# runs before any sleep, so a first install (nothing registered) waits zero
+# times. The knobs exist so a test can lower them; production keeps the
+# defaults (100 polls at 0.1 s, about 10 s).
+POLL_INTERVAL="${CCC_INSTALL_POLL_INTERVAL:-0.1}"
+POLL_LIMIT="${CCC_INSTALL_POLL_LIMIT:-100}"
+
+wait_until_gone() {
+  polls=0
+  while launchctl print "gui/$(id -u)/${LABEL}" >/dev/null 2>&1; do
+    polls=$((polls + 1))
+    if [ "${polls}" -ge "${POLL_LIMIT}" ]; then
+      echo "ERROR: ${LABEL} is still registered after waiting; run 'launchctl bootout gui/$(id -u)/${LABEL}' and try again." >&2
+      exit 1
+    fi
+    sleep "${POLL_INTERVAL}"
+  done
+}
+
 launchctl bootout "gui/$(id -u)/${LABEL}" >/dev/null 2>&1 || true
+wait_until_gone
 launchctl bootstrap "gui/$(id -u)" "${PLIST_DEST}"
 
 if ! launchctl print "gui/$(id -u)/${LABEL}" >/dev/null 2>&1; then
