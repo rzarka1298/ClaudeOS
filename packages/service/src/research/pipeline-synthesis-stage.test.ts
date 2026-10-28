@@ -9,13 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { TextTransport } from "../untrusted/index.js";
 import { createExtractiveTransport } from "./extractive-transport.js";
 import { sourceIdFor } from "./hash.js";
-import {
-  createRunTrace,
-  type PreparedSource,
-  type ResearchPipelineDeps,
-  runSynthesisStage,
-  type SynthesisInput,
-} from "./pipeline.js";
+import { createRunTrace, type PreparedSource, type ResearchPipelineDeps } from "./pipeline.js";
+import { runSynthesisStage, type SynthesisInput } from "./pipeline-stages.js";
 import { createKit, type Kit, URL_ONE, URL_TWO } from "./test-support/research-kit.js";
 
 const NONCE = "0123456789abcdef0123456789abcdef";
