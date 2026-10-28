@@ -162,7 +162,10 @@ function seedRun(patch: Partial<SessionRun> = {}): SessionRun {
   return run;
 }
 
-function sweeperWith(config: Partial<LivenessConfig> = {}): LivenessSweeper {
+function sweeperWith(
+  config: Partial<LivenessConfig> = {},
+  processFacts: Pick<ProcessFacts, "isAlive" | "readStartTimes"> = table.facts,
+): LivenessSweeper {
   const spied: Pick<ClaudePipeline, "apply" | "reattribute" | "backfillPidStart"> = {
     apply: (evidence) => {
       applied.push(evidence);
@@ -174,7 +177,7 @@ function sweeperWith(config: Partial<LivenessConfig> = {}): LivenessSweeper {
   return createLivenessSweeper({
     db: store.db,
     pipeline: spied,
-    processFacts: table.facts,
+    processFacts,
     logger: pino({ level: "silent" }),
     now: () => new Date(nowMs),
     config: { ...DEFAULT_LIVENESS_CONFIG, ...config },
@@ -466,6 +469,68 @@ describe("D-08 reproduction: an idle session with a live process", () => {
       nowMs = T0 + 1.5 * QUIET;
       await sweeper.sweepNow();
       expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+    });
+
+    // FIX3A L3: candidates are read at sweep start, then the sweep awaits the batched `ps`
+    // (up to 2 s). A hook event that lands in that window refreshes lastActivityAt; the
+    // timeout evidence built from the stale snapshot must not be applied over it.
+    it("a hook event landing during the ps await keeps the Run running (stale-snapshot race)", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      let eventDuringRead = false;
+      const racing: Pick<ProcessFacts, "isAlive" | "readStartTimes"> = {
+        isAlive: table.facts.isAlive,
+        readStartTimes: async (pids) => {
+          if (eventDuringRead) {
+            upsertSessionRun(store.db, {
+              ...(getSessionRun(store.db, run.runId) as SessionRun),
+              revision: 2,
+              lastActivityAt: new Date(nowMs).toISOString(),
+            });
+          }
+          return table.facts.readStartTimes(pids);
+        },
+      };
+      const sweeper = sweeperWith({}, racing);
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      eventDuringRead = true;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("a Run that ended during the ps await is not staled by the old snapshot", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      let endDuringRead = false;
+      const racing: Pick<ProcessFacts, "isAlive" | "readStartTimes"> = {
+        isAlive: table.facts.isAlive,
+        readStartTimes: async (pids) => {
+          if (endDuringRead) {
+            upsertSessionRun(store.db, {
+              ...(getSessionRun(store.db, run.runId) as SessionRun),
+              revision: 2,
+              state: "completed",
+              endedAt: new Date(nowMs).toISOString(),
+            });
+          }
+          return table.facts.readStartTimes(pids);
+        },
+      };
+      const sweeper = sweeperWith({}, racing);
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      endDuringRead = true;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("completed");
     });
 
     it("alternating unknown and same never stales and never flaps", async () => {

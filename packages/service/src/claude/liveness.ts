@@ -6,6 +6,7 @@ import {
   type SessionRun,
 } from "@ccc/domain";
 import {
+  getSessionRun,
   listRegisteredProjects,
   listRevivableRuns,
   listSessionRunsForView,
@@ -384,9 +385,24 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
           nowMs - unknownSince >= config.quietAfterMs &&
           nowMs - Date.parse(run.lastActivityAt ?? run.startedAt) >= config.quietAfterMs
         ) {
-          firstSeenUnknown.delete(run.runId);
-          await pipeline.apply({ kind: "identity-unknown-timeout", runId: run.runId, observedAt });
-          identityUnknownTimeouts += 1;
+          // The candidates were read before the batched `ps` (up to 2 s), so a hook
+          // event may have refreshed the Run meanwhile: judge the evidence against
+          // the Run as it is now, not as the sweep started (FIX3A L3).
+          const current = getSessionRun(db, run.runId);
+          if (
+            current !== null &&
+            current.pid === run.pid &&
+            PIDLESS_ACTIVE_STATES.has(current.state) &&
+            nowMs - Date.parse(current.lastActivityAt ?? current.startedAt) >= config.quietAfterMs
+          ) {
+            firstSeenUnknown.delete(run.runId);
+            await pipeline.apply({
+              kind: "identity-unknown-timeout",
+              runId: run.runId,
+              observedAt,
+            });
+            identityUnknownTimeouts += 1;
+          }
         }
         continue;
       }
