@@ -149,7 +149,8 @@ describe("09-11 D-15: listModifiedRolloutFiles yields to the event loop between 
       days.push(parts);
     }
     const real = recordingFs().fs;
-    const dayDir = (parts: readonly string[]): string => join(home?.root ?? "", "sessions", ...parts);
+    const dayDir = (parts: readonly string[]): string =>
+      join(home?.root ?? "", "sessions", ...parts);
     const namesFor = (): string[] => Array.from({ length: 250 }, (_, i) => rolloutName(i));
     const recent = (name: string): boolean => Number(name.slice(-12, -6)) % 7 === 0;
     const fs = {
