@@ -9,6 +9,7 @@ import {
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
+import { routeServiceEvent } from "../service-event-router.js";
 import { Overview } from "../view/overview.js";
 import {
   type ActiveSessionsData,
@@ -667,5 +668,83 @@ describe("Phase 9 Task 2 Test 3: a quiet session is not counted as active (R-04,
       />,
     );
     expect(container.textContent ?? "").toMatch(/▸ Running.* · active /);
+  });
+});
+
+describe("quiet appears with the clock and disappears on a real event (FIX3B Q7)", () => {
+  const NOW = Date.parse("2026-09-25T12:00:00.000Z");
+  const MIN = 60_000;
+
+  function renderCard() {
+    return render(
+      <Overview
+        layout={{ entries: [{ widgetId: "active-sessions", size: "tall" }], skipped: [] }}
+        stateFor={() => activeSessionsState}
+        connection={{ kind: "live" }}
+        now={NOW}
+      />,
+    );
+  }
+
+  function seedIdle(lastActivityAgoMs: number): void {
+    sessionsById.value = new Map([
+      [
+        runId(2),
+        session({
+          runId: runId(2),
+          revision: 3,
+          state: "running",
+          activity: "idle",
+          lastActivityAt: new Date(NOW - lastActivityAgoMs).toISOString(),
+        }),
+      ],
+    ]);
+    connectionState.value = { kind: "live" };
+  }
+
+  it("a Running row turns quiet as the clock advances, with no new event", () => {
+    seedIdle(20 * MIN);
+    nowTick.value = NOW;
+    const { container } = renderCard();
+    expect(container.textContent ?? "").toContain("▸ Running");
+    expect(container.textContent ?? "").not.toContain("⋯");
+
+    act(() => {
+      nowTick.value = NOW + 15 * MIN;
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("⋯ Idle — last event 35 min ago");
+    expect(text).not.toContain("▸ Running");
+  });
+
+  it("a real session.upserted through the router revives the quiet row to Running", () => {
+    seedIdle(41 * MIN);
+    nowTick.value = NOW;
+    const { container } = renderCard();
+    expect(container.textContent ?? "").toContain("⋯ Idle — last event 41 min ago");
+
+    const event: ServiceEvent = {
+      id: 7,
+      type: "session.upserted",
+      occurredAt: new Date(NOW - 5_000).toISOString(),
+      payload: {
+        session: session({
+          runId: runId(2),
+          revision: 4,
+          state: "running",
+          activity: "working",
+          lastActivityAt: new Date(NOW - 5_000).toISOString(),
+        }),
+      },
+    };
+    act(() => {
+      routeServiceEvent(event);
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("▸ Running");
+    expect(text).not.toContain("⋯");
+    expect(text).not.toContain("Idle — last event");
   });
 });
