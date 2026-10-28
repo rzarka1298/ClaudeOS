@@ -406,43 +406,139 @@ describe("D-08 reproduction: an idle session with a live process", () => {
     expect(stateOf(run.runId)).toBe("running");
   });
 
-  // 09-10 (D-06): an unchecked identity beyond the quiet threshold stops reading as plain
-  // running. It is sweeper evidence (the plugin never sees process identity), and it only
-  // ever yields `stale`, never an ending.
-  describe("identity unknown beyond the quiet threshold (09-10, D-06, SESS-06)", () => {
+  // 09-10 (D-06): an unchecked identity stops reading as plain running once it has stayed
+  // unchecked for the whole quiet threshold. It is sweeper evidence (the plugin never sees
+  // process identity), and it only ever yields `stale`, never an ending. FIX3A L2: the timeout
+  // needs the identity to be CONTINUOUSLY unknown for the threshold (a firstSeenUnknown clock,
+  // like firstSeenGone), not just unknown on the sweep that happens to find an old last event;
+  // one transient failed `ps` therefore stales nothing.
+  describe("identity unknown beyond the quiet threshold (09-10, D-06, SESS-06, FIX3A L2)", () => {
     const QUIET = DEFAULT_LIVENESS_CONFIG.quietAfterMs;
+    const SWEEP = DEFAULT_LIVENESS_CONFIG.sweepMs;
 
-    it("identity unknown at the quiet threshold: identity-unknown-timeout applied, Run stale", async () => {
+    it("a single unknown-identity sweep stales nothing, however old the last event", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      await sweeperWith().sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("identity continuously unknown for the whole threshold: identity-unknown-timeout applied, Run stale", async () => {
       table.spawnUnreadable(PID);
       const run = seedRun({
         activity: "idle",
         lastActivityAt: new Date(T0 - QUIET).toISOString(),
       });
-      await sweeperWith().sweepNow();
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET - 1;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
       expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
       expect(stateOf(run.runId)).toBe("stale");
     });
 
-    it("identity unknown one millisecond below the threshold: nothing applied, still running", async () => {
+    it("an event inside the unknown window keeps the Run running until the last event is old enough too", async () => {
       table.spawnUnreadable(PID);
       const run = seedRun({
         activity: "idle",
-        lastActivityAt: new Date(T0 - QUIET + 1).toISOString(),
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
       });
       const sweeper = sweeperWith();
       await sweeper.sweepNow();
+      // A hook event lands half a threshold in: the identity has now been unknown for the
+      // whole threshold, but the last event is only half a threshold old.
+      upsertSessionRun(store.db, {
+        ...(getSessionRun(store.db, run.runId) as SessionRun),
+        lastActivityAt: new Date(T0 + QUIET / 2).toISOString(),
+      });
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
       expect(appliedKinds(run.runId)).toEqual([]);
       expect(stateOf(run.runId)).toBe("running");
+      nowMs = T0 + 1.5 * QUIET;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
     });
 
-    it("a waiting-for-approval Run with an unknown identity beyond the threshold goes stale", async () => {
+    it("alternating unknown and same never stales and never flaps", async () => {
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      for (let sweep = 0; sweep < 12; sweep += 1) {
+        if (sweep % 2 === 0) table.spawnUnreadable(PID);
+        else table.spawn(PID, LSTART);
+        await sweeper.sweepNow();
+        expect(stateOf(run.runId)).toBe("running");
+        nowMs += QUIET / 3;
+      }
+      expect(appliedKinds(run.runId)).toEqual([]);
+    });
+
+    it("a same reading in the middle restarts the continuous-unknown clock", async () => {
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      table.spawnUnreadable(PID);
+      await sweeper.sweepNow();
+      nowMs = T0 + 0.6 * QUIET;
+      table.spawn(PID, LSTART);
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      table.spawnUnreadable(PID);
+      await sweeper.sweepNow();
+      nowMs = T0 + 1.5 * QUIET;
+      await sweeper.sweepNow();
+      // Continuously unknown for only 0.5 * QUIET since the same reading.
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+      nowMs = T0 + 2 * QUIET;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(stateOf(run.runId)).toBe("stale");
+    });
+
+    it("a waiting-for-approval Run is not staled, nor reverted to running, by one transient ps failure", async () => {
+      table.spawn(PID, LSTART);
+      const run = seedRun({
+        state: "waiting-for-approval",
+        activity: null,
+        lastActivityAt: new Date(T0 - 2 * QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      table.spawnUnreadable(PID);
+      nowMs += SWEEP;
+      await sweeper.sweepNow();
+      table.spawn(PID, LSTART);
+      nowMs += SWEEP;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("waiting-for-approval");
+    });
+
+    it("a waiting-for-approval Run with an unknown identity for the whole threshold goes stale", async () => {
       table.spawnUnreadable(PID);
       const run = seedRun({
         state: "waiting-for-approval",
         activity: null,
         lastActivityAt: new Date(T0 - QUIET - 1_000).toISOString(),
       });
-      await sweeperWith().sweepNow();
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
       expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
       expect(stateOf(run.runId)).toBe("stale");
     });
@@ -451,9 +547,9 @@ describe("D-08 reproduction: an idle session with a live process", () => {
       table.spawnUnreadable(PID);
       const run = seedRun({ lastActivityAt: new Date(T0 - 10 * QUIET).toISOString() });
       const sweeper = sweeperWith();
-      for (let sweep = 0; sweep < 4; sweep += 1) {
+      for (let sweep = 0; sweep < 6; sweep += 1) {
         await sweeper.sweepNow();
-        nowMs += DEFAULT_LIVENESS_CONFIG.graceMs + DEFAULT_LIVENESS_CONFIG.sweepMs;
+        nowMs += QUIET / 2;
       }
       expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
       expect(["completed", "failed"]).not.toContain(stateOf(run.runId));
@@ -465,9 +561,11 @@ describe("D-08 reproduction: an idle session with a live process", () => {
       const run = seedRun({ lastActivityAt: new Date(T0 - QUIET).toISOString() });
       const sweeper = sweeperWith();
       await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
       expect(stateOf(run.runId)).toBe("stale");
       table.spawn(PID, LSTART);
-      nowMs = T0 + DEFAULT_LIVENESS_CONFIG.sweepMs;
+      nowMs += SWEEP;
       await sweeper.sweepNow();
       expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout", "pid-alive"]);
       expect(stateOf(run.runId)).toBe("running");
@@ -487,7 +585,11 @@ describe("D-08 reproduction: an idle session with a live process", () => {
     it("the threshold is quietAfterMs from the config, not a constant", async () => {
       table.spawnUnreadable(PID);
       const run = seedRun({ lastActivityAt: new Date(T0 - 120_000).toISOString() });
-      await sweeperWith({ quietAfterMs: 120_000 }).sweepNow();
+      const sweeper = sweeperWith({ quietAfterMs: 120_000 });
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      nowMs = T0 + 120_000;
+      await sweeper.sweepNow();
       expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
     });
   });
