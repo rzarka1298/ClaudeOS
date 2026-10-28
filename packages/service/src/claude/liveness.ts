@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
-import { type RunId, SESSION_QUIET_AFTER_MS, type SessionRun } from "@ccc/domain";
 import {
+  type RunId,
+  SESSION_QUIET_AFTER_MAX_MS,
+  SESSION_QUIET_AFTER_MS,
+  type SessionRun,
+} from "@ccc/domain";
+import {
+  getSessionRun,
   listRegisteredProjects,
   listRevivableRuns,
   listSessionRunsForView,
@@ -26,9 +32,11 @@ import { type ProcessFacts, startInstantMs } from "./process-facts.js";
  * - A pid alive with exactly the stored `lstart` applies `pid-alive` to a
  *   stale Run (revival). An unknown read `lstart` proves nothing either
  *   way, so it neither revives nor ends a Run. Left unknown for the whole
- *   quiet threshold (no event for `quietAfterMs`), a running or
- *   waiting-for-approval Run applies `identity-unknown-timeout` and reads
- *   `stale` (D-06): unknown by evidence, never an ending.
+ *   quiet threshold (continuously unknown for `quietAfterMs`, tracked from
+ *   the sweep that first saw it unknown, AND no event for `quietAfterMs`),
+ *   a running or waiting-for-approval Run applies
+ *   `identity-unknown-timeout` and reads `stale` (D-06): unknown by
+ *   evidence, never an ending. One failed `ps` therefore changes nothing.
  * - A Run with a pid but no stored start (hooks installed mid-session, or
  *   a failed SessionStart `ps`) is judged by the read start against its
  *   last hook activity (wave 4): a process that started no later than that
@@ -62,9 +70,10 @@ export interface LivenessConfig {
   /** A PID-less Run idle this long goes stale (`CCC_PIDLESS_INACTIVITY_MS`, 30 min). */
   readonly pidlessInactivityMs: number;
   /**
-   * A pid-bearing Run whose process identity cannot be checked goes stale after
-   * this long with no event (`CCC_QUIET_THRESHOLD_MS`, 30 min, D-06). The same
-   * value reaches the plugin as `state.sessionQuietAfterMs` (D-07).
+   * A pid-bearing Run whose process identity has stayed uncheckable for this
+   * long, with no event for this long either, goes stale
+   * (`CCC_QUIET_THRESHOLD_MS`, 30 min, D-06). The same value reaches the plugin
+   * as `state.sessionQuietAfterMs` (D-07).
    */
   readonly quietAfterMs: number;
 }
@@ -82,6 +91,22 @@ function positiveMs(raw: string | undefined, fallback: number): number {
   return raw !== undefined && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+/**
+ * The quiet threshold is also published as `state.sessionQuietAfterMs`, whose schema accepts only
+ * a positive integer of at most {@link SESSION_QUIET_AFTER_MAX_MS}. A knob value outside that
+ * would pass `positiveMs`, then fail the plugin's snapshot parse and drop the whole snapshot,
+ * so anything else falls back to the default (FIX3A L1).
+ */
+function quietThresholdMs(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return raw !== undefined &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= SESSION_QUIET_AFTER_MAX_MS
+    ? value
+    : fallback;
+}
+
 /** The sweeper's timings, each overridable by its env knob (tests shrink them). */
 export function livenessConfigFromEnv(env: NodeJS.ProcessEnv): LivenessConfig {
   return {
@@ -92,7 +117,10 @@ export function livenessConfigFromEnv(env: NodeJS.ProcessEnv): LivenessConfig {
       env.CCC_PIDLESS_INACTIVITY_MS,
       DEFAULT_LIVENESS_CONFIG.pidlessInactivityMs,
     ),
-    quietAfterMs: positiveMs(env.CCC_QUIET_THRESHOLD_MS, DEFAULT_LIVENESS_CONFIG.quietAfterMs),
+    quietAfterMs: quietThresholdMs(
+      env.CCC_QUIET_THRESHOLD_MS,
+      DEFAULT_LIVENESS_CONFIG.quietAfterMs,
+    ),
   };
 }
 
@@ -208,6 +236,12 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
   const schedule = deps.schedule ?? defaultSchedule;
   /** When each Run's pid was first seen gone (ms, by `deps.now()`). In memory only. */
   const firstSeenGone = new Map<RunId, number>();
+  /**
+   * When each active Run's identity was first seen unknown, in an unbroken run
+   * of unknown sweeps (ms, by `deps.now()`). Cleared on same, gone, backfill,
+   * or when the Run leaves the candidate set. In memory only (FIX3A L2).
+   */
+  const firstSeenUnknown = new Map<RunId, number>();
   let running = false;
   let stopped = false;
   let cancelTimer: (() => void) | null = null;
@@ -322,6 +356,7 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
       }
       if (identity === "same") {
         firstSeenGone.delete(run.runId);
+        firstSeenUnknown.delete(run.runId);
         if (run.state === "stale") {
           await pipeline.apply({ kind: "pid-alive", runId: run.runId, observedAt });
           revived += 1;
@@ -333,16 +368,46 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
         // D-06: an identity that cannot be checked proves nothing either way,
         // but a Run left unverifiable for the whole quiet threshold must not
         // keep reading as plain running. It becomes stale (unknown), never an
-        // ending; a later `same` revives it through `pid-alive`.
+        // ending; a later `same` revives it through `pid-alive`. "Whole
+        // threshold" means CONTINUOUSLY unknown: one failed `ps` (which makes
+        // every pid unknown at once) starts the clock and ends nothing, and a
+        // later same reading restarts it (FIX3A L2).
+        if (!PIDLESS_ACTIVE_STATES.has(run.state)) {
+          firstSeenUnknown.delete(run.runId);
+          continue;
+        }
+        const unknownSince = firstSeenUnknown.get(run.runId);
+        if (unknownSince === undefined) {
+          firstSeenUnknown.set(run.runId, nowMs);
+          continue;
+        }
         if (
-          PIDLESS_ACTIVE_STATES.has(run.state) &&
+          nowMs - unknownSince >= config.quietAfterMs &&
           nowMs - Date.parse(run.lastActivityAt ?? run.startedAt) >= config.quietAfterMs
         ) {
-          await pipeline.apply({ kind: "identity-unknown-timeout", runId: run.runId, observedAt });
-          identityUnknownTimeouts += 1;
+          // The candidates were read before the batched `ps` (up to 2 s), so a hook
+          // event may have refreshed the Run meanwhile: judge the evidence against
+          // the Run as it is now, not as the sweep started (FIX3A L3).
+          const current = getSessionRun(db, run.runId);
+          if (
+            current !== null &&
+            current.pid === run.pid &&
+            PIDLESS_ACTIVE_STATES.has(current.state) &&
+            nowMs - Date.parse(current.lastActivityAt ?? current.startedAt) >= config.quietAfterMs
+          ) {
+            firstSeenUnknown.delete(run.runId);
+            await pipeline.apply({
+              kind: "identity-unknown-timeout",
+              runId: run.runId,
+              observedAt,
+            });
+            identityUnknownTimeouts += 1;
+          }
         }
         continue;
       }
+      // The identity read gone: an unknown streak is over.
+      firstSeenUnknown.delete(run.runId);
       // A stale Run is already unknown; only a pending terminate still has
       // an ending (cancelled) for its vanished process to prove.
       if (run.state === "stale" && run.terminateRequestedAt === null) {
@@ -363,6 +428,9 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
     // A Run that ended (or left the candidate set) during its grace is forgotten.
     for (const runId of [...firstSeenGone.keys()]) {
       if (!seen.has(runId)) firstSeenGone.delete(runId);
+    }
+    for (const runId of [...firstSeenUnknown.keys()]) {
+      if (!seen.has(runId)) firstSeenUnknown.delete(runId);
     }
 
     const reattributed = await watchProjects(nowMs);

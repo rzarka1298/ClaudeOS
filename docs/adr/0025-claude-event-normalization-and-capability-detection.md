@@ -25,7 +25,10 @@ Amended 2026-10 (Phase 9): the stale-resolution rules now follow D-05, D-06 and
 D-07. A live, identity-matched process is never moved off `running` for quiet
 alone, a process that cannot be checked beyond the quiet threshold becomes
 `stale`, and the quiet threshold is one knob, `CCC_QUIET_THRESHOLD_MS`, that
-the snapshot also carries to the plugin.
+the snapshot also carries to the plugin. The knob accepts only a positive
+integer of at most 86,400,000 ms (the snapshot schema's bound); any other value
+falls back to the default so the snapshot always parses. Unknown identity counts
+only when it persists for the whole threshold (FIX3A).
 
 ## Subscription and delivery (amends ADR-0010)
 
@@ -227,12 +230,19 @@ A missing lifecycle event never produces an invented terminal state
   (D-07).
 - **Unknown identity.** A pid-bearing Run in `running` or `waiting-for-approval`
   whose process identity cannot be checked (the `ps` read failed, so the
-  identity is unknown) and whose last event is at least the quiet threshold old
-  moves to `stale` through the reducer evidence `identity-unknown-timeout`
-  (D-06). It is a separate kind from the PID-less `inactivity-timeout` and
-  never writes `completed` or `failed`. A later sweep that reads the identity as
-  the same process revives the Run through `pid-alive`. Below the threshold an
-  unknown identity changes nothing.
+  identity is unknown) moves to `stale` through the reducer evidence
+  `identity-unknown-timeout` (D-06) only when two things hold at once: the
+  identity has been unknown on every sweep for at least the quiet threshold
+  (the sweeper remembers the sweep that first saw it unknown, in memory, and any
+  `same`, `gone` or backfilled reading, or the Run leaving the candidate set,
+  restarts that clock), and its last event is at least the quiet threshold old
+  at the moment of applying. One failed `ps` read, which makes every pid
+  unknown at once, therefore starts the clock and stales nothing, and an
+  intermittently failing `ps` never flaps a Run between stale and running. The
+  kind is separate from the PID-less `inactivity-timeout` and never writes
+  `completed` or `failed`. A later sweep that reads the identity as the same
+  process revives the Run through `pid-alive`. Below the threshold an unknown
+  identity changes nothing.
 - **Restart recovery.** Before the socket opens, every non-terminal Run
   becomes `stale` (SVC-11) and its revision is bumped. The sweep then revives
   identity-verified live PIDs, and the spool drain applies queued endings.

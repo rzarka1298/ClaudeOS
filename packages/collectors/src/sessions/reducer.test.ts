@@ -1,4 +1,4 @@
-import type { KnownHookEvent, RunId, SessionRun } from "@ccc/domain";
+import { type KnownHookEvent, RUN_STATES, type RunId, type SessionRun } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import {
   at,
@@ -35,6 +35,7 @@ const NOW = at(100_000);
 
 const R1 = fixedRunId("runone");
 const R2 = fixedRunId("runtwo");
+const R3 = fixedRunId("runthree");
 
 interface Outcome {
   readonly index: InMemoryRunIndex;
@@ -654,14 +655,33 @@ describe("session reducer — endings, stale and terminate (D-18, D-19, D-20, PR
       initial: [
         seedRun({ runId: R1, state: "queued" }),
         seedRun({ runId: R2, state: "stale", claudeSessionId: SESSION_B, pid: PID_2 }),
+        seedRun({ runId: R3, state: "starting", claudeSessionId: SESSION_C, pid: null }),
       ],
-      evidence: [identityUnknownTimeout(R1, at(1900)), identityUnknownTimeout(R2, at(1900))],
+      evidence: [
+        identityUnknownTimeout(R1, at(1900)),
+        identityUnknownTimeout(R2, at(1900)),
+        identityUnknownTimeout(R3, at(1900)),
+      ],
       check: (o) => {
-        expect(o.last).toEqual({ upserts: [], rejected: [] });
+        for (const result of o.results) expect(result).toEqual({ upserts: [], rejected: [] });
         expect(o.run(R1).state).toBe("queued");
         expect(o.run(R2).state).toBe("stale");
+        expect(o.run(R3).state).toBe("starting");
       },
     },
+    ...(["completed", "failed", "cancelled"] as const).map((state) => ({
+      name: `identity-unknown-timeout against a ${state} Run is rejected as terminal and upserts nothing`,
+      initial: [seedRun({ runId: R1, state })],
+      evidence: [identityUnknownTimeout(R1, at(1900))],
+      check: (o: Outcome) => {
+        expect(o.last.upserts).toEqual([]);
+        expect(o.last.rejected).toEqual([
+          { runId: R1, from: state, evidence: "identity-unknown-timeout", reason: "terminal" },
+        ]);
+        expect(o.only().state).toBe(state);
+        expect(o.only().revision).toBe(1);
+      },
+    })),
     {
       name: "identity-unknown-timeout never yields completed or failed, and a stale Run revives by PID alive",
       initial: [seedRun({ runId: R1 })],
@@ -689,6 +709,22 @@ describe("session reducer — endings, stale and terminate (D-18, D-19, D-20, PR
       check(play(initial, evidence), initial);
     },
   );
+
+  it("identity-unknown-timeout upserts only stale, and only from running or waiting-for-approval", () => {
+    const wrote: string[] = [];
+    for (const state of RUN_STATES) {
+      const o = play([seedRun({ runId: R1, state })], [identityUnknownTimeout(R1, at(1900))]);
+      for (const upsert of o.last.upserts) {
+        wrote.push(state);
+        expect(["running", "waiting-for-approval"]).toContain(state);
+        expect(upsert.state).toBe("stale");
+      }
+      if (state !== "running" && state !== "waiting-for-approval") {
+        expect(o.last.upserts).toEqual([]);
+      }
+    }
+    expect(wrote.sort()).toEqual(["running", "waiting-for-approval"]);
+  });
 
   it("normalizes a SessionEnd reason outside the documented list to other", () => {
     expect(normalizeSessionEndReason("bypass_permissions_disabled")).toBe("other");

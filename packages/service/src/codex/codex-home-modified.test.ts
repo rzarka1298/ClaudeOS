@@ -216,4 +216,72 @@ describe("09-11 D-15: listModifiedRolloutFiles yields to the event loop between 
     // Four full stat chunks plus the folder boundary.
     expect(yields).toBeGreaterThanOrEqual(5);
   });
+
+  // FIX3A C1: a rollout that disappears between enumeration and stat consumed a stat attempt
+  // but used to `continue` before the chunk-boundary check, so a folder of more than 10,000
+  // vanished entries burned the whole stat budget with zero yields.
+  it("yields once per stat chunk of ATTEMPTS, even when every stat finds the file gone", async () => {
+    home = createFakeCodexHome();
+    const day = join(home.root, "sessions", "2026", "07", "01");
+    mkdirSync(day, { recursive: true });
+    const real = recordingFs().fs;
+    const names = Array.from({ length: MAX_ROLLOUT_STATS + 500 }, (_, i) => rolloutName(i));
+    let stats = 0;
+    const fs = {
+      ...real,
+      readDir: (path: string) =>
+        path === day ? names.map((name) => ({ name, isFile: true })) : real.readDir(path),
+      stat: (path: string) => {
+        if (!path.endsWith(".jsonl")) return real.stat(path);
+        stats += 1;
+        throw Object.assign(new Error("gone"), { code: "ENOENT" });
+      },
+    };
+    let yields = 0;
+    const port = createCodexHomePort({
+      root: home.root,
+      fs,
+      yieldNow: () => {
+        yields += 1;
+        return Promise.resolve();
+      },
+    });
+    const listed = await port.listModifiedRolloutFiles(range);
+    expect(listed).toEqual([]);
+    expect(stats).toBe(MAX_ROLLOUT_STATS);
+    expect(yields).toBeGreaterThanOrEqual(MAX_ROLLOUT_STATS / ROLLOUT_STAT_CHUNK);
+  });
+
+  it("yields at the same chunk boundaries when only some stats find the file gone", async () => {
+    home = createFakeCodexHome();
+    const day = join(home.root, "sessions", "2026", "07", "01");
+    mkdirSync(day, { recursive: true });
+    const real = recordingFs().fs;
+    const names = Array.from({ length: ROLLOUT_STAT_CHUNK * 4 }, (_, i) => rolloutName(i));
+    const fs = {
+      ...real,
+      readDir: (path: string) =>
+        path === day ? names.map((name) => ({ name, isFile: true })) : real.readDir(path),
+      stat: (path: string) => {
+        if (!path.endsWith(".jsonl")) return real.stat(path);
+        // Every other file vanished; the rest are old.
+        if (Number(path.slice(-12, -6)) % 2 === 0) {
+          throw Object.assign(new Error("gone"), { code: "ENOENT" });
+        }
+        return { isFile: true, size: 1, mtimeMs: 0 };
+      },
+    };
+    let yields = 0;
+    const port = createCodexHomePort({
+      root: home.root,
+      fs,
+      yieldNow: () => {
+        yields += 1;
+        return Promise.resolve();
+      },
+    });
+    await port.listModifiedRolloutFiles(range);
+    // Four chunks of attempts plus the folder boundary.
+    expect(yields).toBe(5);
+  });
 });
