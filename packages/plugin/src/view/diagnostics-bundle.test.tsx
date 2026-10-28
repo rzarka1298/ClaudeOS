@@ -131,6 +131,25 @@ function renderBlock(f: Fixture, connection: ConnectionState = { kind: "live" },
   );
 }
 
+/**
+ * Presses a button and waits until the bundle line takes a non-empty text. A message identical to
+ * the one already shown is cleared and set again, so every outcome is a fresh announcement.
+ */
+async function pressAndAwaitAnnouncement(name: string): Promise<void> {
+  const line = bundleLine();
+  let announced = 0;
+  const observer = new MutationObserver(() => {
+    if ((line.textContent ?? "") !== "") announced += 1;
+  });
+  observer.observe(line, { childList: true, characterData: true, subtree: true });
+  fireEvent.click(screen.getByRole("button", { name }));
+  try {
+    await waitFor(() => expect(announced).toBeGreaterThan(0));
+  } finally {
+    observer.disconnect();
+  }
+}
+
 /** The bundle block's own status line (D-09): the one announcer for bundle actions. */
 function bundleLine(): HTMLElement {
   const line = document.querySelector<HTMLElement>('[data-status-region="bundle"]');
@@ -361,10 +380,8 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
    * Presses Save and waits for its status-line outcome. A save does real file I/O, which finishes
    * in later macrotasks than the microtasks `flush` drains, so it waits on the observable result.
    */
-  async function pressSave(f: Fixture): Promise<void> {
-    const before = f.notify.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Save bundle" }));
-    await waitFor(() => expect(f.notify.mock.calls.length).toBeGreaterThan(before));
+  async function pressSave(_f: Fixture): Promise<void> {
+    await pressAndAwaitAnnouncement("Save bundle");
   }
 
   function openPreview(f: Fixture) {
@@ -404,10 +421,10 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     expect(readFileSync(target, "utf8")).toBe(previewText);
     expect(readFileSync(target, "utf8")).toBe(expectedText(f));
     expect(statSync(target).mode & 0o777).toBe(0o600);
-    expect(f.notify).toHaveBeenCalledTimes(1);
-    expect(f.notify).toHaveBeenCalledWith("Bundle saved.");
+    expect(f.notify).not.toHaveBeenCalled();
+    expect(bundleLine().textContent).toBe("Bundle saved.");
     // The path is never printed: not in the status line, not anywhere in the page.
-    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
+    expect(bundleLine().textContent).not.toContain(root);
     expect(document.body.textContent).not.toContain(root);
     expect(readdirSync(outside)).toEqual(["diagnostics.json"]);
     expect(readdirSync(vault)).toEqual([]);
@@ -447,12 +464,13 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     const f = vaultFixture();
     openPreview(f);
     await pressSave(f);
-    expect(f.notify).toHaveBeenLastCalledWith(
+    expect(bundleLine().textContent).toBe(
       "A file with that name already exists. Choose a new name. Nothing was written.",
     );
     expect(readFileSync(target, "utf8")).toBe("KEEP ME");
     expect(readdirSync(outside)).toEqual(["taken.json"]);
-    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
+    expect(f.notify).not.toHaveBeenCalled();
+    expect(bundleLine().textContent).not.toContain(root);
   });
 
   it("FIX6B: a location with no hard links says it cannot hold the bundle, writes nothing, and the Save gate is released", async () => {
@@ -468,16 +486,19 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     const f = vaultFixture();
     openPreview(f);
     await pressSave(f);
-    expect(f.notify).toHaveBeenLastCalledWith(
+    expect(bundleLine().textContent).toBe(
       "This location can't hold the bundle safely. Choose a folder on your Mac's disk.",
     );
     expect(readdirSync(outside)).toEqual([]);
-    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
+    expect(bundleLine().textContent).not.toContain(root);
     const save = screen.getByRole("button", { name: "Save bundle" });
     await waitFor(() => expect(save.getAttribute("aria-busy")).toBeNull());
     // The gate is free again: a second press reaches the port.
     await pressSave(f);
-    expect(f.notify.mock.calls.length).toBe(2);
+    expect(bundleLine().textContent).toBe(
+      "This location can't hold the bundle safely. Choose a folder on your Mac's disk.",
+    );
+    expect(f.notify).not.toHaveBeenCalled();
   });
 
   it("Test 3: a path inside the vault is refused with the fixed sentence and nothing is written", async () => {
@@ -485,11 +506,12 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     const f = vaultFixture();
     openPreview(f);
     await pressSave(f);
-    expect(f.notify).toHaveBeenCalledWith(
+    expect(bundleLine().textContent).toBe(
       "That location is inside your vault. Choose a folder outside the vault.",
     );
     expect(readdirSync(vault)).toEqual([]);
-    expect(JSON.stringify(f.notify.mock.calls)).not.toContain(root);
+    expect(f.notify).not.toHaveBeenCalled();
+    expect(bundleLine().textContent).not.toContain(root);
   });
 
   it("a cancelled dialog says nothing was written; a failed write says it couldn't save", async () => {
@@ -497,13 +519,13 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     openPreview(f);
     choose(undefined, true);
     await pressSave(f);
-    expect(f.notify).toHaveBeenLastCalledWith("Save cancelled. Nothing was written.");
+    expect(bundleLine().textContent).toBe("Save cancelled. Nothing was written.");
 
     // A folder already has that name: the save never replaces anything (D-12a).
     mkdirSync(join(outside, "dir.json"));
     choose(join(outside, "dir.json"));
     await pressSave(f);
-    expect(f.notify).toHaveBeenLastCalledWith(
+    expect(bundleLine().textContent).toBe(
       "A file with that name already exists. Choose a new name. Nothing was written.",
     );
     expect(readdirSync(outside)).toEqual(["dir.json"]);
@@ -511,12 +533,13 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     // A write that cannot happen (the folder is missing) is the generic failure.
     choose(join(outside, "nope", "b.json"));
     await pressSave(f);
-    expect(f.notify).toHaveBeenLastCalledWith("Couldn't save the bundle.");
+    expect(bundleLine().textContent).toBe("Couldn't save the bundle.");
 
     choose(join(outside, "not-json.txt"));
     await pressSave(f);
-    expect(f.notify).toHaveBeenLastCalledWith("Couldn't save the bundle.");
+    expect(bundleLine().textContent).toBe("Couldn't save the bundle.");
     expect(readdirSync(outside)).toEqual(["dir.json"]);
+    expect(f.notify).not.toHaveBeenCalled();
   });
 
   it("Test 4: with no save dialog the button is aria-disabled with the visible reason, and Copy still works", async () => {
@@ -535,6 +558,7 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     fireEvent.click(save);
     await flush();
     expect(f.notify).not.toHaveBeenCalled();
+    expect(bundleLine().textContent).toBe("");
 
     fireEvent.click(screen.getByRole("button", { name: "Copy bundle" }));
     await flush();
@@ -714,7 +738,8 @@ describe("Task 3, Test 1: a refused bundle is never rendered and names the rule,
     );
     expect(get).toHaveBeenCalledTimes(1);
     expect(get).toHaveBeenCalledWith("gesture");
-    expect(f.notify).toHaveBeenCalledWith("Checked just now.");
+    expect(bundleLine().textContent).toBe("Checked just now.");
+    expect(f.notify).not.toHaveBeenCalled();
     expect(screen.queryByRole("heading", { name: "Bundle not offered" })).toBeNull();
   });
 });
@@ -972,14 +997,15 @@ describe("FIX4B m2: a check the service going away cancels does not leave Checki
     renderBlock(f, { kind: "live" }, STALE_NOW);
     fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
     fireEvent.click(screen.getByRole("button", { name: "Run checks again" }));
-    expect(f.notify).toHaveBeenLastCalledWith("Checking…");
+    expect(bundleLine().textContent).toBe("Checking…");
     // The service goes away mid-check: the fetch in flight is dropped, no newer one replaces it.
     await act(async () => {
       clearHealth();
     });
     release();
     await flush();
-    expect(f.notify).toHaveBeenLastCalledWith("Couldn't run the checks.");
+    expect(bundleLine().textContent).toBe("Couldn't run the checks.");
+    expect(f.notify).not.toHaveBeenCalled();
   });
 });
 
@@ -1160,10 +1186,9 @@ describe("Task 3, Test 5: the bundle is held in memory only", () => {
       fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
       fireEvent.click(screen.getByRole("button", { name: "Copy bundle" }));
       await flush();
-      const before = f.notify.mock.calls.length;
-      fireEvent.click(screen.getByRole("button", { name: "Save bundle" }));
-      await waitFor(() => expect(f.notify.mock.calls.length).toBeGreaterThan(before));
-      expect(f.notify).toHaveBeenLastCalledWith("Bundle saved.");
+      await pressAndAwaitAnnouncement("Save bundle");
+      expect(bundleLine().textContent).toBe("Bundle saved.");
+      expect(f.notify).not.toHaveBeenCalled();
 
       // Nothing was handed to the plugin's data storage, and its settings object is untouched.
       expect(plugin.saved).toHaveLength(savesBefore);

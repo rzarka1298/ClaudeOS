@@ -161,6 +161,8 @@ export const HEALTH_ATTRS_TABLE = {
   current: ["aria-current", DEST, "fragment"],
   expanded: ["aria-expanded", ROW, "fragment"],
   disabled: ["aria-disabled", SECTION, "fragment"],
+  // The attribute the diagnostic bundle block's own status line carries (D-09).
+  statusRegion: ["data-status-region", CONTROLS, "fragment"],
 } as const satisfies CopyTable;
 
 /**

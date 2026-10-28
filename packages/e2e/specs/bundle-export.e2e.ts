@@ -161,7 +161,7 @@ describe("bundle export", function () {
         await pressBundleButton(hb, HEALTH_TEXT.copyBundle);
       },
       clipboard: async () => (await hb.execute(rendererReadSpies)).clipboard.at(-1),
-      noticeShown: async () => (await readHealth(hb)).statusLine === HEALTH_TEXT.bundleCopied,
+      noticeShown: async () => (await readHealth(hb)).bundleStatusLine === HEALTH_TEXT.bundleCopied,
     });
   }
 
@@ -188,7 +188,7 @@ describe("bundle export", function () {
         const preview = block.preview?.text;
         if (preview === undefined) throw new Error("There is no preview to save.");
         await pressBundleButton(hb, HEALTH_TEXT.saveBundle);
-        await pollUntil(async () => (await readHealth(hb)).statusLine === notice, {
+        await pollUntil(async () => (await readHealth(hb)).bundleStatusLine === notice, {
           ...WAIT.short,
           describe: `the status line to read "${notice}"`,
         });
@@ -303,7 +303,7 @@ describe("bundle export", function () {
         const bytes = readFileSync(target);
         expect(checkSavedFile(saved.preview, bytes, statSync(target).mode)).toEqual([]);
         // The line says "Bundle saved." and never the path; no temporary file was left behind.
-        const line = (await readHealth(hb)).statusLine;
+        const line = (await readHealth(hb)).bundleStatusLine;
         expect(line).toBe(HEALTH_TEXT.bundleSaved);
         expect(findRawErrorText(line)).toEqual([]);
         expect(readdirSync(outDir)).toEqual(["saved-bundle.json"]);

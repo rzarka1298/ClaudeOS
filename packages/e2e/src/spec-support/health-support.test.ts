@@ -83,6 +83,16 @@ interface LooseDocument {
 const FIXTURE = join(HERE, "health-dom-fixtures", "rows.html");
 const SOURCE = readFileSync(join(HERE, "health-support.ts"), "utf8");
 const BASE_HTML = readFileSync(FIXTURE, "utf8");
+/**
+ * The fixture carries only the bundle block's own status line (D-09). The bundle cases build the
+ * whole block (heading, buttons, that line) in {@link bundleHtml}, so they start from the fixture
+ * without its lone line.
+ */
+const BUNDLE_LINE = '<p class="ccc-settings-status" role="status" data-status-region="bundle"></p>';
+const BARE_HTML = BASE_HTML.replace(
+  /\n\s*<!-- The diagnostic bundle block closes[\s\S]*?-->\n\s*<p[^>]*data-status-region="bundle"><\/p>/,
+  "",
+);
 
 interface EsbuildLike {
   transformSync(
@@ -1468,6 +1478,8 @@ interface BundleHtmlSpec {
   saveDisabled?: string;
   stale?: boolean;
   waiting?: boolean;
+  /** The text of the block's own status line (empty by default). */
+  status?: string;
 }
 
 function bundleHtml(spec: BundleHtmlSpec = {}): string {
@@ -1507,15 +1519,19 @@ function bundleHtml(spec: BundleHtmlSpec = {}): string {
       `<div class="ccc-health-toolbar">${refused || waiting ? "" : "<p>1.4 KB · 61 lines</p>"}${button("Copy bundle", refused || waiting ? ' aria-disabled="true" aria-describedby="why"' : "")}${button("Save bundle", reason === undefined ? "" : ' aria-disabled="true" aria-describedby="why"')}${reason === undefined ? "" : `<p id="why">${reason}</p>`}</div>`,
     );
   }
+  parts.push(BUNDLE_LINE.replace("></p>", `>${escapeHtml(spec.status ?? "")}</p>`));
   return parts.join("");
 }
 
-function withBundle(spec: BundleHtmlSpec): HealthRead & { bundle: BundleRead } {
-  const html = BASE_HTML.replace(
+function htmlWithBundle(spec: BundleHtmlSpec): string {
+  return BARE_HTML.replace(
     "</div>\n    </div>\n  </div>\n</section>",
     `</div>${bundleHtml(spec)}\n    </div>\n  </div>\n</section>`,
   );
-  return readBundleFrom(html);
+}
+
+function withBundle(spec: BundleHtmlSpec): HealthRead & { bundle: BundleRead } {
+  return readBundleFrom(htmlWithBundle(spec));
 }
 
 function readBundleFrom(html: string): HealthRead & { bundle: BundleRead } {
@@ -1588,6 +1604,26 @@ describe("rendererReadBundle (Task 3)", () => {
     const { bundle } = withBundle({ open: true, stale: true });
     expect(bundle.stale).toBe("Built from checks older than 5 minutes");
     expect(bundle.statusLine).toBe("");
+  });
+
+  it("reads the bundle block's own status line apart from the destination's (D-09)", () => {
+    // The fixture carries both lines; neither has spoken.
+    expect(fresh.statusLine).toBe("");
+    expect(fresh.bundleStatusLine).toBe("");
+
+    // A bundle outcome lands in the bundle line only; the destination line is untouched.
+    const html = htmlWithBundle({ open: true, status: "Bundle copied." });
+    const health = readHealthFrom(html);
+    expect(health.bundleStatusLine).toBe("Bundle copied.");
+    expect(health.statusLine).toBe("");
+    expect(readBundleFrom(html).bundle.lines).toContain("Bundle copied.");
+
+    // A destination message lands in the destination line only.
+    const destination = readHealthFrom(
+      BASE_HTML.replace('role="status"></p>', 'role="status">Checking…</p>'),
+    );
+    expect(destination.statusLine).toBe("Checking…");
+    expect(destination.bundleStatusLine).toBe("");
   });
 
   it("reads a block that is not on the page as not mounted", () => {
@@ -1749,7 +1785,7 @@ describe("hostileProjectNames and openBundlePreview (Task 3)", () => {
     const calls: unknown[][] = [];
     let step = 0;
     const closedRead = readBundleFrom(
-      BASE_HTML.replace(
+      BARE_HTML.replace(
         "</div>\n    </div>\n  </div>\n</section>",
         `</div>${bundleHtml({})}\n    </div>\n  </div>\n</section>`,
       ),

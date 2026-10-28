@@ -95,7 +95,10 @@ export interface DiagnosticBundleBlockProps {
   readonly host: SettingsHost;
   readonly connection: ConnectionState;
   readonly now: number;
-  /** Posts an outcome to the destination's one status line. */
+  /**
+   * The destination's status-line poster. Kept for API stability; the block no longer calls it
+   * (D-09): its own outcomes are announced by the block's local status line, once.
+   */
   readonly notify: (message: string) => void;
   /**
    * The verifier. Defaults to the domain's `verifyAndSerialise`; a parameter only so a test can
@@ -153,7 +156,6 @@ export function DiagnosticBundleBlock({
   host,
   connection,
   now,
-  notify,
   verify,
 }: DiagnosticBundleBlockProps): VNode {
   const kind = connection.kind;
@@ -319,9 +321,9 @@ export function DiagnosticBundleBlock({
     if (outcome?.kind !== "offered" || !saveAvailable || !saveGate.begin()) return;
     try {
       const result = await exporter.save(outcome.text, host.display.vaultBasePath, nowRef.current);
-      notify(SAVE_NOTICES[result.kind]);
+      announce(SAVE_NOTICES[result.kind]);
     } catch {
-      notify(SAVE_FAILED);
+      announce(SAVE_FAILED);
     } finally {
       saveGate.end();
     }
@@ -330,14 +332,14 @@ export function DiagnosticBundleBlock({
   /** `Run checks again` (stale line and refusal panel): the owner's press re-runs the read-only checks. */
   async function runChecks(): Promise<void> {
     if (!live || !checkGate.begin()) return;
-    notify(CHECKING_LINE);
+    announce(CHECKING_LINE);
     const result = await refreshHealth("gesture", { vaultBasePath: host.display.vaultBasePath });
     checkGate.end();
     if (!mountedRef.current) return;
-    if (result.kind === "ok") notify(checkedLine(result.timedOut));
+    if (result.kind === "ok") announce(checkedLine(result.timedOut));
     // An error, or a check the service going away cancelled with no newer fetch to take its place:
     // either way it did not finish, and the line must not stay on `Checking…`.
-    else notify(ERROR_HEADING);
+    else announce(ERROR_HEADING);
   }
 
   function onPreviewKeyDown(event: KeyboardEvent): void {
