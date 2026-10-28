@@ -232,10 +232,9 @@ function AutomationLines({
 function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNode {
   const tasks = data.tasks;
   // The list's heading says "and overdue" only when an overdue row is in it (folded p8 item 2).
-  const dueHeading =
-    tasks !== null && tasks.rows.some((task) => task.overdue)
-      ? "Due today and overdue"
-      : "Due today";
+  const dueHeading = tasks?.rows.some((task) => task.overdue)
+    ? "Due today and overdue"
+    : "Due today";
   // The next open task shows only when nothing is due or overdue (D-21, UI-SPEC R-13).
   const nextOpen = tasks !== null && tasks.rows.length === 0 ? tasks.nextOpen : null;
   return (
