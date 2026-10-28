@@ -66,4 +66,90 @@ describe("displayReason (D-11, DIAG-06)", () => {
   it("masks the user name when the home folder is configured and a path is outside it", () => {
     expect(displayReason("see /Volumes/USERNAME-backup/Vault/x", HOME)).toBe("see …/Vault/x");
   });
+
+  describe("paths with spaces and other shapes that used to leak the user name (FIX2A R1)", () => {
+    const SPACED_HOME = "/Users/USERNAME TWO";
+
+    it("maps a configured home folder that contains a space to ~", () => {
+      const shown = displayReason(
+        "connect ENOENT /Users/USERNAME TWO/.ccc/service.sock",
+        SPACED_HOME,
+      );
+      expect(shown).toBe("connect ENOENT ~/.ccc/service.sock");
+      expect(shown).not.toContain("USERNAME");
+      expect(shown).not.toContain("TWO");
+      expect(displayReason("home is /Users/USERNAME TWO.", SPACED_HOME)).toBe("home is ~.");
+    });
+
+    it("hides a spaced user folder when no home is configured", () => {
+      const shown = displayReason("socket '/Users/USERNAME TWO/.ccc/service.sock' gone", null);
+      expect(shown).toBe("socket '…/.ccc/service.sock' gone");
+      expect(shown).not.toContain("USERNAME");
+      expect(shown).not.toContain("TWO");
+      expect(displayReason("connect ENOENT /Users/USERNAME TWO/.ccc/service.sock", null)).toBe(
+        "connect ENOENT …/.ccc/service.sock",
+      );
+    });
+
+    it("hides the user segment of a path on another volume", () => {
+      for (const home of [null, "/Users/USERNAME"]) {
+        const shown = displayReason("x /Volumes/Macintosh HD/Users/USERNAME/s.sock", home);
+        expect(shown).toBe("x …/s.sock");
+        expect(shown).not.toContain("USERNAME");
+      }
+    });
+
+    it("never shows the segment directly under /Users or /home when there is no home folder", () => {
+      expect(displayReason("see /Users/USERNAME/s.sock", null)).toBe("see …/s.sock");
+      expect(displayReason("see /home/jane/s.sock", null)).toBe("see …/s.sock");
+      expect(displayReason("see /Users/USERNAME", null)).toBe("see …");
+      // The rule also covers another user's folder when a home folder is configured.
+      expect(displayReason("see /Users/you/s.sock", "/Users/USERNAME")).toBe("see …/s.sock");
+      // Deeper paths still show their last two segments.
+      expect(displayReason("see /Users/USERNAME/a/s.sock", null)).toBe("see …/a/s.sock");
+    });
+
+    it("does not mistake a sibling folder for the home folder", () => {
+      const shown = displayReason("see /Users/USERNAME TWO2/a/b/s.sock", SPACED_HOME);
+      expect(shown).toBe("see …/b/s.sock");
+    });
+
+    it("scrubs the ~user form", () => {
+      const shown = displayReason("open ~USERNAME/a/s.sock now", "/Users/USERNAME");
+      expect(shown).toBe("open …/s.sock now");
+    });
+
+    it("scrubs file:// URLs, including percent-encoded spaces", () => {
+      expect(displayReason("see file:///Users/USERNAME TWO/.ccc/s.sock", SPACED_HOME)).toBe(
+        "see ~/.ccc/s.sock",
+      );
+      expect(displayReason("see file:///Users/USERNAME%20TWO/.ccc/s.sock", SPACED_HOME)).toBe(
+        "see ~/.ccc/s.sock",
+      );
+      const shown = displayReason("see file:///Users/USERNAME%20TWO/.ccc/s.sock", null);
+      expect(shown).toBe("see …/.ccc/s.sock");
+      expect(shown).not.toContain("file:");
+    });
+
+    it("shows a /private/var path by its last two segments", () => {
+      expect(displayReason("EACCES /private/var/folders/zz/T/svc.sock", SPACED_HOME)).toBe(
+        "EACCES …/T/svc.sock",
+      );
+    });
+
+    it("scrubs a Windows user folder too", () => {
+      const shown = displayReason("ENOENT C:\\Users\\USERNAME TWO\\AppData\\x.sock", null);
+      expect(shown).toBe("ENOENT …\\x.sock");
+      expect(displayReason("ENOENT C:\\Users\\USERNAME", null)).toBe("ENOENT …");
+    });
+
+    it("keeps unrelated words around a path that has no spaces", () => {
+      expect(displayReason("tried /a/one.sock then /var/run/two.sock", null)).toBe(
+        "tried …/a/one.sock then …/run/two.sock",
+      );
+      expect(displayReason("EACCES /tmp/x.sock after retry", HOME)).toBe(
+        "EACCES …/tmp/x.sock after retry",
+      );
+    });
+  });
 });
