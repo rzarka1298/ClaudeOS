@@ -1,6 +1,12 @@
 import type { Signal } from "@preact/signals";
 import type { FeedSnapshot } from "./overview-feeds.js";
 
+/** The two operations of a superseding feed, as function-valued properties so they destructure safely. */
+export interface Superseding {
+  readonly refresh: () => Promise<void>;
+  readonly invalidate: () => void;
+}
+
 /**
  * One owner of a feed's sequence token (09-06, D-13).
  *
@@ -15,10 +21,10 @@ import type { FeedSnapshot } from "./overview-feeds.js";
 export function superseding<T>(
   feed: Signal<FeedSnapshot<T>>,
   fetcher: () => Promise<T>,
-): { refresh(): Promise<void>; invalidate(): void } {
+): Superseding {
   let seq = 0;
   return {
-    async refresh(): Promise<void> {
+    refresh: async (): Promise<void> => {
       const mine = ++seq;
       let answer: T | null = null;
       try {
@@ -33,7 +39,7 @@ export function superseding<T>(
           ? { ...previous, settled: true, failed: true }
           : { settled: true, value: answer, fetchedAt: Date.now(), failed: false };
     },
-    invalidate(): void {
+    invalidate: (): void => {
       seq += 1;
     },
   };
