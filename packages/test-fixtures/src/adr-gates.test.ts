@@ -836,7 +836,8 @@ describe("07-05 Task 3 Test 3: the requirement is ticked", () => {
 });
 
 describe("09-07 Task 2: the glossary defines job run and Probe", () => {
-  const NO_IMPLEMENTATION_DETAIL = /\.ts\b|SQLite|table|route|socket|packages\//i;
+  const NO_IMPLEMENTATION_DETAIL =
+    /\.ts\b|SQLite|table|route|socket|storage|\bfiles?\b|packages\//i;
 
   it("Test 1: Job run is one execution of a job for one window or one press, with an avoid list", () => {
     const entry = glossaryEntry("Job run");
