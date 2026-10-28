@@ -78,7 +78,7 @@ export type Prepared =
   | { readonly ok: true; readonly source: PreparedSource }
   | { readonly ok: false; readonly code: SourceFailureCode; readonly sourceId: string };
 
-export function idFor(entry: ResearchSourceEntry): string {
+export function sourceEntryId(entry: ResearchSourceEntry): string {
   const canonical = canonicaliseUrl(entry.url);
   return sourceIdFor(canonical.ok ? canonical.url : entry.url);
 }
@@ -90,7 +90,7 @@ export function prepare(
   retrievedAt: string,
   nonce: string,
 ): Prepared {
-  const fallbackId = idFor(entry);
+  const fallbackId = sourceEntryId(entry);
   try {
     const canonical = canonicaliseUrl(entry.url);
     if (!canonical.ok) return { ok: false, code: "parse-failure", sourceId: fallbackId };
@@ -242,7 +242,7 @@ export function recordSources(
   config.sources.forEach((entry, index) => {
     const outcome = outcomes[index];
     let code: SourceFailureCode | null = null;
-    let sourceId = idFor(entry);
+    let sourceId = sourceEntryId(entry);
     if (outcome === undefined) code = "network-error";
     else if (!outcome.ok) {
       code = outcome.code;

@@ -20,7 +20,7 @@ import {
 import {
   appendStage,
   assertLive,
-  errorName,
+  errorClassName,
   logWarn,
   type ResearchPipelineDeps,
   type RunTrace,
@@ -70,13 +70,13 @@ export async function runPublicationStage(
       try {
         snapshot.restore();
       } catch (error) {
-        logWarn(deps, { event: "research-wiki-restore-failed", errorName: errorName(error) });
+        logWarn(deps, { event: "research-wiki-restore-failed", errorName: errorClassName(error) });
       }
     }
     try {
       removeReportNote({ vaultRoot: deps.vaultRoot, path: reportPath });
     } catch (error) {
-      logWarn(deps, { event: "research-report-removal-failed", errorName: errorName(error) });
+      logWarn(deps, { event: "research-report-removal-failed", errorName: errorClassName(error) });
     }
     try {
       // The record goes with the report it describes (a missing record only ever means unverified).
@@ -84,7 +84,7 @@ export async function runPublicationStage(
     } catch (error) {
       logWarn(deps, {
         event: "research-report-record-removal-failed",
-        errorName: errorName(error),
+        errorName: errorClassName(error),
       });
     }
     trace.reportPath = null;
@@ -174,7 +174,10 @@ export async function runPublicationStage(
       });
     } catch (error) {
       if (isRunGone(error)) {
-        logWarn(deps, { event: "research-report-record-run-ended", errorName: errorName(error) });
+        logWarn(deps, {
+          event: "research-report-record-run-ended",
+          errorName: errorClassName(error),
+        });
         throw new StageFailure("interrupted");
       }
       throw error;

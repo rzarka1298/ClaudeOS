@@ -14,7 +14,7 @@ import type { TextTransport } from "../untrusted/index.js";
 import type { SafeFetcher } from "./fetch/index.js";
 import { nameEffect, PIPELINE_EFFECTS, type PipelineEffect } from "./pipeline-effects.js";
 import type { RunNoteSource, RunNoteStage, WrittenRunNote } from "./run-note.js";
-import type { ResearchSourcesFs } from "./sources-config.js";
+import type { ResearchSourcesFs, SourcesRefusal } from "./sources-config.js";
 
 /**
  * The run's live record and the helpers every stage shares (09-12, D-12): the dependency and result
@@ -152,30 +152,78 @@ export function assertLive(trace: RunTrace): void {
   if (trace.cancelled) throw new RunCancelled();
 }
 
+/**
+ * Every event the pipeline logs, by name. Only codes, ids, counts and the error's class name ever
+ * appear in a field: no remote string reaches a log line. The names are what operators and the
+ * `pipeline-*.test.ts` files read, so they are stable.
+ */
+export const PIPELINE_LOG_EVENTS = [
+  "research-sources-unusable",
+  "research-fetch-threw",
+  "research-source-record-run-ended",
+  "research-raw-snapshot-refused",
+  "research-wiki-restore-failed",
+  "research-report-removal-failed",
+  "research-report-record-removal-failed",
+  "research-report-changed-before-finalise",
+  "research-report-record-run-ended",
+  "research-pipeline-error",
+  "research-stage-record-failed",
+  "research-run-note-failed",
+  "research-finish-failed",
+  "research-finish-fallback-failed",
+  "research-watchdog-fired",
+] as const;
+
+/** One log event of the pipeline: the discriminated union keyed by `event`, with the fields it carries. */
+export type PipelineLogEvent =
+  | { readonly event: "research-sources-unusable"; readonly code: SourcesRefusal }
+  | { readonly event: "research-fetch-threw"; readonly errorName: string }
+  | { readonly event: "research-source-record-run-ended"; readonly errorName: string }
+  | {
+      readonly event: "research-raw-snapshot-refused";
+      readonly code: SourceFailureCode;
+      readonly errorName: string;
+    }
+  | { readonly event: "research-wiki-restore-failed"; readonly errorName: string }
+  | { readonly event: "research-report-removal-failed"; readonly errorName: string }
+  | { readonly event: "research-report-record-removal-failed"; readonly errorName: string }
+  | { readonly event: "research-report-changed-before-finalise" }
+  | { readonly event: "research-report-record-run-ended"; readonly errorName: string }
+  | {
+      readonly event: "research-pipeline-error";
+      readonly phase: Phase;
+      readonly errorName: string;
+    }
+  | {
+      readonly event: "research-stage-record-failed";
+      readonly stage: ResearchStage;
+      readonly errorName: string;
+    }
+  | { readonly event: "research-run-note-failed"; readonly errorName: string }
+  | { readonly event: "research-finish-failed"; readonly errorName: string }
+  | { readonly event: "research-finish-fallback-failed"; readonly errorName: string }
+  | { readonly event: "research-watchdog-fired"; readonly phase: Phase };
+
 /** A log call that can never change what a run did: a throwing sink is ignored. */
-export function logWarn(
-  deps: ResearchPipelineDeps,
-  fields: Readonly<Record<string, unknown>>,
-): void {
+export function logWarn(deps: ResearchPipelineDeps, event: PipelineLogEvent): void {
   try {
-    deps.log.warn(fields);
+    deps.log.warn(event);
   } catch {
     // A broken log sink never changes the outcome.
   }
 }
 
-export function logError(
-  deps: ResearchPipelineDeps,
-  fields: Readonly<Record<string, unknown>>,
-): void {
+export function logError(deps: ResearchPipelineDeps, event: PipelineLogEvent): void {
   try {
-    deps.log.error(fields);
+    deps.log.error(event);
   } catch {
     // A broken log sink never changes the outcome.
   }
 }
 
-export function errorName(error: unknown): string {
+/** The class name of a thrown value: the only thing about an error that is ever logged. */
+export function errorClassName(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
 }
 
@@ -206,14 +254,18 @@ export function appendStage(
     });
   } catch (error) {
     // The run record could not take the stage: the run is cut short. It is not a vault failure.
-    logError(deps, { event: "research-stage-record-failed", stage, errorName: errorName(error) });
+    logError(deps, {
+      event: "research-stage-record-failed",
+      stage,
+      errorName: errorClassName(error),
+    });
     throw new StageFailure("interrupted");
   }
   trace.stages.push({ stage, at, noteIds });
   emit(deps, { runId: trace.runId, state: "running", stage });
 }
 
-export function failureResult(trace: RunTrace, code: RunErrorCode): PipelineResult {
+export function failedPipelineResult(trace: RunTrace, code: RunErrorCode): PipelineResult {
   return {
     outcome: "failure",
     errorCode: code,

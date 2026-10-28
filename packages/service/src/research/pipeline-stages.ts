@@ -10,7 +10,6 @@ import { summariseSources } from "./pipeline.js";
 import { nameEffect, PIPELINE_EFFECTS } from "./pipeline-effects.js";
 import { runPublicationStage } from "./pipeline-publication.js";
 import {
-  idFor,
   isRawSnapshotRefusal,
   isRunGone,
   type Prepared,
@@ -19,13 +18,14 @@ import {
   RawSnapshotRefused,
   recordSources,
   sameBinding,
+  sourceEntryId,
   sourceRecordFor,
   trimToInputCap,
 } from "./pipeline-sources.js";
 import {
   appendStage,
   assertLive,
-  errorName,
+  errorClassName,
   logWarn,
   type PipelineResult,
   type ResearchPipelineDeps,
@@ -143,7 +143,7 @@ export async function runFetchStage(
   } catch (error) {
     // The fetcher itself broke (it never rejects for a source's failure). That is a fault of this
     // process, not a network error of any source: no source is blamed (07-14, opus m9).
-    logWarn(deps, { event: "research-fetch-threw", errorName: errorName(error) });
+    logWarn(deps, { event: "research-fetch-threw", errorName: errorClassName(error) });
     throw new StageFailure("interrupted");
   }
   assertLive(trace);
@@ -170,8 +170,9 @@ export function runPrepareStage(
   const retrievedAt = deps.now().toISOString();
   const outcomes: Prepared[] = config.sources.map((entry, index) => {
     const result = fetched[index];
-    if (result === undefined) return { ok: false, code: "network-error", sourceId: idFor(entry) };
-    if (!result.ok) return { ok: false, code: result.code, sourceId: idFor(entry) };
+    if (result === undefined)
+      return { ok: false, code: "network-error", sourceId: sourceEntryId(entry) };
+    if (!result.ok) return { ok: false, code: result.code, sourceId: sourceEntryId(entry) };
     return prepare(index, entry, result, retrievedAt, nonce);
   });
   const ready = outcomes.flatMap((outcome) => (outcome.ok ? [outcome.source] : []));
@@ -244,7 +245,10 @@ export function runRawWriteStage(
         if (isRunGone(error)) {
           // The run was ended under this pipeline (cut off, recovered as stale): a clean stop, like
           // a run record that cannot take a stage. Nothing more is recorded or written.
-          logWarn(deps, { event: "research-source-record-run-ended", errorName: errorName(error) });
+          logWarn(deps, {
+            event: "research-source-record-run-ended",
+            errorName: errorClassName(error),
+          });
           throw new StageFailure("interrupted");
         }
         if (!isRawSnapshotRefusal(error)) throw error;
@@ -253,7 +257,7 @@ export function runRawWriteStage(
         logWarn(deps, {
           event: "research-raw-snapshot-refused",
           code: "parse-failure",
-          errorName: errorName(error),
+          errorName: errorClassName(error),
         });
       }
     }

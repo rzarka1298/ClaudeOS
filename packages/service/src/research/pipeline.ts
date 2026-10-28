@@ -1,13 +1,10 @@
-import { finishJobRun } from "@ccc/operational-store";
 import { summarizeUntrusted, type TextTransport, UntrustedInputError } from "../untrusted/index.js";
-import { nameEffect, PIPELINE_EFFECTS } from "./pipeline-effects.js";
+import { finishRun } from "./pipeline-finish.js";
 import { checkDelimited } from "./pipeline-sources.js";
 import { runStages } from "./pipeline-stages.js";
 import {
-  emit,
-  errorName,
-  failureResult,
-  logError,
+  errorClassName,
+  failedPipelineResult,
   logWarn,
   PHASE_ERROR_CODE,
   type PipelineResult,
@@ -16,7 +13,6 @@ import {
   type RunTrace,
   StageFailure,
 } from "./pipeline-trace.js";
-import { writeRunNote } from "./run-note.js";
 import { SummariserError, type SummariserErrorCode } from "./summariser-error.js";
 
 /**
@@ -51,6 +47,7 @@ import { SummariserError, type SummariserErrorCode } from "./summariser-error.js
  * instants and the owner's own labels.
  */
 
+export { finishRun, recordRunNote } from "./pipeline-finish.js";
 export type { PreparedSource } from "./pipeline-sources.js";
 export { checkDelimited, sourceRecordFor, trimToInputCap } from "./pipeline-sources.js";
 export type {
@@ -106,122 +103,16 @@ export async function runResearchPipeline(
   try {
     return await runStages(deps, trace);
   } catch (error) {
-    if (error instanceof StageFailure) return failureResult(trace, error.code);
+    if (error instanceof StageFailure) return failedPipelineResult(trace, error.code);
     if (!(error instanceof RunCancelled)) {
       logWarn(deps, {
         event: "research-pipeline-error",
         phase: trace.phase,
-        errorName: errorName(error),
+        errorName: errorClassName(error),
       });
     }
-    return failureResult(trace, PHASE_ERROR_CODE[trace.phase]);
+    return failedPipelineResult(trace, PHASE_ERROR_CODE[trace.phase]);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Finishing
-
-function runNoteInput(trace: RunTrace, result: PipelineResult | null, endedAt: string | null) {
-  return {
-    runId: trace.runId,
-    startedAt: trace.startedAt,
-    endedAt,
-    outcome: result?.outcome ?? null,
-    errorCode: result?.errorCode ?? null,
-    stages: trace.stages,
-    sources: trace.sources,
-    reportPath: result === null || result.outcome === "failure" ? null : trace.reportPath,
-  };
-}
-
-/** Writes the run note (best effort: a failure is logged by class name only). */
-export function recordRunNote(
-  deps: ResearchPipelineDeps,
-  trace: RunTrace,
-  result: PipelineResult | null,
-  endedAt: string | null,
-): void {
-  nameEffect(deps.audit, PIPELINE_EFFECTS.recordRun);
-  try {
-    trace.runNote = writeRunNote({
-      vaultRoot: deps.vaultRoot,
-      input: runNoteInput(trace, result, endedAt),
-      ...(trace.runNote === null ? {} : { prior: trace.runNote }),
-    });
-  } catch (error) {
-    logWarn(deps, { event: "research-run-note-failed", errorName: errorName(error) });
-  }
-}
-
-/** A failed run records no source as contributed: what was fetched stays "fetched, no report". */
-function demoteSources(trace: RunTrace): void {
-  trace.sources = trace.sources.map((source) =>
-    source.contributed
-      ? { label: source.label, contributed: false, code: null, status: "fetched" as const }
-      : source,
-  );
-}
-
-/**
- * Ends the run exactly once: the job run row first (the source of truth), then the run note, then
- * the final event. If the row cannot take the computed finish (a cross-field rule), a minimal
- * failure is written instead, so the run is never left in flight.
- */
-export function finishRun(
-  deps: ResearchPipelineDeps,
-  trace: RunTrace,
-  result: PipelineResult,
-): void {
-  if (trace.finished) return;
-  trace.finished = true;
-  nameEffect(deps.audit, PIPELINE_EFFECTS.recordRun);
-  const endedAt = deps.now().toISOString();
-  let recorded = result;
-  try {
-    finishJobRun(deps.db, trace.runId, {
-      outcome: result.outcome,
-      endedAt,
-      sourceCount: result.sourceCount,
-      sourceTotal: result.sourceTotal,
-      reportNoteId: result.reportNoteId,
-      unavailableSources: result.unavailable.map(({ sourceId, code }) => ({ sourceId, code })),
-      errorCode: result.errorCode,
-    });
-  } catch (error) {
-    logError(deps, { event: "research-finish-failed", errorName: errorName(error) });
-    // The run could not record what it computed, so it is recorded as cut short. The vault writes
-    // may all have succeeded, so this is not a vault failure; and a published report would now sit
-    // beside a failed run, so it is taken back.
-    trace.rollbackPublication?.();
-    recorded = {
-      outcome: "failure",
-      errorCode: result.errorCode ?? "interrupted",
-      sourceCount: 0,
-      sourceTotal: result.sourceTotal,
-      reportNoteId: null,
-      unavailable: [],
-    };
-    try {
-      finishJobRun(deps.db, trace.runId, {
-        outcome: "failure",
-        endedAt,
-        sourceCount: 0,
-        sourceTotal: recorded.sourceTotal,
-        reportNoteId: null,
-        unavailableSources: [],
-        errorCode: recorded.errorCode,
-      });
-    } catch (second) {
-      logError(deps, { event: "research-finish-fallback-failed", errorName: errorName(second) });
-    }
-  }
-  if (recorded.outcome === "failure") demoteSources(trace);
-  recordRunNote(deps, trace, recorded, endedAt);
-  emit(deps, {
-    runId: trace.runId,
-    state: recorded.outcome === "failure" ? "failed" : "completed",
-    outcome: recorded.outcome,
-  });
 }
 
 /** How a hung run is cut off: the injected timer is how tests stay fast. */
@@ -256,14 +147,14 @@ export async function executeResearchRun(
         logWarn(deps, { event: "research-watchdog-fired", phase: trace.phase });
         // A run cut off by the watchdog is `interrupted`: it is not recorded as a failure of the
         // phase it happened to be in, and sources that were never judged are not listed as failing.
-        resolve(failureResult(trace, "interrupted"));
+        resolve(failedPipelineResult(trace, "interrupted"));
       }, watchdog.ms);
     });
     const pipeline = runResearchPipeline(deps, trace);
     track?.(pipeline);
     result = await Promise.race([pipeline, hung]);
   } catch {
-    result = failureResult(trace, PHASE_ERROR_CODE[trace.phase]);
+    result = failedPipelineResult(trace, PHASE_ERROR_CODE[trace.phase]);
   } finally {
     cancel();
   }
