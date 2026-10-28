@@ -7,6 +7,8 @@
  * as an argument and the caller renders it as a text node.
  */
 
+import { errnoOf } from "@ccc/domain/errno.js";
+
 // ---------------------------------------------------------------------------
 // Create form: buttons, fields, status
 
@@ -61,19 +63,13 @@ export const CREATE_FAILURE_REASONS = {
   vault: "the vault couldn't be written to",
 } as const;
 
-function errorCode(error: unknown): string | null {
-  if (typeof error !== "object" || error === null || !("code" in error)) return null;
-  const code = error.code;
-  return typeof code === "string" ? code : null;
-}
-
 /**
  * `Couldn't add the task: {reason}.` The reason is chosen from the error's
  * closed `code` only; no other text of the error is ever shown (it could carry a
  * path or a payload).
  */
 export function createFailedMessage(error: unknown): string {
-  const code = errorCode(error);
+  const code = errnoOf(error);
   const reason =
     code === "timeout"
       ? CREATE_FAILURE_REASONS.timeout

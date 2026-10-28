@@ -5,6 +5,7 @@ import {
   type ApprovalFilter,
   type ApprovalItemView,
 } from "@ccc/domain/approval-view.js";
+import { errnoOf } from "@ccc/domain/errno.js";
 import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import type { ApprovalDecideInput, ApprovalDetailResponse } from "../approvals/api.js";
@@ -95,15 +96,6 @@ type PaneState =
   | { readonly kind: "ready"; readonly detail: ApprovalDetailResponse }
   | { readonly kind: "not-found" }
   | { readonly kind: "error" };
-
-/** The closed error code a failed `get` carries, or `null`. Duck-typed: this file imports no error class. */
-function errorCode(error: unknown): string | null {
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const code = (error as { readonly code: unknown }).code;
-    return typeof code === "string" ? code : null;
-  }
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // Blocks
@@ -378,7 +370,7 @@ export function ApprovalDetail(props: ApprovalDetailProps): VNode | null {
       .then(
         (detail): RefetchResult => ({ kind: "ok", detail }),
         (error: unknown): RefetchResult => ({
-          kind: errorCode(error) === "not-found" ? "not-found" : "error",
+          kind: errnoOf(error) === "not-found" ? "not-found" : "error",
         }),
       );
   }
