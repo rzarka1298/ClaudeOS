@@ -32,7 +32,7 @@ function conflictResult(): LaunchConflictResult["conflict"] {
         lastActivityAt: new Date(NOW - 3 * 60_000).toISOString(),
       },
     ],
-  } as LaunchConflictResult["conflict"];
+  };
 }
 
 async function openedItemText(): Promise<string> {

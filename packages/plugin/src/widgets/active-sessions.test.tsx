@@ -702,14 +702,14 @@ describe("quiet appears with the clock and disappears on a real event (FIX3B Q7)
     connectionState.value = { kind: "live" };
   }
 
-  it("a Running row turns quiet as the clock advances, with no new event", () => {
+  it("a Running row turns quiet as the clock advances, with no new event", async () => {
     seedIdle(20 * MIN);
     nowTick.value = NOW;
     const { container } = renderCard();
     expect(container.textContent ?? "").toContain("▸ Running");
     expect(container.textContent ?? "").not.toContain("⋯");
 
-    act(() => {
+    await act(() => {
       nowTick.value = NOW + 15 * MIN;
     });
 
@@ -718,7 +718,7 @@ describe("quiet appears with the clock and disappears on a real event (FIX3B Q7)
     expect(text).not.toContain("▸ Running");
   });
 
-  it("a real session.upserted through the router revives the quiet row to Running", () => {
+  it("a real session.upserted through the router revives the quiet row to Running", async () => {
     seedIdle(41 * MIN);
     nowTick.value = NOW;
     const { container } = renderCard();
@@ -738,7 +738,7 @@ describe("quiet appears with the clock and disappears on a real event (FIX3B Q7)
         }),
       },
     };
-    act(() => {
+    await act(() => {
       routeServiceEvent(event);
     });
 
