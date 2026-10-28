@@ -1,4 +1,5 @@
 import type { CodexSessionsSnapshot, CodexSessionView } from "@ccc/domain/codex-sessions.js";
+import { QUIET_RUN_GLYPH } from "@ccc/domain/session.js";
 import { describe, expect, it } from "vitest";
 import { buildCodexSessionRows } from "./codex-session-rows.js";
 
@@ -120,5 +121,40 @@ describe("Codex row derivation", () => {
       target: { threadId: "abcd1234-private" },
     });
     expect(result.recent).toHaveLength(0);
+  });
+});
+
+describe("SESS-19 for Codex rows (FIX3B Q5): silence is the stale state, never Running", () => {
+  // Claude sessions meet SESS-19 with the plugin-side quiet presentation (presentRunState). Codex
+  // meets it by a different mechanism: the collector derives `stale` for a started task with no
+  // activity for CODEX_INACTIVITY_MS (30 min; pinned in collectors records/rollout.test.ts and in
+  // service codex/session-mirror.test.ts), and the mirror re-polls every 5 s. The rows therefore
+  // only have to show `stale` as Unknown and must never grow a second, quiet presentation.
+  function firstRow(state: CodexSessionView["state"], ago: number) {
+    const result = buildCodexSessionRows(snapshot([session("silent", state, ago)]), {
+      ...rowOptions,
+      size: "tall",
+    });
+    if (result.kind !== "available") throw new Error("expected available rows");
+    const row = result.current ?? result.recent[0];
+    if (row === undefined) throw new Error("expected a row");
+    return row;
+  }
+
+  it("a session the collector turned stale after 31 minutes reads Unknown, with no Running word", () => {
+    const row = firstRow("stale", 31 * 60_000);
+    const text = row.segments
+      .map((segment) => `${segment.glyph ?? ""} ${segment.text}`)
+      .join(" · ");
+    expect(row.segments[0]?.glyph).toBe("?");
+    expect(row.segments[0]?.text).toMatch(/^Unknown/);
+    expect(text).not.toContain("Running");
+    expect(text).not.toContain(QUIET_RUN_GLYPH);
+  });
+
+  it("a running session reads Running at any age: no plugin-side quiet presentation exists for Codex", () => {
+    const row = firstRow("running", 29 * 60_000);
+    expect(row.segments[0]).toEqual({ glyph: "▸", text: "Running" });
+    expect(row.segments.some((segment) => segment.glyph === QUIET_RUN_GLYPH)).toBe(false);
   });
 });
