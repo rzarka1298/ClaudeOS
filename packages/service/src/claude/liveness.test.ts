@@ -78,6 +78,11 @@ function fakeProcessTable() {
       alive.add(pid);
       starts.set(pid, lstart);
     },
+    /** Answers kill(0) but its `ps` start time cannot be read (a failed or empty `ps`). */
+    spawnUnreadable(pid: number) {
+      alive.add(pid);
+      starts.delete(pid);
+    },
     kill(pid: number) {
       alive.delete(pid);
       starts.delete(pid);
@@ -367,6 +372,53 @@ function publishedFor(runId: RunId): SessionView[] {
     .map((event) => SessionUpsertedPayloadSchema.parse(event.payload).session)
     .filter((session) => session.runId === runId);
 }
+
+describe("D-08 reproduction: an idle session with a live process", () => {
+  const IDLE_MS = 41 * 60 * 1000;
+
+  it("an idle Run whose pid is alive and identity matches is left running after 41 idle minutes", async () => {
+    table.spawn(PID, LSTART);
+    const run = seedRun({
+      activity: "idle",
+      lastActivityAt: new Date(T0 - IDLE_MS).toISOString(),
+    });
+    const sweeper = sweeperWith();
+    await sweeper.sweepNow();
+    // Past the grace and a whole sweep interval too: still nothing.
+    nowMs = T0 + DEFAULT_LIVENESS_CONFIG.graceMs + DEFAULT_LIVENESS_CONFIG.sweepMs;
+    await sweeper.sweepNow();
+    expect(appliedKinds(run.runId)).toEqual([]);
+    expect(stateOf(run.runId)).toBe("running");
+    expect(getSessionRun(store.db, run.runId)?.activity).toBe("idle");
+  });
+
+  it("a working Run whose pid is alive and identity matches is also left alone after 41 minutes", async () => {
+    table.spawn(PID, LSTART);
+    const run = seedRun({
+      activity: "working",
+      lastActivityAt: new Date(T0 - IDLE_MS).toISOString(),
+    });
+    await sweeperWith().sweepNow();
+    expect(appliedKinds(run.runId)).toEqual([]);
+    expect(stateOf(run.runId)).toBe("running");
+  });
+
+  // Characterises today's behaviour. 09-10 inverts this deliberately under D-06
+  // (an unchecked identity must stop reading as plain running); red first there.
+  it("identity unknown: nothing applied, today", async () => {
+    table.spawnUnreadable(PID);
+    const run = seedRun({
+      activity: "idle",
+      lastActivityAt: new Date(T0 - IDLE_MS).toISOString(),
+    });
+    const sweeper = sweeperWith();
+    await sweeper.sweepNow();
+    nowMs = T0 + DEFAULT_LIVENESS_CONFIG.graceMs + DEFAULT_LIVENESS_CONFIG.sweepMs;
+    await sweeper.sweepNow();
+    expect(appliedKinds(run.runId)).toEqual([]);
+    expect(stateOf(run.runId)).toBe("running");
+  });
+});
 
 describe("restart revival (Task 3 Test 2, D-22, PR-12)", () => {
   const saved = {
