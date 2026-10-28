@@ -131,6 +131,13 @@ function renderBlock(f: Fixture, connection: ConnectionState = { kind: "live" },
   );
 }
 
+/** The bundle block's own status line (D-09): the one announcer for bundle actions. */
+function bundleLine(): HTMLElement {
+  const line = document.querySelector<HTMLElement>('[data-status-region="bundle"]');
+  if (line === null) throw new Error("no bundle status line");
+  return line;
+}
+
 async function flush(): Promise<void> {
   await act(async () => {
     for (let i = 0; i < 6; i += 1) await Promise.resolve();
@@ -177,7 +184,20 @@ describe("Task 1 (tracer): Show bundle preview builds, verifies and shows the ex
     expect(f.copyText).toHaveBeenCalledTimes(1);
     expect(f.copyText).toHaveBeenCalledWith(expected);
     expect(f.copyText.mock.calls[0]?.[0]).toBe(preview.textContent);
-    expect(f.notify).toHaveBeenCalledWith("Bundle copied.");
+    // D-09: the outcome is announced by the bundle block's own line, never by the destination's.
+    expect(bundleLine().getAttribute("role")).toBe("status");
+    expect(bundleLine().textContent).toBe("Bundle copied.");
+    expect(f.notify).not.toHaveBeenCalled();
+  });
+
+  it("Test 2: the bundle line is mounted, empty, before its first message", () => {
+    answered();
+    const f = fixture();
+    renderBlock(f);
+    expect(bundleLine().textContent).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    expect(bundleLine().textContent).toBe("");
+    expect(document.querySelectorAll('[data-status-region="bundle"]')).toHaveLength(1);
   });
 
   it("shows the size line as {size} · {n} lines for the same string", () => {
@@ -201,8 +221,8 @@ describe("Task 1 (tracer): Show bundle preview builds, verifies and shows the ex
     fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
     fireEvent.click(screen.getByRole("button", { name: "Copy bundle" }));
     await flush();
-    expect(f.notify).toHaveBeenCalledTimes(1);
-    expect(f.notify).toHaveBeenCalledWith(
+    expect(f.notify).not.toHaveBeenCalled();
+    expect(bundleLine().textContent).toBe(
       "Couldn't copy the bundle. Select the text in the preview and copy it by hand.",
     );
     expect(screen.getByRole("region", { name: "Diagnostic bundle preview" }).textContent).toBe(
@@ -519,7 +539,7 @@ describe("Task 2: Save bundle through the typed dialog, 0600, never inside the v
     fireEvent.click(screen.getByRole("button", { name: "Copy bundle" }));
     await flush();
     expect(f.copyText).toHaveBeenCalledTimes(1);
-    expect(f.notify).toHaveBeenCalledWith("Bundle copied.");
+    expect(bundleLine().textContent).toBe("Bundle copied.");
   });
 
   it("an unconfigured export port reads as no dialog: Save is aria-disabled and writes nothing", async () => {

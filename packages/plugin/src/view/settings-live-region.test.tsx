@@ -2,6 +2,8 @@ import { newScanRootId, type ScanStateResponse } from "@ccc/domain";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
+import { configureHealth } from "../health/api.js";
+import { resetHealthState } from "../health/state.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import type {
   ProjectActionOutcome,
@@ -11,6 +13,7 @@ import type {
 } from "../projects/projects-actions.js";
 import { resetProjectsState } from "../projects/projects-state.js";
 import { resetScanState } from "../projects/scan-state.js";
+import { allOkHealth } from "../test-support/health-fixtures.js";
 import { fakeLaunchersActions } from "../test-support/launchers-fixtures.js";
 import { createLaunchersSession } from "./launchers-settings.js";
 import { SECTION_VIEWS, SettingsDestination } from "./settings-destination.js";
@@ -130,6 +133,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  resetHealthState();
+  configureHealth(null);
   resetScanState();
   resetProjectsState();
   connectionState.value = { kind: "connecting" };
@@ -139,11 +144,59 @@ afterEach(() => {
 describe("M1: exactly one live region in the Settings destination", () => {
   const ids = Object.keys(SECTION_VIEWS) as (keyof typeof SETTINGS_SECTION_LABELS)[];
 
-  it.each(ids)("%s: the destination holds one live region, before and after use", async (id) => {
+  // D-09: Diagnostics holds exactly two (the destination line and the bundle block's own line);
+  // every other section holds exactly one.
+  it.each(ids)("%s: the destination holds its live regions, before and after use", async (id) => {
     renderSettings();
     openSection(SETTINGS_SECTION_LABELS[id]);
     await settle();
-    expect(liveRegions().map((el) => el.className || el.tagName)).toEqual(["ccc-settings-status"]);
+    const expected =
+      id === "diagnostics"
+        ? ["ccc-settings-status", "ccc-settings-status"]
+        : ["ccc-settings-status"];
+    expect(liveRegions().map((el) => el.className || el.tagName)).toEqual(expected);
+    if (id === "diagnostics") {
+      expect(liveRegions().map((el) => el.getAttribute("data-status-region"))).toEqual([
+        null,
+        "bundle",
+      ]);
+    }
+  });
+
+  it("Diagnostics: Copy bundle is announced once, by the bundle line, and the destination line stays silent", async () => {
+    configureHealth({ api: { get: () => Promise.resolve(allOkHealth()) } });
+    const copyText = vi.fn(() => Promise.resolve());
+    const base = createInertSettingsHost();
+    const host: SettingsHost = {
+      ...base,
+      copyText,
+      display: {
+        ...base.display,
+        pluginVersion: "0.1.0",
+        obsidianVersion: "1.13.1",
+        vaultName: "Marrowvault",
+        userName: "zinnia-example",
+        vaultBasePath: null,
+      },
+    };
+    renderSettings({ host });
+    openSection("Diagnostics");
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+    await settle();
+    const bundle = document.querySelector<HTMLElement>('[data-status-region="bundle"]');
+    if (bundle === null) throw new Error("no bundle line");
+    const bundleLog: string[] = [];
+    const observer = new MutationObserver(() => bundleLog.push(bundle.textContent ?? ""));
+    observer.observe(bundle, { childList: true, characterData: true, subtree: true });
+    const destination = watchStatus();
+    fireEvent.click(screen.getByRole("button", { name: "Copy bundle" }));
+    await settle();
+    observer.disconnect();
+    destination.stop();
+    expect(bundleLog.filter((text) => text === "Bundle copied.")).toHaveLength(1);
+    expect(destination.log.filter((text) => text === "Bundle copied.")).toHaveLength(0);
+    expect(statusEl().textContent).toBe("");
   });
 
   it("the Projects section keeps one live region while a register fails and a scan runs", async () => {

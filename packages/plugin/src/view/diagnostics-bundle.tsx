@@ -22,6 +22,7 @@ import {
 import { projectsSnapshot } from "../projects/projects-state.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
 import { CHECKING_LINE, checkedLine, ERROR_HEADING } from "./diagnostics-copy.js";
+import { StatusLine } from "./settings-controls.js";
 import type { SettingsHost } from "./settings-host.js";
 import { useActionGate } from "./settings-pending.js";
 
@@ -103,6 +104,12 @@ export interface DiagnosticBundleBlockProps {
   readonly verify?: VerifyAndSerialise | undefined;
 }
 
+/**
+ * The gap that makes an identical repeated message audible: the line is cleared, then set again a
+ * beat later (the same rule as the destination's top line, so Copy bundle pressed twice is heard twice).
+ */
+const REPEAT_GAP_MS = 60;
+
 const NUMBER = new Intl.NumberFormat("en");
 const PLURAL = new Intl.PluralRules("en");
 
@@ -166,6 +173,10 @@ export function DiagnosticBundleBlock({
 
   const [open, setOpen] = useState(false);
   const [outcome, setOutcome] = useState<BundleOutcome | null>(null);
+  // The bundle actions' own announcer (D-09): mounted, empty, before its first message.
+  const [bundleStatus, setBundleStatus] = useState("");
+  const shownRef = useRef("");
+  const repeatTimerRef = useRef<number | null>(null);
   const previewId = useId();
   const reasonId = useId();
   const saveReasonId = useId();
@@ -187,8 +198,27 @@ export function DiagnosticBundleBlock({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (repeatTimerRef.current !== null) window.clearTimeout(repeatTimerRef.current);
     };
   }, []);
+
+  /** The one way a bundle action speaks: its own line, beside its buttons (D-09). */
+  function announce(message: string): void {
+    if (repeatTimerRef.current !== null) window.clearTimeout(repeatTimerRef.current);
+    repeatTimerRef.current = null;
+    if (message === shownRef.current && message !== "") {
+      shownRef.current = "";
+      setBundleStatus("");
+      repeatTimerRef.current = window.setTimeout(() => {
+        repeatTimerRef.current = null;
+        shownRef.current = message;
+        setBundleStatus(message);
+      }, REPEAT_GAP_MS);
+      return;
+    }
+    shownRef.current = message;
+    setBundleStatus(message);
+  }
 
   /** Builds from the values as they are at this moment (signals read with `peek`). */
   function build(): BundleOutcome | null {
@@ -273,9 +303,9 @@ export function DiagnosticBundleBlock({
     if (outcome?.kind !== "offered" || !copyGate.begin()) return;
     try {
       await host.copyText(outcome.text);
-      notify("Bundle copied.");
+      announce("Bundle copied.");
     } catch {
-      notify("Couldn't copy the bundle. Select the text in the preview and copy it by hand.");
+      announce("Couldn't copy the bundle. Select the text in the preview and copy it by hand.");
     } finally {
       copyGate.end();
     }
@@ -457,6 +487,7 @@ export function DiagnosticBundleBlock({
           {offered && !saveAvailable && <p id={saveReasonId}>{SAVE_UNAVAILABLE_REASON}</p>}
         </div>
       )}
+      <StatusLine message={bundleStatus} region="bundle" />
     </>
   );
 }
