@@ -389,7 +389,8 @@ describe("D-08: an idle pid-bearing session is never timed out by the PID-less r
         const controlRunId = sessionOf(controlRunning)?.runId;
         expect(controlRunId).toBeDefined();
         await stream.waitFor(
-          (event) => sessionOf(event)?.runId === controlRunId && sessionOf(event)?.state === "stale",
+          (event) =>
+            sessionOf(event)?.runId === controlRunId && sessionOf(event)?.state === "stale",
           20_000,
         );
 
