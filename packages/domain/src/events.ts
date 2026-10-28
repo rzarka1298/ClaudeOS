@@ -97,6 +97,13 @@ export const ServiceEventSchema = z.object({
 export type ServiceEvent = z.infer<typeof ServiceEventSchema>;
 
 /**
+ * The largest quiet threshold the snapshot carries: 24 hours in milliseconds. The service's
+ * `CCC_QUIET_THRESHOLD_MS` guard and the schema below both read this one constant, so a knob
+ * value the service accepts can never fail the snapshot parse (FIX3A L1).
+ */
+export const SESSION_QUIET_AFTER_MAX_MS = 86_400_000;
+
+/**
  * The full-resync payload. Its contract is that it is always sufficient to
  * bring a client from nothing to current; `state` grows as later phases add
  * more of it. `lastEventId` is read from the same buffer state as the
@@ -120,7 +127,7 @@ export const SnapshotResponseSchema = z.object({
     codex: CodexSnapshotStateSchema.optional(),
     // Phase 9 (append-only, R-04). Optional so an older service's snapshot
     // still parses (Pitfall 17). The quiet-session threshold in milliseconds.
-    sessionQuietAfterMs: z.number().int().positive().max(86_400_000).optional(),
+    sessionQuietAfterMs: z.number().int().positive().max(SESSION_QUIET_AFTER_MAX_MS).optional(),
     projects: ProjectsSnapshotSchema,
   }),
 });

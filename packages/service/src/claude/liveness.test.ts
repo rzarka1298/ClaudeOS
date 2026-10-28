@@ -8,6 +8,7 @@ import type { Evidence } from "@ccc/collectors";
 import {
   newRunId,
   type RunId,
+  SESSION_QUIET_AFTER_MAX_MS,
   SESSION_QUIET_AFTER_MS,
   type SessionRun,
   SessionUpsertedPayloadSchema,
@@ -504,6 +505,28 @@ describe("CCC_QUIET_THRESHOLD_MS (09-10, D-07, T-09-17)", () => {
         SESSION_QUIET_AFTER_MS,
       );
     }
+  });
+
+  // L1 (FIX3A): the snapshot schema takes only a positive integer of at most 86_400_000 ms.
+  // A knob value outside that would pass the sweeper's guard, then fail the plugin's
+  // SnapshotResponseSchema.safeParse and drop the WHOLE snapshot.
+  it("falls back to the default for a fractional, oversized or non-finite quiet threshold", () => {
+    for (const raw of ["1500.5", "1500.7", "0.5", "86400001", "172800000", "1e300", "Infinity"]) {
+      expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: raw }).quietAfterMs).toBe(
+        SESSION_QUIET_AFTER_MS,
+      );
+    }
+  });
+
+  it("accepts the integer bounds: 1 ms and the 86_400_000 ms maximum", () => {
+    expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: "1" }).quietAfterMs).toBe(1);
+    expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: "86400000" }).quietAfterMs).toBe(
+      86_400_000,
+    );
+  });
+
+  it("shares its maximum with the snapshot schema's constant", () => {
+    expect(SESSION_QUIET_AFTER_MAX_MS).toBe(86_400_000);
   });
 });
 

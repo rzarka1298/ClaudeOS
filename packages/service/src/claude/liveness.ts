@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { type RunId, SESSION_QUIET_AFTER_MS, type SessionRun } from "@ccc/domain";
+import {
+  type RunId,
+  SESSION_QUIET_AFTER_MAX_MS,
+  SESSION_QUIET_AFTER_MS,
+  type SessionRun,
+} from "@ccc/domain";
 import {
   listRegisteredProjects,
   listRevivableRuns,
@@ -82,6 +87,22 @@ function positiveMs(raw: string | undefined, fallback: number): number {
   return raw !== undefined && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+/**
+ * The quiet threshold is also published as `state.sessionQuietAfterMs`, whose schema accepts only
+ * a positive integer of at most {@link SESSION_QUIET_AFTER_MAX_MS}. A knob value outside that
+ * would pass `positiveMs`, then fail the plugin's snapshot parse and drop the whole snapshot,
+ * so anything else falls back to the default (FIX3A L1).
+ */
+function quietThresholdMs(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return raw !== undefined &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= SESSION_QUIET_AFTER_MAX_MS
+    ? value
+    : fallback;
+}
+
 /** The sweeper's timings, each overridable by its env knob (tests shrink them). */
 export function livenessConfigFromEnv(env: NodeJS.ProcessEnv): LivenessConfig {
   return {
@@ -92,7 +113,10 @@ export function livenessConfigFromEnv(env: NodeJS.ProcessEnv): LivenessConfig {
       env.CCC_PIDLESS_INACTIVITY_MS,
       DEFAULT_LIVENESS_CONFIG.pidlessInactivityMs,
     ),
-    quietAfterMs: positiveMs(env.CCC_QUIET_THRESHOLD_MS, DEFAULT_LIVENESS_CONFIG.quietAfterMs),
+    quietAfterMs: quietThresholdMs(
+      env.CCC_QUIET_THRESHOLD_MS,
+      DEFAULT_LIVENESS_CONFIG.quietAfterMs,
+    ),
   };
 }
 

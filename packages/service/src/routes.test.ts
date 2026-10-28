@@ -343,6 +343,16 @@ describe("snapshot state.sessionQuietAfterMs (09-10, D-07)", () => {
     expect(SnapshotResponseSchema.safeParse(unset.body).success).toBe(true);
   });
 
+  // L1 (FIX3A): a knob outside the schema's int / 1..86_400_000 range must not break the snapshot.
+  it("a fractional, oversized or non-finite knob still yields a parseable snapshot at the default", async () => {
+    for (const raw of ["1500.5", "0.5", "172800000", "1e300"]) {
+      const reply = await snapshotWithClaude(raw);
+      expect(reply.status).toBe(200);
+      expect(reply.body.state.sessionQuietAfterMs).toBe(1_800_000);
+      expect(SnapshotResponseSchema.safeParse(reply.body).success).toBe(true);
+    }
+  });
+
   it("omits the member without Claude services, never inventing a threshold", async () => {
     const harness = await startRouteHarness(store, {});
     try {
