@@ -649,3 +649,38 @@ describe("Plan 06-17 Task 3: the Approvals section inside Agent runs", () => {
     expect(screen.getByText("Session tracking paused")).toBeTruthy();
   });
 });
+
+describe("Phase 9 Task 1 (tracer): a quiet session never reads as plain Running (D-05, SESS-19)", () => {
+  const MIN = 60_000;
+  const quietAgo = (ms: number): string => new Date(NOW_MS - ms).toISOString();
+
+  it("Test 1: a running idle session whose last event was 41 minutes ago reads the quiet label, not Running", () => {
+    seed([
+      session({
+        runId: runId(1),
+        name: "Sitting session",
+        state: "running",
+        activity: "idle",
+        lastActivityAt: quietAgo(41 * MIN),
+      }),
+    ]);
+    render(<AgentRuns now={NOW_MS} />);
+    const cell = screen.getByText("⋯ Idle — last event 41 min ago");
+    expect(cell.tagName).toBe("TD");
+    expect(cell.textContent).not.toContain("Running");
+  });
+
+  it("Test 6: the same session revived by a fresh event reads Running again", () => {
+    seed([
+      session({
+        runId: runId(1),
+        name: "Sitting session",
+        state: "running",
+        activity: "idle",
+        lastActivityAt: quietAgo(1000),
+      }),
+    ]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(screen.getByText("▸ Running · Idle")).toBeTruthy();
+  });
+});

@@ -5,7 +5,8 @@
 import {
   isSessionListed,
   NOT_REPORTED,
-  RUN_STATE_DISPLAY,
+  presentRunState,
+  SESSION_QUIET_AFTER_MS,
   type SessionView,
   sessionDisplayName,
 } from "@ccc/domain/session.js";
@@ -100,9 +101,10 @@ function durationText(session: SessionView, nowMs: number): string {
 
 /** `{glyph} {label}`, with running appending ` · Working`/` · Idle` (UI-SPEC
  * "Sessions table" column 2). */
-function stateCellText(session: SessionView): string {
-  const display = RUN_STATE_DISPLAY[session.state];
+function stateCellText(session: SessionView, nowMs: number, quietAfterMs: number): string {
+  const display = presentRunState(session, nowMs, quietAfterMs);
   const base = `${display.glyph} ${display.label}`;
+  if (display.quiet !== null) return base;
   if (session.state === "running" && session.activity !== null) {
     return `${base} · ${session.activity === "working" ? "Working" : "Idle"}`;
   }
@@ -203,7 +205,7 @@ function SessionsTable({
                     {name}
                   </button>
                 </th>
-                <td>{stateCellText(session)}</td>
+                <td>{stateCellText(session, nowMs, SESSION_QUIET_AFTER_MS)}</td>
                 <td data-priority="secondary">{session.projectName ?? "Unclassified"}</td>
                 <td data-priority="secondary">
                   <time dateTime={lastActivityIso} title={formatAbsoluteTime(lastActivityIso)}>
