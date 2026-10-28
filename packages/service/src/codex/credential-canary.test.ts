@@ -55,7 +55,7 @@ function makeHome(): FakeCodexHome {
 }
 
 describe("Test 6: the port-level credential canary", () => {
-  it("records no decoy access and leaks no marker through any port method", () => {
+  it("records no decoy access and leaks no marker through any port method", async () => {
     const fake = makeHome();
     const rec = recordingFs();
     const port = createCodexHomePort({ root: fake.root, fs: rec.fs });
@@ -67,6 +67,7 @@ describe("Test 6: the port-level credential canary", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     const exercise = exerciseCodexHomePort(port, fake);
+    await exercise.settled();
 
     // Access: the helper throws on a decoy, a lookalike or anything off the allowlist.
     expect(rec.calls.length).toBeGreaterThan(0);
@@ -89,11 +90,11 @@ describe("Test 6: the port-level credential canary", () => {
     expect(logged).not.toContain(fake.decoys.marker);
   });
 
-  it("reads each decoy name zero times, however it is requested", () => {
+  it("reads each decoy name zero times, however it is requested", async () => {
     const fake = makeHome();
     const rec = recordingFs();
     const port = createCodexHomePort({ root: fake.root, fs: rec.fs });
-    exerciseCodexHomePort(port, fake);
+    await exerciseCodexHomePort(port, fake).settled();
     const names = [
       fake.decoys.credentialName,
       fake.decoys.configName,
@@ -141,10 +142,10 @@ interface FullRun {
 }
 
 /** Runs the port and the store reader together over one recording file system. */
-function runEverything(
+async function runEverything(
   fake: FakeCodexHome,
   portOverride?: (real: CodexHomePort) => CodexHomePort,
-): FullRun {
+): Promise<FullRun> {
   const rec = recordingFs();
   const realPort = createCodexHomePort({ root: fake.root, fs: rec.fs });
   const port = portOverride === undefined ? realPort : portOverride(realPort);
@@ -153,15 +154,14 @@ function runEverything(
     openDatabase: recordingOpener(rec.calls),
     now: () => NOW,
   });
-  const outputs = [
-    ...exerciseCodexHomePort(port, fake).outputs,
-    ...exerciseCodexStoreReader(reader, NOW).outputs,
-  ];
+  const portExercise = exerciseCodexHomePort(port, fake);
+  await portExercise.settled();
+  const outputs = [...portExercise.outputs, ...exerciseCodexStoreReader(reader, NOW).outputs];
   return { calls: rec.calls, outputs };
 }
 
 describe("Test 1 (task 3): the canary over the store reader and the port together", () => {
-  it("touches only allowlisted paths and leaks no decoy through any channel", () => {
+  it("touches only allowlisted paths and leaks no decoy through any channel", async () => {
     const fake = makeFullHome();
     const decoyPaths = [
       fake.decoys.credentialPath,
@@ -181,7 +181,7 @@ describe("Test 1 (task 3): the canary over the store reader and the port togethe
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    const run = runEverything(fake);
+    const run = await runEverything(fake);
 
     expect(run.calls.some((call) => call.op === "openDatabase")).toBe(true);
     expect(() => assertNoForbiddenAccess(run.calls, fake)).not.toThrow();
@@ -204,10 +204,10 @@ describe("Test 1 (task 3): the canary over the store reader and the port togethe
 });
 
 describe("Test 2 (task 3): only SQLite sidecars may appear in the directory", () => {
-  it("differs by the read-only sidecars at most, and no mtime of another file moves", () => {
+  it("differs by the read-only sidecars at most, and no mtime of another file moves", async () => {
     const fake = makeFullHome();
     const before = fake.snapshot();
-    runEverything(fake);
+    await runEverything(fake);
     const diff = diffSnapshots(before, fake.snapshot());
     expect(() => assertOnlySidecarChanges(diff)).not.toThrow();
     for (const name of [...diff.added, ...diff.removed]) {
@@ -222,10 +222,10 @@ describe("Test 2 (task 3): only SQLite sidecars may appear in the directory", ()
 });
 
 describe("Test 3 (task 3): with no database nothing changes", () => {
-  it("leaves the directory exactly as it was", () => {
+  it("leaves the directory exactly as it was", async () => {
     const fake = makeFullHome(false);
     const before = fake.snapshot();
-    const run = runEverything(fake);
+    const run = await runEverything(fake);
     expect(run.calls.some((call) => call.op === "openDatabase")).toBe(false);
     const diff = diffSnapshots(before, fake.snapshot());
     expect(diff).toEqual({ added: [], removed: [], changed: [] });
@@ -233,7 +233,7 @@ describe("Test 3 (task 3): with no database nothing changes", () => {
 });
 
 describe("Test 5 (task 3): the canary has teeth (negative controls)", () => {
-  it("fails when a port double reads the decoy credential file", () => {
+  it("fails when a port double reads the decoy credential file", async () => {
     const fake = makeFullHome();
     const rec = recordingFs();
     const bad = (real: CodexHomePort): CodexHomePort => ({
@@ -243,7 +243,7 @@ describe("Test 5 (task 3): the canary has teeth (negative controls)", () => {
         return real.readNamed(name, maxBytes);
       },
     });
-    const run = runEverything(fake, bad);
+    const run = await runEverything(fake, bad);
     expect(() => assertNoForbiddenAccess([...run.calls, ...rec.calls], fake)).toThrow(/canary/);
   });
 

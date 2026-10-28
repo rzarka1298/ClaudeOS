@@ -632,7 +632,7 @@ export function createTokenScanner(deps: TokenScannerDeps): TokenScanner {
       refs = port.listRolloutFiles(range);
       datedCount = refs.length;
       // Threads dated before the window but appended to inside it (W1): same caps, same semantics.
-      const modified = port.listModifiedRolloutFiles?.(range) ?? [];
+      const modified = (await port.listModifiedRolloutFiles?.(range)) ?? [];
       if (modified.length > 0) refs = [...refs, ...modified];
     } catch (err: unknown) {
       logger.warn(

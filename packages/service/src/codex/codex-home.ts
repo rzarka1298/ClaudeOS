@@ -112,6 +112,8 @@ export const MAX_ROLLOUT_LIST = 5000;
 export const MAX_ROLLOUT_LIST_DAYS = 400;
 /** Synchronous stat calls one modified-files walk may make; the rest of the home is left for the next poll. */
 export const MAX_ROLLOUT_STATS = 10_000;
+/** Stats between event-loop yields in the modified-files walk (D-15); 10,000 stats give at least 40 turns. */
+export const ROLLOUT_STAT_CHUNK = 250;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SESSIONS_DIR = "sessions";
@@ -151,7 +153,7 @@ export interface CodexHomePort {
   listModifiedRolloutFiles(range: {
     readonly from: number;
     readonly to: number;
-  }): readonly RolloutRef[];
+  }): readonly RolloutRef[] | Promise<readonly RolloutRef[]>;
   statRollout(ref: RolloutRef): { readonly size: number; readonly mtimeMs: number } | null;
   readRolloutRange(ref: RolloutRef, offset: number, maxBytes: number): BoundedRead;
   /** The contained real path of a sessions file, or null for anything not openable. */
@@ -243,6 +245,12 @@ function validateRolloutPath(root: string, candidate: unknown): string {
   return dated;
 }
 
+function defaultYieldNow(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 function normalizeRoot(root: string): string {
   const normalized = resolve(root);
   return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
@@ -256,9 +264,12 @@ function normalizeRoot(root: string): string {
 export function createCodexHomePort(options: {
   readonly root: string;
   readonly fs?: CodexFs;
+  /** Gives the event loop a turn during a long walk; defaults to a `setImmediate` promise. Test seam. */
+  readonly yieldNow?: () => Promise<void>;
 }): CodexHomePort {
   const root = normalizeRoot(options.root);
   const fs = options.fs ?? defaultCodexFs;
+  const yieldNow = options.yieldNow ?? defaultYieldNow;
 
   if (process.env.VITEST !== undefined && root === normalizeRoot(join(homedir(), ".codex"))) {
     throw new CodexHomeAccessError("real-home-under-test");
@@ -473,10 +484,10 @@ export function createCodexHomePort(options: {
       return found;
     },
 
-    listModifiedRolloutFiles(range: {
+    async listModifiedRolloutFiles(range: {
       readonly from: number;
       readonly to: number;
-    }): readonly RolloutRef[] {
+    }): Promise<readonly RolloutRef[]> {
       const { from, to } = range;
       if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) {
         throw new CodexHomeAccessError("bad-argument");
@@ -555,7 +566,9 @@ export function createCodexHomePort(options: {
                 throw unreadable();
               }
               if (mtimeMs >= from) found.push({ path: join(dir, name) });
+              if ((MAX_ROLLOUT_STATS - statsLeft) % ROLLOUT_STAT_CHUNK === 0) await yieldNow();
             }
+            await yieldNow();
           }
         }
       }

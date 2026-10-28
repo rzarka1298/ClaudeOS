@@ -320,7 +320,7 @@ describe("Test 5: the port has no write-capable member", () => {
     );
   });
 
-  it("makes no mutating call when handed a file system that offers them", () => {
+  it("makes no mutating call when handed a file system that offers them", async () => {
     const fake = makeHome({ escapeSymlink: true });
     const writers = [
       "writeFile",
@@ -344,7 +344,7 @@ describe("Test 5: the port has no write-capable member", () => {
     const spies = Object.fromEntries(writers.map((name) => [name, vi.fn()]));
     const fs = { ...defaultCodexFs, ...spies } as unknown as CodexFs;
     const port = createCodexHomePort({ root: fake.root, fs });
-    exerciseCodexHomePort(port, fake);
+    await exerciseCodexHomePort(port, fake).settled();
     for (const name of writers) {
       expect(spies[name], name).not.toHaveBeenCalled();
     }
@@ -361,7 +361,7 @@ describe("the real default home is refused under a test runner", () => {
 });
 
 describe("Test 4 (task 3): the override home is used exclusively", () => {
-  it("never touches a second home standing in for the default location", () => {
+  it("never touches a second home standing in for the default location", async () => {
     const override = makeHome();
     const userHome = createFakeCodexHome({
       sessionIndex: '{"id":"other-home"}\n',
@@ -380,7 +380,7 @@ describe("Test 4 (task 3): the override home is used exclusively", () => {
       const beforeOther = userHome.snapshot();
       const rec = recordingFs();
       const port = createCodexHomePort({ root: resolved, fs: rec.fs });
-      exerciseCodexHomePort(port, override);
+      await exerciseCodexHomePort(port, override).settled();
 
       expect(rec.calls.length).toBeGreaterThan(0);
       for (const call of rec.calls) {

@@ -360,6 +360,11 @@ export function assertNoForbiddenAccess(calls: readonly RecordedCall[], home: Fa
 /** Everything a caller could see from an exercise: values, error messages. */
 export interface PortExercise {
   readonly outputs: string[];
+  /**
+   * Resolves once every Promise a port method returned (the yielding modified-files walk, D-15) has
+   * settled and its value or refusal is in `outputs`. A caller that scans `outputs` awaits this first.
+   */
+  settled(): Promise<void>;
 }
 
 /**
@@ -369,20 +374,26 @@ export interface PortExercise {
  */
 export function exerciseCodexHomePort(port: CodexHomePort, home: FakeCodexHome): PortExercise {
   const outputs: string[] = [];
+  const pending: Promise<void>[] = [];
   const note = (value: unknown): void => {
     if (value instanceof Buffer) outputs.push(value.toString("utf8"));
     else outputs.push(JSON.stringify(value) ?? "undefined");
   };
+  const noteError = (error: unknown): void => {
+    outputs.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+  };
   const attempt = (action: () => unknown): void => {
     try {
       const value = action();
-      if (value !== null && typeof value === "object" && "bytes" in value) {
+      if (value instanceof Promise) {
+        pending.push(value.then(note, noteError));
+      } else if (value !== null && typeof value === "object" && "bytes" in value) {
         note((value as { bytes: Buffer }).bytes);
       } else {
         note(value);
       }
     } catch (error) {
-      outputs.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+      noteError(error);
     }
   };
 
@@ -424,7 +435,12 @@ export function exerciseCodexHomePort(port: CodexHomePort, home: FakeCodexHome):
     attempt(() => port.readRolloutRange(ref, 0, 4096));
     attempt(() => port.resolveSessionsFile(ref.path));
   }
-  return { outputs };
+  return {
+    outputs,
+    settled: async () => {
+      await Promise.all(pending);
+    },
+  };
 }
 
 /** The only files SQLite itself may create next to the database for a read-only open of a closed WAL store. */
@@ -504,7 +520,7 @@ export function exerciseCodexStoreReader(reader: CodexStoreReader, nowMs: number
       outputs.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
     }
   }
-  return { outputs };
+  return { outputs, settled: () => Promise.resolve() };
 }
 
 // ---------------------------------------------------------------------------

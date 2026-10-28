@@ -552,11 +552,13 @@ async function runFullCycle(world: World): Promise<{ statuses: Map<string, numbe
     openDatabase: recordingOpener(world.portRecord.calls),
     now: () => Date.now(),
   });
+  const portExercise = exerciseCodexHomePort(
+    createCodexHomePort({ root: world.home.root, fs: world.portRecord.fs }),
+    world.home,
+  );
+  await portExercise.settled();
   world.exerciseOutputs.push(
-    ...exerciseCodexHomePort(
-      createCodexHomePort({ root: world.home.root, fs: world.portRecord.fs }),
-      world.home,
-    ).outputs,
+    ...portExercise.outputs,
     ...exerciseCodexStoreReader(reader, Date.now()).outputs,
   );
 
