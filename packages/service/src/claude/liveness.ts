@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { RunId, SessionRun } from "@ccc/domain";
+import { type RunId, SESSION_QUIET_AFTER_MS, type SessionRun } from "@ccc/domain";
 import {
   listRegisteredProjects,
   listRevivableRuns,
@@ -25,7 +25,10 @@ import { type ProcessFacts, startInstantMs } from "./process-facts.js";
  *   SessionEnd has ended the Run meanwhile, does the sweep apply `pid-gone`.
  * - A pid alive with exactly the stored `lstart` applies `pid-alive` to a
  *   stale Run (revival). An unknown read `lstart` proves nothing either
- *   way, so it neither revives nor ends a Run.
+ *   way, so it neither revives nor ends a Run. Left unknown for the whole
+ *   quiet threshold (no event for `quietAfterMs`), a running or
+ *   waiting-for-approval Run applies `identity-unknown-timeout` and reads
+ *   `stale` (D-06): unknown by evidence, never an ending.
  * - A Run with a pid but no stored start (hooks installed mid-session, or
  *   a failed SessionStart `ps`) is judged by the read start against its
  *   last hook activity (wave 4): a process that started no later than that
@@ -58,6 +61,12 @@ export interface LivenessConfig {
   readonly startTimeoutMs: number;
   /** A PID-less Run idle this long goes stale (`CCC_PIDLESS_INACTIVITY_MS`, 30 min). */
   readonly pidlessInactivityMs: number;
+  /**
+   * A pid-bearing Run whose process identity cannot be checked goes stale after
+   * this long with no event (`CCC_QUIET_THRESHOLD_MS`, 30 min, D-06). The same
+   * value reaches the plugin as `state.sessionQuietAfterMs` (D-07).
+   */
+  readonly quietAfterMs: number;
 }
 
 export const DEFAULT_LIVENESS_CONFIG: LivenessConfig = {
@@ -65,6 +74,7 @@ export const DEFAULT_LIVENESS_CONFIG: LivenessConfig = {
   graceMs: 10_000,
   startTimeoutMs: 60_000,
   pidlessInactivityMs: 30 * 60 * 1000,
+  quietAfterMs: SESSION_QUIET_AFTER_MS,
 };
 
 function positiveMs(raw: string | undefined, fallback: number): number {
@@ -82,6 +92,7 @@ export function livenessConfigFromEnv(env: NodeJS.ProcessEnv): LivenessConfig {
       env.CCC_PIDLESS_INACTIVITY_MS,
       DEFAULT_LIVENESS_CONFIG.pidlessInactivityMs,
     ),
+    quietAfterMs: positiveMs(env.CCC_QUIET_THRESHOLD_MS, DEFAULT_LIVENESS_CONFIG.quietAfterMs),
   };
 }
 
@@ -99,6 +110,8 @@ export interface SweepReport {
   readonly startTimeouts: number;
   /** `inactivity-timeout` evidence applied this sweep. */
   readonly inactivityTimeouts: number;
+  /** `identity-unknown-timeout` evidence applied this sweep (D-06). */
+  readonly identityUnknownTimeouts: number;
   /** Unclassified Runs given a project after a project-set change. */
   readonly reattributed: number;
   /** Runs whose missing process start was backfilled this sweep (wave 4). */
@@ -178,6 +191,7 @@ const START_PENDING_STATES: ReadonlySet<SessionRun["state"]> = new Set<SessionRu
   "starting",
 ]);
 
+/** The states a quiet Run can be moved off: PID-less inactivity and unknown-identity timeouts both start here. */
 const PIDLESS_ACTIVE_STATES: ReadonlySet<SessionRun["state"]> = new Set<SessionRun["state"]>([
   "running",
   "waiting-for-approval",
@@ -296,6 +310,7 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
     let gone = 0;
     let revived = 0;
     let backfilled = 0;
+    let identityUnknownTimeouts = 0;
     for (const run of withPid) {
       seen.add(run.runId);
       const lstart = starts.get(run.pid);
@@ -315,6 +330,17 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
       }
       if (identity === "unknown") {
         firstSeenGone.delete(run.runId);
+        // D-06: an identity that cannot be checked proves nothing either way,
+        // but a Run left unverifiable for the whole quiet threshold must not
+        // keep reading as plain running. It becomes stale (unknown), never an
+        // ending; a later `same` revives it through `pid-alive`.
+        if (
+          PIDLESS_ACTIVE_STATES.has(run.state) &&
+          nowMs - Date.parse(run.lastActivityAt ?? run.startedAt) >= config.quietAfterMs
+        ) {
+          await pipeline.apply({ kind: "identity-unknown-timeout", runId: run.runId, observedAt });
+          identityUnknownTimeouts += 1;
+        }
         continue;
       }
       // A stale Run is already unknown; only a pending terminate still has
@@ -348,10 +374,20 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
       pendingGone: firstSeenGone.size,
       startTimeouts,
       inactivityTimeouts,
+      identityUnknownTimeouts,
       reattributed,
       backfilled,
     };
-    if (gone + revived + startTimeouts + inactivityTimeouts + reattributed + backfilled > 0) {
+    if (
+      gone +
+        revived +
+        startTimeouts +
+        inactivityTimeouts +
+        identityUnknownTimeouts +
+        reattributed +
+        backfilled >
+      0
+    ) {
       logger.info(report, "liveness sweep applied evidence");
     }
     return report;

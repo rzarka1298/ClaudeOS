@@ -6,6 +6,7 @@ import {
   fixedRunId,
   hook,
   InMemoryRunIndex,
+  identityUnknownTimeout,
   inactivityTimeout,
   launchFailed,
   launchRegistered,
@@ -633,6 +634,44 @@ describe("session reducer — endings, stale and terminate (D-18, D-19, D-20, PR
       },
     },
     {
+      name: "identity-unknown-timeout moves a running Run with a PID to stale",
+      initial: [seedRun({ runId: R1 })],
+      evidence: [identityUnknownTimeout(R1, at(1900))],
+      check: (o) => {
+        expect(o.only()).toMatchObject({ state: "stale", revision: 2 });
+      },
+    },
+    {
+      name: "identity-unknown-timeout moves a waiting-for-approval Run to stale",
+      initial: [seedRun({ runId: R1, state: "waiting-for-approval" })],
+      evidence: [identityUnknownTimeout(R1, at(1900))],
+      check: (o) => {
+        expect(o.only().state).toBe("stale");
+      },
+    },
+    {
+      name: "identity-unknown-timeout is a no-op for queued, starting and stale Runs",
+      initial: [
+        seedRun({ runId: R1, state: "queued" }),
+        seedRun({ runId: R2, state: "stale", claudeSessionId: SESSION_B, pid: PID_2 }),
+      ],
+      evidence: [identityUnknownTimeout(R1, at(1900)), identityUnknownTimeout(R2, at(1900))],
+      check: (o) => {
+        expect(o.last).toEqual({ upserts: [], rejected: [] });
+        expect(o.run(R1).state).toBe("queued");
+        expect(o.run(R2).state).toBe("stale");
+      },
+    },
+    {
+      name: "identity-unknown-timeout never yields completed or failed, and a stale Run revives by PID alive",
+      initial: [seedRun({ runId: R1 })],
+      evidence: [identityUnknownTimeout(R1, at(1900)), pidAlive(R1, at(1905))],
+      check: (o) => {
+        expect(o.only().state).toBe("running");
+        expect(["completed", "failed"]).not.toContain(o.only().state);
+      },
+    },
+    {
       name: "evidence naming a RunId the index does not know is rejected as unknown-run",
       initial: [],
       evidence: [pidGone(R2, at(1))],
@@ -726,6 +765,7 @@ describe("session reducer — never completed by inference (property, SESS-06)",
     "pid-alive",
     "start-timeout",
     "inactivity-timeout",
+    "identity-unknown-timeout",
     "launch-registered",
     "launch-started",
     "terminate-requested",
@@ -770,6 +810,8 @@ describe("session reducer — never completed by inference (property, SESS-06)",
         return startTimeout(runId(), when);
       case "inactivity-timeout":
         return inactivityTimeout(runId(), when);
+      case "identity-unknown-timeout":
+        return identityUnknownTimeout(runId(), when);
       case "launch-registered":
         return launchRegistered(seededRunId(next), when, {
           claudeSessionId: next() < 0.5 ? null : seededPick(next, SESSIONS),

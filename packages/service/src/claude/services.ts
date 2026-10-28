@@ -69,7 +69,10 @@ export interface ClaudeServices {
   readonly pipeline: ClaudePipeline;
   readonly poller: SpoolPoller;
   readonly sweeper: LivenessSweeper;
-  /** What `createRequestListener` carries as `RouteContext.claude`. */
+  /**
+   * What `createRequestListener` carries as `RouteContext.claude`. It includes
+   * `quietAfterMs`, the effective `CCC_QUIET_THRESHOLD_MS` the snapshot reports.
+   */
   readonly routeDeps: ClaudeRouteDeps;
   /** Phase 5's guard in Phase 4's `LaunchGuard` shape, for `createLaunchService({ guard })` (D-29). */
   readonly startGuard: LaunchGuard | undefined;
@@ -162,13 +165,15 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     intervalMs: pollInterval(env),
   });
 
+  // One config object feeds both the sweeper and the snapshot's threshold (D-07).
+  const livenessConfig = livenessConfigFromEnv(env);
   const sweeper = createLivenessSweeper({
     db: store.db,
     pipeline,
     processFacts,
     logger,
     now: () => new Date(),
-    config: livenessConfigFromEnv(env),
+    config: livenessConfig,
     attribute,
   });
 
@@ -242,7 +247,7 @@ export async function startClaudeServices(deps: ClaudeServicesDeps): Promise<Cla
     pipeline,
     poller,
     sweeper,
-    routeDeps: { pipeline, actions },
+    routeDeps: { pipeline, actions, quietAfterMs: livenessConfig.quietAfterMs },
     startGuard: bridge?.startGuard,
     terminator,
     processFacts,
