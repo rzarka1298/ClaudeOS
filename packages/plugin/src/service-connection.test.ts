@@ -11,6 +11,7 @@ import { connectionState } from "./connection-state.js";
 import {
   attachEventClient,
   combineOnLive,
+  configureConnectionDisplayHome,
   refreshProjectsOnConnect,
   startServiceEventsOnLayoutReady,
 } from "./service-connection.js";
@@ -24,6 +25,7 @@ import {
 
 afterEach(() => {
   connectionState.value = { kind: "connecting" };
+  configureConnectionDisplayHome(null);
 });
 
 function fakeEventClient(): { client: EventClient; setState: (s: EventClientState) => void } {
@@ -158,5 +160,34 @@ describe("startServiceEventsOnLayoutReady (wave-7 codex finding: SSE at plugin l
     t.stop();
     t.fire();
     expect(t.subscribe).not.toHaveBeenCalled();
+  });
+});
+
+describe("the disconnect reason is scrubbed where the client's state becomes the plugin's state (D-11, DIAG-06)", () => {
+  const RAW = "connect ENOENT /Users/USERNAME/.claude-command-center/service.sock";
+
+  it("maps an absolute path under the home folder to ~/ form", () => {
+    configureConnectionDisplayHome("/Users/USERNAME");
+    const events = fakeEventClient();
+    attachEventClient(events.client);
+
+    events.setState({ kind: "disconnected", reason: RAW });
+
+    expect(connectionState.value).toEqual({
+      kind: "disconnected",
+      reason: "connect ENOENT ~/.claude-command-center/service.sock",
+    });
+  });
+
+  it("applies the outside rule when no home folder is configured, so no absolute path survives", () => {
+    const events = fakeEventClient();
+    attachEventClient(events.client);
+
+    events.setState({ kind: "disconnected", reason: RAW });
+
+    const state = connectionState.value;
+    if (state.kind !== "disconnected") throw new Error("expected disconnected");
+    expect(state.reason).not.toContain("/Users/");
+    expect(state.reason).not.toContain("USERNAME");
   });
 });

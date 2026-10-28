@@ -228,6 +228,14 @@ export const RUN_STATE_DISPLAY: Readonly<Record<RunState, RunStateDisplay>> = {
 };
 
 /**
+ * How long a Run may go without an event before it reads as quiet rather than plain Running
+ * (D-07, R-04): 30 minutes, equal to the PID-less inactivity default so one mental model holds.
+ * The service's `CCC_QUIET_THRESHOLD_MS` knob (09-10) overrides it through the snapshot's
+ * `sessionQuietAfterMs`; this is the plugin's fallback when that member is absent.
+ */
+export const SESSION_QUIET_AFTER_MS = 30 * 60 * 1000;
+
+/**
  * The states a Run never leaves. `stale` is deliberately absent: it is the
  * absence of evidence, and a later event or a live process can revive it.
  */

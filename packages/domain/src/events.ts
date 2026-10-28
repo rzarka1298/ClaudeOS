@@ -118,6 +118,9 @@ export const SnapshotResponseSchema = z.object({
     // Phase 05.1 (append-only, D-25). One optional member whose parts are all
     // optional, so an older service's snapshot still parses (Pitfall 17).
     codex: CodexSnapshotStateSchema.optional(),
+    // Phase 9 (append-only, R-04). Optional so an older service's snapshot
+    // still parses (Pitfall 17). The quiet-session threshold in milliseconds.
+    sessionQuietAfterMs: z.number().int().positive().max(86_400_000).optional(),
     projects: ProjectsSnapshotSchema,
   }),
 });

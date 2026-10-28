@@ -7,6 +7,7 @@ import {
   LAUNCH_SOURCES,
   NOT_REPORTED,
   RUN_STATE_DISPLAY,
+  SESSION_QUIET_AFTER_MS,
   type SessionRun,
   type SessionView,
   SessionViewSchema,
@@ -274,4 +275,10 @@ describe("isSessionListed", () => {
       expect(isSessionListed({ state, hasConversation })).toBe(listed);
     },
   );
+});
+
+describe("SESSION_QUIET_AFTER_MS (Phase 9, D-07, R-04)", () => {
+  it("Test 3: is 30 minutes, the PID-less inactivity default", () => {
+    expect(SESSION_QUIET_AFTER_MS).toBe(30 * 60 * 1000);
+  });
 });

@@ -26,6 +26,7 @@ import { createPluginLauncher, type RequestLaunch } from "./projects/plugin-laun
 import { wireResearch } from "./research/wiring.js";
 import {
   combineOnLive,
+  configureConnectionDisplayHome,
   refreshProjectsOnConnect,
   startServiceEventsOnLayoutReady,
 } from "./service-connection.js";
@@ -316,6 +317,11 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
     // read only `settings`, `saveSettings`, `mql` and `revealView`) and the command-center
     // destination, which uses all of it (plan 08-11, D-15; plan 08-18, D-18). Its display inputs are read once and live in memory only: nothing here
     // is ever written to `data.json` (`assertNoPrivatePathValues` stays in force, D-16).
+    // The one home folder: disconnect reasons are scrubbed against it (D-11, DIAG-06) and
+    // host.display carries it; reset on unload so a hot reload never keeps a stale home.
+    const homeDir = homedir();
+    configureConnectionDisplayHome(homeDir);
+    this.hostRegistry.cleanup(() => configureConnectionDisplayHome(null));
     const settingsHost: SettingsHost = {
       settings: this.settings,
       saveSettings: () => this.saveSettings(),
@@ -358,7 +364,7 @@ export default class ClaudeCommandCenterPlugin extends Plugin {
         void this.revealView();
       },
       display: {
-        homeDir: homedir(),
+        homeDir,
         socketPath,
         vaultBasePath: vaultSetupUi.resolveVaultPath(),
         vaultName: this.app.vault.getName(),

@@ -1,9 +1,12 @@
+import { homedir } from "node:os";
+import type { EventClientState } from "@ccc/service-api-client";
 import { act, cleanup, fireEvent, render, within } from "@testing-library/preact";
 import type { WorkspaceLeaf } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "./connection-state.js";
 import ClaudeCommandCenterPlugin from "./main.js";
 import { resetProjectsState } from "./projects/projects-state.js";
+import { attachEventClient } from "./service-connection.js";
 import {
   type StubLeaf,
   type Plugin as StubObsidianPlugin,
@@ -232,5 +235,35 @@ describe("what reaches data.json (plan 08-11, T-08-28; FIX2B m8)", () => {
     expect(plugin.settings.reducedMotion).toBe("reduced");
     await plugin.settingsHost?.saveSettings();
     expect(Object.keys(plugin.saved[0] as object).sort()).toEqual(ALLOWED_KEYS);
+  });
+});
+
+describe("main.ts configures the disconnect-reason home folder once at load (plan 09-05, D-11)", () => {
+  function disconnectedReasonFor(rawReason: string): string {
+    let emit: ((state: EventClientState) => void) | undefined;
+    attachEventClient({
+      subscribe(_onEvent, onStateChange) {
+        emit = onStateChange;
+      },
+      dispose: vi.fn(),
+    });
+    emit?.({ kind: "disconnected", reason: rawReason });
+    const state = connectionState.value;
+    if (state.kind !== "disconnected") throw new Error("expected disconnected");
+    return state.reason;
+  }
+
+  it("scrubs against the same home folder it gives host.display, and resets it on unload", async () => {
+    const plugin = await loadPlugin();
+    loaded = plugin;
+    expect(plugin.settingsHost?.display.homeDir).toBe(homedir());
+    const raw = `connect ENOENT ${homedir()}/.claude-command-center/service.sock`;
+
+    expect(disconnectedReasonFor(raw)).toBe("connect ENOENT ~/.claude-command-center/service.sock");
+
+    plugin.onunload();
+    loaded = undefined;
+    // No stale home across a hot reload: the outside rule applies, so the path is still not shown.
+    expect(disconnectedReasonFor(raw)).toBe("connect ENOENT …/.claude-command-center/service.sock");
   });
 });
