@@ -73,9 +73,37 @@ wait_until_gone() {
   done
 }
 
+RETRY_DELAY="${CCC_INSTALL_RETRY_DELAY:-1}"
+
+# Runs `bootstrap` without tripping `set -e`, leaving the exit code in
+# bootstrap_rc and the combined output in bootstrap_out.
+bootstrap_once() {
+  if bootstrap_out=$(launchctl bootstrap "gui/$(id -u)" "${PLIST_DEST}" 2>&1); then
+    bootstrap_rc=0
+  else
+    bootstrap_rc=$?
+  fi
+}
+
 launchctl bootout "gui/$(id -u)/${LABEL}" >/dev/null 2>&1 || true
 wait_until_gone
-launchctl bootstrap "gui/$(id -u)" "${PLIST_DEST}"
+bootstrap_once
+if [ "${bootstrap_rc}" -eq 5 ]; then
+  # Error 5 is the transient "Input/output error" launchd gives while the old
+  # job is still tearing down: wait again and retry exactly once.
+  sleep "${RETRY_DELAY}"
+  wait_until_gone
+  bootstrap_once
+  if [ "${bootstrap_rc}" -ne 0 ]; then
+    echo "ERROR: launchctl bootstrap failed twice:" >&2
+    echo "${bootstrap_out}" >&2
+    exit "${bootstrap_rc}"
+  fi
+elif [ "${bootstrap_rc}" -ne 0 ]; then
+  echo "ERROR: launchctl bootstrap failed (exit ${bootstrap_rc}):" >&2
+  echo "${bootstrap_out}" >&2
+  exit "${bootstrap_rc}"
+fi
 
 if ! launchctl print "gui/$(id -u)/${LABEL}" >/dev/null 2>&1; then
   echo "ERROR: launchctl bootstrap did not register ${LABEL}." >&2
