@@ -148,6 +148,11 @@ const snapshotHandler: Handler = (_req, res, ctx) => {
       projects: ctx.projects?.snapshot() ?? EMPTY_PROJECTS_SNAPSHOT,
       // Phase 5: read synchronously in the same tick as `lastEventId` (race-free resync).
       ...(ctx.claude ? { sessions: ctx.claude.pipeline.listSessionViews() } : {}),
+      // 09-10 (D-07): the service's effective quiet threshold, so the plugin's idle/silent label
+      // obeys the same knob as the liveness sweeper. Absent without Claude services.
+      ...(ctx.claude?.quietAfterMs === undefined
+        ? {}
+        : { sessionQuietAfterMs: ctx.claude.quietAfterMs }),
       // The usage summary (05-12, PR-23), also read synchronously in this tick.
       ...(ctx.claude?.usage ? { usage: ctx.claude.usage.summary() } : {}),
       // The Claude integration status (05-12, PR-24).
