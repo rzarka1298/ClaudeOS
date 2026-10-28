@@ -3485,6 +3485,12 @@ fieldset.ccc-template-rows > legend {
   outline-offset: calc(-1 * var(--ccc-focus-ring));
 }
 
+/* The radio's minimum target is taller than a text line, so on the baseline its circle floats
+ * above the label text; centring it on the line keeps circle and text level (folded p8 item 4). */
+.ccc-command-center .ccc-radio-group input[type="radio"] {
+  vertical-align: middle;
+}
+
 .ccc-template-rows {
   display: flex;
   flex-direction: column;

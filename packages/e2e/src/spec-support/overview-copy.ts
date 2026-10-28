@@ -32,6 +32,8 @@ export const OVERVIEW_TEXT_TABLE = {
   researchTabId: ["research", DESTINATIONS, "literal"],
   // Today.
   dueTodayHeading: ["Due today", PANELS, "fragment"],
+  // The same heading when any listed row is overdue (09-04, folded p8 polish item 2).
+  dueTodayOverdueHeading: ["Due today and overdue", PANELS, "fragment"],
   nextOpenHeading: ["Next open task", PANELS, "fragment"],
   automationHeading: ["Automation", PANELS, "fragment"],
   nothingDue: ["Nothing is due today.", PANELS, "fragment"],

@@ -224,13 +224,25 @@ function AutomationLines({
   );
 }
 
+/**
+ * Whether a row is overdue. The feed words an overdue row's meta as `Overdue since …` (or bare
+ * `Overdue`): the word is always present (UI-SPEC S6), so the card reads it from the same row data
+ * it prints rather than from a second flag that could disagree.
+ */
+function isOverdueRow(task: TodayTask): boolean {
+  return task.meta.startsWith("Overdue");
+}
+
 function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNode {
   const tasks = data.tasks;
+  // The list's heading says "and overdue" only when an overdue row is in it (folded p8 item 2).
+  const dueHeading =
+    tasks !== null && tasks.rows.some(isOverdueRow) ? "Due today and overdue" : "Due today";
   // The next open task shows only when nothing is due or overdue (D-21, UI-SPEC R-13).
   const nextOpen = tasks !== null && tasks.rows.length === 0 ? tasks.nextOpen : null;
   return (
     <>
-      <TodayHeading focal={nextOpen === null}>Due today</TodayHeading>
+      <TodayHeading focal={nextOpen === null}>{dueHeading}</TodayHeading>
       {tasks === null ? (
         <p className="ccc-state-body">Due tasks unavailable.</p>
       ) : tasks.rows.length === 0 ? (
