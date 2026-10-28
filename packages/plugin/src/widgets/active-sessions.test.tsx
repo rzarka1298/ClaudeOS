@@ -621,4 +621,51 @@ describe("Phase 9 Task 2 Test 3: a quiet session is not counted as active (R-04,
     expect(text).toContain("⋯ Idle — last event 41 min ago");
     expect(text).not.toContain("▸ Running");
   });
+
+  it("the quiet row states its age once: no second 'active N minutes ago' segment", () => {
+    sessionsById.value = new Map([
+      [
+        runId(2),
+        session({ runId: runId(2), state: "running", activity: "idle", lastActivityAt: QUIET_AT }),
+      ],
+    ]);
+    connectionState.value = { kind: "live" };
+    nowTick.value = NOW;
+    const { container } = render(
+      <Overview
+        layout={{ entries: [{ widgetId: "active-sessions", size: "tall" }], skipped: [] }}
+        stateFor={() => activeSessionsState}
+        connection={{ kind: "live" }}
+        now={NOW}
+      />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("⋯ Idle — last event 41 min ago");
+    expect(text).not.toMatch(/active \d+ minutes? ago/);
+    expect(text).not.toContain("active 41");
+  });
+
+  it("a non-quiet running row keeps its 'active ...' segment", () => {
+    sessionsById.value = new Map([
+      [
+        runId(2),
+        session({
+          runId: runId(2),
+          state: "running",
+          lastActivityAt: new Date(NOW - 20_000).toISOString(),
+        }),
+      ],
+    ]);
+    connectionState.value = { kind: "live" };
+    nowTick.value = NOW;
+    const { container } = render(
+      <Overview
+        layout={{ entries: [{ widgetId: "active-sessions", size: "tall" }], skipped: [] }}
+        stateFor={() => activeSessionsState}
+        connection={{ kind: "live" }}
+        now={NOW}
+      />,
+    );
+    expect(container.textContent ?? "").toMatch(/▸ Running.* · active /);
+  });
 });

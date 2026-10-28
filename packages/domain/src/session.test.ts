@@ -341,7 +341,14 @@ describe("presentRunState (Phase 9, D-05, R-04, SESS-19)", () => {
       view({ lastActivityAt: null, startedAt: ago(45 * MIN) }),
       NOW,
     );
-    expect(fromStart.label).toBe("Idle — last event 45 min ago");
+    // No event was ever seen, so the age is the time since start and the label must not claim one.
+    expect(fromStart.label).toBe("Idle — no events since start, 45 min");
+    expect(fromStart.label).not.toContain("last event");
+    const silentFromStart = presentRunState(
+      view({ activity: "working", lastActivityAt: null, startedAt: ago(45 * MIN) }),
+      NOW,
+    );
+    expect(silentFromStart.label).toBe("No events for 45 min");
     const bad = presentRunState(view({ lastActivityAt: "not-a-date" }), NOW);
     expect(bad).toEqual({ ...RUN_STATE_DISPLAY.running, quiet: null });
     expect(bad.label).not.toContain("NaN");

@@ -274,12 +274,19 @@ export function presentRunState(
 ): RunStatePresentation {
   const base = RUN_STATE_DISPLAY[view.state];
   if (view.state !== "running") return { ...base, quiet: null };
+  // With no event on record the age runs from the start, and the label must not claim an event
+  // was seen (FIX3B Q3).
+  const sawEvent = view.lastActivityAt !== null;
   const ageMs = nowMs - Date.parse(view.lastActivityAt ?? view.startedAt);
   if (!Number.isFinite(ageMs) || ageMs < quietAfterMs) return { ...base, quiet: null };
   const ago = quietAgoText(ageMs);
   const silent = view.activity === "working";
   return {
-    label: silent ? `No events for ${ago}` : `Idle — last event ${ago} ago`,
+    label: silent
+      ? `No events for ${ago}`
+      : sawEvent
+        ? `Idle — last event ${ago} ago`
+        : `Idle — no events since start, ${ago}`,
     glyph: QUIET_RUN_GLYPH,
     group: "active",
     quiet: silent ? "silent" : "idle",
