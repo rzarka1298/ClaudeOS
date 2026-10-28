@@ -85,7 +85,11 @@ function normalisedSegments(path: string, separator: string): string[] {
  * display path would show, that segment is a user name: show only what is below it (`…/<name>`),
  * or `…` when nothing is. Null when the user segment is not in the shown window.
  */
-function withoutUserSegment(segments: readonly string[], separator: string): string | null {
+function withoutUserSegment(
+  segments: readonly string[],
+  separator: string,
+  userName: string | null,
+): string | null {
   const parent = segments.findIndex(
     (segment, index) => index + 1 < segments.length && USER_PARENTS.has(segment.toLowerCase()),
   );
@@ -93,27 +97,44 @@ function withoutUserSegment(segments: readonly string[], separator: string): str
   const user = parent + 1;
   if (user === segments.length - 1) return ELLIPSIS;
   if (user === segments.length - 2)
-    return `${ELLIPSIS}${separator}${segments[segments.length - 1]}`;
+    return `${ELLIPSIS}${separator}${maskUserName(segments[segments.length - 1] ?? "", userName)}`;
   return null;
+}
+
+/** The configured user name, lower-cased, for masking (the last segment of the home folder). */
+function userNameOf(homeDir: string | null): string | null {
+  if (homeDir === null) return null;
+  const last = normalisedSegments(homeDir, "/").at(-1);
+  return last === undefined ? null : last.toLowerCase();
+}
+
+/**
+ * Keeps `toDisplayPath`'s rule when a segment is shown here instead: a shown name that merely
+ * contains the user name (any case) is masked as `…` (Codex wave-2 fix review).
+ */
+function maskUserName(segment: string, userName: string | null): string {
+  return userName !== null && segment.toLowerCase().includes(userName) ? ELLIPSIS : segment;
 }
 
 function displayPosix(path: string, homeDir: string | null): string {
   const shown = toDisplayPath(path, homeDir) ?? ELLIPSIS;
   if (shown === "~" || shown.startsWith("~/")) return shown;
-  return withoutUserSegment(normalisedSegments(path, "/"), "/") ?? shown;
+  return withoutUserSegment(normalisedSegments(path, "/"), "/", userNameOf(homeDir)) ?? shown;
 }
 
-function displayWindows(path: string): string {
+function displayWindows(path: string, userName: string | null): string {
   const segments = normalisedSegments(path.slice(2), "\\");
-  const hidden = withoutUserSegment(segments, "\\");
+  const hidden = withoutUserSegment(segments, "\\", userName);
   if (hidden !== null) return hidden;
   const last = segments.at(-1);
-  return last === undefined ? ELLIPSIS : `${ELLIPSIS}\\${last}`;
+  return last === undefined ? ELLIPSIS : `${ELLIPSIS}\\${maskUserName(last, userName)}`;
 }
 
-function displayTilde(path: string): string {
+function displayTilde(path: string, userName: string | null): string {
   const last = normalisedSegments(path, "/").at(-1);
-  return last === undefined || last === path ? ELLIPSIS : `${ELLIPSIS}/${last}`;
+  return last === undefined || last === path
+    ? ELLIPSIS
+    : `${ELLIPSIS}/${maskUserName(last, userName)}`;
 }
 
 function decodeFileUrlPath(path: string): string {
@@ -138,8 +159,8 @@ function decodeFileUrlPath(path: string): string {
 export function displayReason(reason: string, homeDir: string | null): string {
   return reason.replace(buildMatcher(homeDir), (match, ...rest) => {
     const groups = rest.at(-1) as { tilde?: string; windows?: string; posix?: string };
-    if (groups.tilde !== undefined) return displayTilde(groups.tilde);
-    if (groups.windows !== undefined) return displayWindows(groups.windows);
+    if (groups.tilde !== undefined) return displayTilde(groups.tilde, userNameOf(homeDir));
+    if (groups.windows !== undefined) return displayWindows(groups.windows, userNameOf(homeDir));
     const posix = groups.posix ?? match;
     const isFileUrl = match.startsWith("file://");
     return displayPosix(isFileUrl ? decodeFileUrlPath(posix) : posix, homeDir);

@@ -152,4 +152,28 @@ describe("displayReason (D-11, DIAG-06)", () => {
       );
     });
   });
+  describe("Codex wave-2 fix review: dropping a user segment keeps the user-name mask", () => {
+    it("masks a shown name that contains the configured user name", () => {
+      expect(displayReason("connect ENOENT /home/shared/USERNAME.sock", HOME)).toBe(
+        "connect ENOENT …/…",
+      );
+      expect(displayReason("connect ENOENT /home/other/username-copy.sock", HOME)).toBe(
+        "connect ENOENT …/…",
+      );
+    });
+
+    it("masks it in the Windows form too", () => {
+      expect(displayReason("ENOENT C:\\Users\\Public\\USERNAME.sock", HOME)).toBe("ENOENT …\\…");
+    });
+
+    it("masks it in the ~user form too", () => {
+      expect(displayReason("ENOENT ~other/USERNAME.sock", HOME)).toBe("ENOENT …/…");
+    });
+
+    it("still shows an unrelated name below a user segment", () => {
+      expect(displayReason("connect ENOENT /home/shared/svc.sock", HOME)).toBe(
+        "connect ENOENT …/svc.sock",
+      );
+    });
+  });
 });
