@@ -558,14 +558,16 @@ export function createCodexHomePort(options: {
             for (const name of names) {
               if (found.length >= MAX_ROLLOUT_LIST || statsLeft <= 0) return found;
               statsLeft -= 1;
-              let mtimeMs: number;
+              let mtimeMs: number | null = null;
               try {
                 mtimeMs = fs.stat(join(dir, name)).mtimeMs;
               } catch (error) {
-                if (isMissing(error)) continue;
-                throw unreadable();
+                // Gone between enumeration and stat: still an attempt (FIX3A C1).
+                if (!isMissing(error)) throw unreadable();
               }
-              if (mtimeMs >= from) found.push({ path: join(dir, name) });
+              if (mtimeMs !== null && mtimeMs >= from) found.push({ path: join(dir, name) });
+              // The chunk boundary counts stat ATTEMPTS, hit or miss, so a folder of vanished
+              // entries cannot spend the whole budget without giving the event loop a turn.
               if ((MAX_ROLLOUT_STATS - statsLeft) % ROLLOUT_STAT_CHUNK === 0) await yieldNow();
             }
             await yieldNow();
