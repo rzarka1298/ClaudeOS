@@ -14,6 +14,7 @@ import { safeLine } from "../view/research-format.js";
 import { nowTick } from "../widgets/clock.js";
 import type { WidgetState } from "../widgets/contract.js";
 import type { TechIntelData, TodayAutomation, TodayData, TodayTask } from "../widgets/panels.js";
+import { superseding } from "./superseding.js";
 
 /**
  * The Overview's own feeds (plan 08-14; research B 2.4 and 2.6, D-20, D-21).
@@ -92,8 +93,6 @@ function currentZone(): string {
 // ---------------------------------------------------------------------------
 // Fetching
 
-let dueSeq = 0;
-
 /** When a trigger last refreshed the feeds (epoch ms), for the tick gap rule. */
 let lastRefreshAt = 0;
 
@@ -102,20 +101,10 @@ let lastRefreshAt = 0;
  * one still in flight (sequence token), so a slow answer can never overwrite a
  * newer one. A failure keeps the last good value and marks the feed failed.
  */
-export async function refreshDueToday(): Promise<void> {
-  const seq = ++dueSeq;
-  let answer: TaskDueTodayResponse | null = null;
-  try {
-    answer = await tasksApi().dueToday({ zone: currentZone() });
-  } catch {
-    answer = null;
-  }
-  if (seq !== dueSeq) return;
-  const previous = dueTodayFeed.peek();
-  dueTodayFeed.value =
-    answer === null
-      ? { ...previous, settled: true, failed: true }
-      : { settled: true, value: answer, fetchedAt: Date.now(), failed: false };
+const dueToday = superseding(dueTodayFeed, () => tasksApi().dueToday({ zone: currentZone() }));
+
+export function refreshDueToday(): Promise<void> {
+  return dueToday.refresh();
 }
 
 let automationSeq = 0;
@@ -175,7 +164,7 @@ export function refreshOverviewFeeds(): void {
 
 /** Clears every feed and invalidates answers still in flight (tests, and unload). */
 export function resetOverviewFeeds(): void {
-  dueSeq += 1;
+  dueToday.invalidate();
   automationSeq += 1;
   reportSeq += 1;
   dueTodayFeed.value = NEVER;
