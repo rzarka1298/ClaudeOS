@@ -709,6 +709,34 @@ describe("Phase 9 Task 2 Test 2: the caption counts quiet sessions apart from ac
     ).toBeTruthy();
   });
 
+  it("the Active group heading agrees with the caption: it names the quiet count too (FIX3B Q1)", () => {
+    const quiet = (n: number): SessionView =>
+      session({
+        runId: runId(n),
+        name: `Sitting ${n}`,
+        state: "running",
+        activity: "idle",
+        lastActivityAt: new Date(NOW_MS - 41 * 60_000).toISOString(),
+      });
+    seed([
+      session({ runId: runId(1), name: "Fresh", state: "running" }),
+      quiet(2),
+      quiet(3),
+      session({ runId: runId(4), name: "Asking", state: "waiting-for-approval" }),
+    ]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(
+      screen.getByText("1 active · 2 quiet · 1 waiting for approval · 0 unknown"),
+    ).toBeTruthy();
+    expect(screen.getByText("Active (4 · 2 quiet)")).toBeTruthy();
+  });
+
+  it("with no quiet session the Active heading is unchanged", () => {
+    seed([session({ runId: runId(1), name: "Fresh", state: "running" })]);
+    render(<AgentRuns now={NOW_MS} />);
+    expect(screen.getByText("Active (1)")).toBeTruthy();
+  });
+
   it("the quiet segment is omitted at zero, so today's caption is unchanged", () => {
     seed([session({ runId: runId(1), name: "Fresh", state: "running" })]);
     render(<AgentRuns now={NOW_MS} />);
