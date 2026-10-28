@@ -63,7 +63,9 @@ The last lifecycle event in file order wins (D-18), even when timestamps are
 equal or inconsistent. A started task is running only within the inactivity
 window; silence resolves to stale/unknown, never inferred completed. The
 default window is 30 minutes (A5); the configured value is shared by the
-mirror, overlays and follow service. Child thread-spawn and guardian sources
+mirror, overlays and follow service. This is also how Codex meets SESS-19: the
+service turns a silent running session into stale (the mirror re-polls every
+5 s), so Codex rows need no plugin-side quiet presentation like Claude's. Child thread-spawn and guardian sources
 are hidden; review subagents can be shown (A4). Attribution uses registered
 project roots and existing worktree-aware lookup, not prompt text.
 

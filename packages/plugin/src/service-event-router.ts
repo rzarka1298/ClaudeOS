@@ -44,11 +44,16 @@ function adoptSessionQuietThreshold(snapshot: SnapshotResponse): void {
   sessionQuietAfterMs.value = snapshot.state.sessionQuietAfterMs ?? SESSION_QUIET_AFTER_MS;
 }
 
+/**
+ * The threshold applier runs FIRST: sessions adopted by a later applier are then presented under
+ * the snapshot's threshold rather than the previous one, and an applier that throws can no longer
+ * leave the threshold un-reset (FIX3B Q4). The Codex applier stays last (Phase 05.1 pin).
+ */
 export const SNAPSHOT_APPLIERS: ReadonlyArray<(snapshot: SnapshotResponse) => void> = [
+  adoptSessionQuietThreshold,
   applyProjectsSnapshot,
   adoptClaudeSnapshot,
   adoptApprovalsFromSnapshot,
-  adoptSessionQuietThreshold,
   adoptCodexSnapshot,
 ];
 

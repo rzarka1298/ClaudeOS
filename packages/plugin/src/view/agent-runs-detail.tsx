@@ -317,7 +317,7 @@ function DetailFields({
       <Field term="Project" value={session.projectName ?? "Unclassified"} />
       <Field term="State" value={`${display.glyph} ${display.label}`} />
       <Field
-        term="Activity"
+        term={display.quiet === null ? "Activity" : "Last signal"}
         value={
           session.activity === null
             ? NOT_REPORTED

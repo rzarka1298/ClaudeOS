@@ -103,7 +103,10 @@ function rowMeta(row: SessionView, nowMs: number, quietAfterMs: number): string 
   const parts = [`${display.glyph} ${display.label}`];
   if (row.model !== null && row.model.trim().length > 0) parts.push(row.model);
   parts.push(elapsedText(row, nowMs));
-  parts.push(`active ${formatRelativeTime(row.lastActivityAt ?? row.startedAt, nowMs)}`);
+  // A quiet label already carries the age of the last signal, so it is not repeated (FIX3B Q3).
+  if (display.quiet === null) {
+    parts.push(`active ${formatRelativeTime(row.lastActivityAt ?? row.startedAt, nowMs)}`);
+  }
   return parts.join(" · ");
 }
 

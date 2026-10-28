@@ -482,6 +482,9 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
   const quietCount = allSessions.filter(
     (s) => presentRunState(s, now, sessionQuietAfterMs.value).quiet !== null,
   ).length;
+  // The group is every non-terminal session (quiet ones are not ended); its heading names the
+  // quiet count in the caption's words so the two never disagree (FIX3B Q1).
+  const activeQuietSegment = quietCount > 0 ? ` · ${quietCount} quiet` : "";
   const runningCount = allSessions.filter((s) => s.state === "running").length - quietCount;
   const waitingCount = allSessions.filter((s) => s.state === "waiting-for-approval").length;
   const unknownCount = allSessions.filter((s) => s.state === "stale").length;
@@ -550,7 +553,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
         <div className="ccc-agent-runs-layout" data-dimmed={dimmed}>
           <div className="ccc-agent-runs-sessions">
             <section>
-              <h3>{`${GROUP_HEADING.active} (${groups.active.length})`}</h3>
+              <h3>{`${GROUP_HEADING.active} (${groups.active.length}${activeQuietSegment})`}</h3>
               <SessionsTable
                 group="active"
                 rows={groups.active}

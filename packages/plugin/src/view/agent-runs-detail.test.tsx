@@ -692,6 +692,38 @@ describe("Phase 9 Task 2 Test 1: the detail pane states a quiet session honestly
     expect(document.body.textContent ?? "").not.toContain("▸ Running");
   });
 
+  it("a quiet session shows its raw activity as the LAST signal, never as live 'Activity' (FIX3B Q2)", () => {
+    renderPane({ state: "running", activity: "working", lastActivityAt: QUIET_AT });
+    const dl = document.querySelector(".ccc-detail-fields");
+    const dts = [...(dl?.querySelectorAll("dt") ?? [])].map((el) => el.textContent);
+    const dds = [...(dl?.querySelectorAll("dd") ?? [])].map((el) => el.textContent);
+    expect(dts).not.toContain("Activity");
+    expect(dds[dts.indexOf("Last signal")]).toBe("Working");
+    expect(dds[dts.indexOf("State")]).toBe("⋯ No events for 41 min");
+  });
+
+  it("a quiet idle session reads Last signal: Idle, and an unreported activity stays Not reported", () => {
+    renderPane({ state: "running", activity: "idle", lastActivityAt: QUIET_AT });
+    let dl = document.querySelector(".ccc-detail-fields");
+    let dts = [...(dl?.querySelectorAll("dt") ?? [])].map((el) => el.textContent);
+    let dds = [...(dl?.querySelectorAll("dd") ?? [])].map((el) => el.textContent);
+    expect(dds[dts.indexOf("Last signal")]).toBe("Idle");
+    cleanup();
+    renderPane({ state: "running", activity: null, lastActivityAt: QUIET_AT });
+    dl = document.querySelector(".ccc-detail-fields");
+    dts = [...(dl?.querySelectorAll("dt") ?? [])].map((el) => el.textContent);
+    dds = [...(dl?.querySelectorAll("dd") ?? [])].map((el) => el.textContent);
+    expect(dds[dts.indexOf("Last signal")]).toBe("Not reported");
+  });
+
+  it("a non-quiet running session keeps the 'Activity' field", () => {
+    renderPane({ state: "running", activity: "working" });
+    const dl = document.querySelector(".ccc-detail-fields");
+    const dts = [...(dl?.querySelectorAll("dt") ?? [])].map((el) => el.textContent);
+    expect(dts).toContain("Activity");
+    expect(dts).not.toContain("Last signal");
+  });
+
   it("a non-quiet running session reads exactly what it read before", () => {
     renderPane({ state: "running", activity: "working" });
     expect(document.querySelector(".ccc-state-body")?.textContent).toBe("▸ Running");
