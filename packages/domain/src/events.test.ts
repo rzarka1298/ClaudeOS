@@ -212,6 +212,39 @@ describe("SnapshotResponseSchema", () => {
   });
 });
 
+describe("SnapshotResponseSchema.state.sessionQuietAfterMs (Phase 9, R-04, D-07)", () => {
+  const base = {
+    lastEventId: 3,
+    state: { serviceStartedAt: "2026-10-28T00:00:00.000Z", projects: EMPTY_PROJECTS_SNAPSHOT },
+  };
+  const withQuiet = (value: unknown) =>
+    SnapshotResponseSchema.safeParse({
+      ...base,
+      state: { ...base.state, sessionQuietAfterMs: value },
+    });
+
+  it("Test 1: a snapshot without the member parses, and the member stays absent (older service, Pitfall 17)", () => {
+    const result = SnapshotResponseSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    expect(result.data?.state.sessionQuietAfterMs).toBeUndefined();
+    expect(result.data).toEqual(base);
+  });
+
+  it("Test 2: a positive integer of milliseconds up to 24 hours parses and is kept", () => {
+    for (const value of [1, 1_800_000, 86_400_000]) {
+      const result = withQuiet(value);
+      expect(result.success).toBe(true);
+      expect(result.data?.state.sessionQuietAfterMs).toBe(value);
+    }
+  });
+
+  it("Test 2: zero, negative, fractional, string and over-24-hour values are refused", () => {
+    for (const value of [0, -1, 1.5, "1800000", 86_400_001, null]) {
+      expect(withQuiet(value).success, String(value)).toBe(false);
+    }
+  });
+});
+
 describe("Phase 5 event types (append-only, D-59)", () => {
   it("keeps the Phase 1 types first and appends the three Phase 5 types", () => {
     expect(SERVICE_EVENT_TYPES.slice(0, 4)).toEqual([
