@@ -1,8 +1,12 @@
 import { EventEmitter } from "node:events";
 import http from "node:http";
-import { EMPTY_PROJECTS_SNAPSHOT, SNAPSHOT_PATH } from "@ccc/domain";
+import { EMPTY_PROJECTS_SNAPSHOT, SERVICE_EVENT_TYPES, SNAPSHOT_PATH } from "@ccc/domain";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createEventClient, type EventClientState } from "./event-client.js";
+import {
+  createEventClient,
+  EVENT_SNAPSHOT_COVERAGE,
+  type EventClientState,
+} from "./event-client.js";
 
 vi.mock("node:http", () => ({
   default: { request: vi.fn() },
@@ -304,6 +308,132 @@ describe("createEventClient", () => {
 
       expect(events.map((e) => e.id)).toEqual([1]);
       client.dispose();
+    });
+
+    it("adopts a snapshot at a LOWER id than the current position as-is (a restarted service restarts its ids): the reconnect carries the snapshot's id", async () => {
+      const getToken = vi.fn().mockResolvedValue("tok");
+      const client = createEventClient({ socketPath: "/tmp/sock", getToken });
+      client.subscribe(
+        () => {},
+        () => {},
+        () => {},
+      );
+      await flush();
+
+      const stream = pendingCalls[0];
+      stream?.respond();
+      stream?.res.emit("data", heartbeatRecord(500));
+      await flush();
+      // The service restarted: its resync is answered by a snapshot far below the old position.
+      stream?.res.emit("data", resyncRecord(0));
+      await flush();
+      answerSnapshot(pendingCalls[1], 3);
+      await flush();
+
+      expect(await reconnectHeader()).toBe("3");
+      client.dispose();
+    });
+
+    // Fix round FIX2B (C1): an invalidation event is not "contained" in a snapshot that carries no
+    // state for its domain, so the floor must not discard it.
+    describe("invalidation-only events at or below the floor (FIX2B C1)", () => {
+      const eventRecord = (id: number, type: string) =>
+        `id: ${id}\ndata: {"id":${id},"type":"${type}","occurredAt":"t","payload":{}}\n\n`;
+
+      it.each(["tasks.changed", "research.updated"])(
+        "still delivers %s with an id at or below the snapshot, without moving the position back",
+        async (type) => {
+          const getToken = vi.fn().mockResolvedValue("tok");
+          const events: Array<{ id: number; type: string }> = [];
+          const client = createEventClient({ socketPath: "/tmp/sock", getToken });
+          client.subscribe(
+            (e) => events.push(e as { id: number; type: string }),
+            () => {},
+            () => {},
+          );
+          await flush();
+
+          const stream = pendingCalls[0];
+          stream?.respond();
+          stream?.res.emit(
+            "data",
+            resyncRecord(5) + eventRecord(7, type) + eventRecord(9, type) + heartbeatRecord(8),
+          );
+          await flush();
+          answerSnapshot(pendingCalls[1], 9);
+          await flush();
+
+          // The invalidations reach subscribers; the snapshot-contained heartbeat does not.
+          expect(events.map((e) => `${e.type}#${e.id}`)).toEqual([`${type}#7`, `${type}#9`]);
+          expect(await reconnectHeader()).toBe("9");
+          client.dispose();
+        },
+      );
+
+      it.each([
+        "session.upserted",
+        "usage.updated",
+        "claude-integration.updated",
+        "approval.upserted",
+        "projects.updated",
+        "codex.sessions.updated",
+        "codex.usage.updated",
+        "codex.tokens.updated",
+        "codex.integration.updated",
+      ])(
+        "still discards %s at or below the snapshot: the snapshot carries that state",
+        async (type) => {
+          const getToken = vi.fn().mockResolvedValue("tok");
+          const events: Array<{ id: number }> = [];
+          const client = createEventClient({ socketPath: "/tmp/sock", getToken });
+          client.subscribe(
+            (e) => events.push(e as { id: number }),
+            () => {},
+            () => {},
+          );
+          await flush();
+
+          const stream = pendingCalls[0];
+          stream?.respond();
+          stream?.res.emit("data", resyncRecord(5) + eventRecord(7, type));
+          await flush();
+          answerSnapshot(pendingCalls[1], 9);
+          await flush();
+
+          expect(events).toEqual([]);
+          client.dispose();
+        },
+      );
+
+      it("pins the classification: every event type is exactly one of snapshot-carried, invalidation-only, transport", () => {
+        const classes = new Map<string, string[]>();
+        for (const [type, kind] of Object.entries(EVENT_SNAPSHOT_COVERAGE)) {
+          classes.set(kind, [...(classes.get(kind) ?? []), type]);
+        }
+        expect(Object.keys(EVENT_SNAPSHOT_COVERAGE).sort()).toEqual(
+          [...SERVICE_EVENT_TYPES].sort(),
+        );
+        expect(classes.get("invalidation-only")?.sort()).toEqual([
+          "research.updated",
+          "tasks.changed",
+        ]);
+        expect(classes.get("transport")?.sort()).toEqual([
+          "connection.state",
+          "service.heartbeat",
+          "stream.resync",
+        ]);
+        expect(classes.get("snapshot-carried")?.sort()).toEqual([
+          "approval.upserted",
+          "claude-integration.updated",
+          "codex.integration.updated",
+          "codex.sessions.updated",
+          "codex.tokens.updated",
+          "codex.usage.updated",
+          "projects.updated",
+          "session.upserted",
+          "usage.updated",
+        ]);
+      });
     });
   });
 

@@ -18,21 +18,35 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { type GateRepo, gateRepo } from "./gate-repo.js";
+import { type GateRepo, gateRepo, REPO_ROOT } from "./gate-repo.js";
 
 const INSTALL = "scripts/launchagent/install.sh";
 const TEMPLATE = "scripts/launchagent/com.claude-command-center.service.plist.template";
 const LABEL = "com.claude-command-center.service";
+
+// The external commands install.sh runs (read from the script: dirname, id, mkdir, node, sed, and sh
+// itself) plus `cat`, which the stub launchctl uses to read its state files; everything else is a
+// shell builtin or a stub. The script's PATH is a directory holding symlinks to exactly these plus the
+// stubs, so the real launchctl and sleep cannot be reached by name.
+const INSTALL_SH_TOOLS = ["cat", "dirname", "id", "mkdir", "node", "sed", "sh"] as const;
+
+/** Absolute-path invocations of launchctl or sleep: they would bypass the stubs on PATH. */
+function absoluteToolPaths(source: string): string[] {
+  return source.split("\n").filter((line) => /\/(launchctl|sleep)(\s|$)/.test(line));
+}
 
 const STUB_LAUNCHCTL = `#!/bin/sh
 # Test stub for launchctl. Records every call; never touches launchd.
@@ -106,6 +120,16 @@ interface Fixture {
 
 const made: Fixture[] = [];
 
+/** The first executable called `name` on the test process's own PATH (node: the running binary). */
+function resolveTool(name: string): string {
+  if (name === "node") return process.execPath;
+  for (const dir of (process.env.PATH ?? "").split(":").filter(Boolean)) {
+    const candidate = join(dir, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error(`${name} not found on PATH`);
+}
+
 function fixture(): Fixture {
   const repo = gateRepo([INSTALL, TEMPLATE], {
     "packages/service/dist/main.js": "// fake service entry point\n",
@@ -120,6 +144,7 @@ function fixture(): Fixture {
   writeFileSync(join(binDir, "sleep"), STUB_SLEEP);
   chmodSync(join(binDir, "launchctl"), 0o755);
   chmodSync(join(binDir, "sleep"), 0o755);
+  for (const tool of INSTALL_SH_TOOLS) symlinkSync(resolveTool(tool), join(binDir, tool));
   const fx: Fixture = {
     repo,
     home,
@@ -156,25 +181,36 @@ interface Knobs {
   registered?: number;
 }
 
-function run(fx: Fixture, knobs: Knobs = {}): { status: number | null; out: string } {
-  assertContained(fx, fx.home, fx.runtimeDir, fx.binDir, fx.stubDir, fx.log);
-  if (knobs.registered !== undefined) {
-    writeFileSync(join(fx.stubDir, "registered"), String(knobs.registered));
-  }
+/** The environment install.sh runs in. Knobs lower the production waits; `production` leaves them unset. */
+function scriptEnv(fx: Fixture, knobs: Knobs = {}, production = false): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: fx.home,
     CCC_RUNTIME_DIR: fx.runtimeDir,
-    // The stub bin first; node's own directory for `command -v node`; then the system basics.
-    PATH: `${fx.binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+    // A closed PATH: only the fixture bin (the stubs plus symlinks to install.sh's own tools).
+    PATH: fx.binDir,
     STUB_LOG: fx.log,
     STUB_DIR: fx.stubDir,
     STUB_CLEARS_AFTER: String(knobs.clearsAfter ?? 0),
     STUB_BOOTSTRAP_EXITS: knobs.bootstrapExits ?? "",
-    CCC_INSTALL_POLL_INTERVAL: "0",
-    CCC_INSTALL_RETRY_DELAY: "0",
   };
+  if (!production) {
+    env.CCC_INSTALL_POLL_INTERVAL = "0";
+    env.CCC_INSTALL_RETRY_DELAY = "0";
+  }
   if (knobs.pollLimit !== undefined) env.CCC_INSTALL_POLL_LIMIT = String(knobs.pollLimit);
-  const result = fx.repo.run(INSTALL, [], env);
+  return env;
+}
+
+function run(
+  fx: Fixture,
+  knobs: Knobs = {},
+  production = false,
+): { status: number | null; out: string } {
+  assertContained(fx, fx.home, fx.runtimeDir, fx.binDir, fx.stubDir, fx.log);
+  if (knobs.registered !== undefined) {
+    writeFileSync(join(fx.stubDir, "registered"), String(knobs.registered));
+  }
+  const result = fx.repo.run(INSTALL, [], scriptEnv(fx, knobs, production));
   return { status: result.status, out: result.out };
 }
 
@@ -231,7 +267,7 @@ describe("09-03 Task 1 (tracer): a re-install waits for the old label to go befo
     // The shell the script runs in resolves launchctl to the stub, not the system binary.
     const probe = spawnSync("sh", ["-c", "command -v launchctl"], {
       encoding: "utf8",
-      env: { PATH: `${fx.binDir}:${dirname(process.execPath)}:/usr/bin:/bin` },
+      env: scriptEnv(fx),
     });
     expect(probe.stdout.trim()).toBe(join(fx.binDir, "launchctl"));
 
@@ -309,4 +345,73 @@ describe("09-03 Task 2: bounded timeout, one retry on error 5, three idempotent 
     expect(registeredCount(fx)).toBe(1);
     expect(launchctlVerbs(fx).filter((verb) => verb === "bootstrap")).toHaveLength(3);
   });
+});
+
+// FIX2B I1 + I2 (Codex review of 09-03).
+describe("FIX2B I1: the real launchctl and sleep are unreachable from the script's PATH", () => {
+  it("every PATH directory the script sees is the fixture bin, and it holds only the stubs and install.sh's own tools", () => {
+    const fx = fixture();
+    const env = scriptEnv(fx);
+    const dirs = (env.PATH ?? "").split(":").filter(Boolean);
+    expect(dirs).toEqual([fx.binDir]);
+    // The stubs are the only launchctl and sleep a PATH lookup can find.
+    for (const name of ["launchctl", "sleep"]) {
+      const found = dirs.filter((dir) => existsSync(join(dir, name)));
+      expect(found, `${name} reachable outside the stub bin`).toEqual([fx.binDir]);
+      expect(lstatSync(join(fx.binDir, name)).isSymbolicLink()).toBe(false);
+    }
+    expect(readdirSync(fx.binDir).sort()).toEqual(
+      ["launchctl", "sleep", ...INSTALL_SH_TOOLS].sort(),
+    );
+    // An unlisted system tool (ls) is not reachable, so the PATH really is closed.
+    const probe = spawnSync("sh", ["-c", "command -v ls"], { encoding: "utf8", env });
+    expect(probe.status).not.toBe(0);
+  });
+
+  it("install.sh names no absolute launchctl or sleep path", () => {
+    const source = readFileSync(join(REPO_ROOT, INSTALL), "utf8");
+    expect(absoluteToolPaths(source)).toEqual([]);
+  });
+
+  it("the guard itself flags absolute launchctl and sleep paths", () => {
+    expect(absoluteToolPaths("/bin/launchctl bootout x\n")).toHaveLength(1);
+    expect(absoluteToolPaths("  /usr/bin/sleep 1\n")).toHaveLength(1);
+    expect(absoluteToolPaths("exec /usr/local/bin/launchctl print x\n")).toHaveLength(1);
+    expect(absoluteToolPaths("launchctl bootout gui/501/x\nsleep 1\n")).toEqual([]);
+  });
+});
+
+describe("FIX2B I2: the production wait defaults are pinned", () => {
+  const sleeps = (fx: Fixture): string[] =>
+    calls(fx)
+      .filter((line) => line.startsWith("sleep-stub: "))
+      .map((line) => line.slice("sleep-stub: ".length));
+
+  it("the script carries the documented default literals", () => {
+    const source = readFileSync(join(REPO_ROOT, INSTALL), "utf8");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: these are literal shell parameter expansions
+    expect(source).toContain('POLL_INTERVAL="${CCC_INSTALL_POLL_INTERVAL:-0.1}"');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell parameter expansion
+    expect(source).toContain('POLL_LIMIT="${CCC_INSTALL_POLL_LIMIT:-100}"');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell parameter expansion
+    expect(source).toContain('RETRY_DELAY="${CCC_INSTALL_RETRY_DELAY:-1}"');
+  });
+
+  it("with no CCC_INSTALL_* knobs, polls sleep 0.1 s between polls and a retry sleeps 1 s first", () => {
+    const fx = fixture();
+    const result = run(fx, { registered: 1, clearsAfter: 2, bootstrapExits: "5,0" }, true);
+    expect(result.status, result.out).toBe(0);
+    // Two succeeding polls -> two 0.1 s sleeps; then error 5 -> the 1 s retry delay.
+    expect(sleeps(fx)).toEqual(["0.1", "0.1", "1"]);
+  });
+
+  it("with no knobs, a label that never clears gives up after exactly 100 polls and 99 sleeps", () => {
+    const fx = fixture();
+    const result = run(fx, { registered: 1, clearsAfter: 100_000 }, true);
+    expect(result.status).not.toBe(0);
+    expect(launchctlVerbs(fx).filter((verb) => verb === "print")).toHaveLength(100);
+    expect(sleeps(fx)).toEqual(Array.from({ length: 99 }, () => "0.1"));
+    expect(launchctlVerbs(fx)).not.toContain("bootstrap");
+    // ~200 stub processes: allow for a loaded machine.
+  }, 60_000);
 });
