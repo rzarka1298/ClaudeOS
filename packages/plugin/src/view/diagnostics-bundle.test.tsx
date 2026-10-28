@@ -1225,3 +1225,117 @@ describe("Task 3, Test 5: the bundle is held in memory only", () => {
     expect(container.textContent).not.toContain("bundleVersion");
   });
 });
+
+describe("FIX2A R2/R3: the bundle line is repeat-audible, safe after unmount and never stale", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function showPreview(): void {
+    fireEvent.click(screen.getByRole("button", { name: "Show bundle preview" }));
+  }
+
+  function pressCopy(): void {
+    fireEvent.click(screen.getByRole("button", { name: "Copy bundle" }));
+  }
+
+  it("R2a: pressing Copy twice clears the line and then sets it again, so the repeat is audible", async () => {
+    vi.useFakeTimers();
+    answered();
+    renderBlock(fixture());
+    showPreview();
+    pressCopy();
+    await flush();
+    expect(bundleLine().textContent).toBe("Bundle copied.");
+    pressCopy();
+    await flush();
+    expect(bundleLine().textContent).toBe("");
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(bundleLine().textContent).toBe("Bundle copied.");
+  });
+
+  it("R2b: unmounting while a copy is pending leaves no timer behind", async () => {
+    vi.useFakeTimers();
+    answered();
+    let calls = 0;
+    let release!: () => void;
+    const f = fixture(() => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    const view = renderBlock(f);
+    showPreview();
+    pressCopy();
+    await flush();
+    expect(bundleLine().textContent).toBe("Bundle copied.");
+    // The second press resolves to the same message, which is the path that sets a repeat timer.
+    pressCopy();
+    view.unmount();
+    const before = vi.getTimerCount();
+    await act(async () => {
+      release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(vi.getTimerCount()).toBe(before);
+  });
+
+  it("R3a: hiding the preview clears the bundle line", async () => {
+    answered();
+    renderBlock(fixture());
+    showPreview();
+    pressCopy();
+    await flush();
+    expect(bundleLine().textContent).toBe("Bundle copied.");
+    fireEvent.click(screen.getByRole("button", { name: "Hide bundle preview" }));
+    expect(bundleLine().textContent).toBe("");
+  });
+
+  it("R3b: a rebuild from fresher data clears a copy or save message that described the old text", async () => {
+    answered();
+    const f = fixture();
+    renderBlock(f);
+    showPreview();
+    pressCopy();
+    await flush();
+    expect(bundleLine().textContent).toBe("Bundle copied.");
+    await act(async () => {
+      claudeIntegration.value = {
+        hooks: "not-installed",
+        hookRuntimeMissing: false,
+        disableAllHooks: null,
+        lastEventAt: null,
+        telemetry: { kind: "ok" },
+        detectedClaudeVersion: null,
+        statusLine: "not-installed",
+        statusLineReported: false,
+        transcriptAnalysis: { enabled: true },
+        spoolDropCount: 0,
+        unknownEventCount: 0,
+        cleanupPeriodDays: 30,
+      };
+    });
+    expect(screen.getByRole("region", { name: "Diagnostic bundle preview" }).textContent).toBe(
+      expectedText(f, { transcriptAnalysis: true }),
+    );
+    expect(bundleLine().textContent).toBe("");
+  });
+
+  it("R3c: a rebuild that yields the same text keeps the message", async () => {
+    answered();
+    renderBlock(fixture());
+    showPreview();
+    pressCopy();
+    await flush();
+    await act(async () => {
+      // A new health object with identical content: the effect re-runs, the text does not change.
+      healthSignal.value = allOkHealth();
+    });
+    expect(bundleLine().textContent).toBe("Bundle copied.");
+  });
+});

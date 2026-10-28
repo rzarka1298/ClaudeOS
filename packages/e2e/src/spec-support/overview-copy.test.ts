@@ -116,6 +116,7 @@ describe("the calendar-count patterns the Today checks forbid", () => {
       "packages/plugin/src/widgets/panels.tsx",
       "packages/plugin/src/widgets/footer.tsx",
       "packages/plugin/src/overview/overview-feeds.ts",
+      "packages/plugin/src/overview/overview-format.ts",
     ]) {
       expect(realSource(owner), owner).not.toMatch(/Nothing else on the calendar/i);
     }

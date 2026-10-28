@@ -17,6 +17,7 @@ const TOOLBAR = `${WIDGETS}launch-toolbar.tsx`;
 const SESSIONS = `${WIDGETS}active-sessions.tsx`;
 const LIST = `${WIDGETS}list-body.tsx`;
 const FEEDS = "packages/plugin/src/overview/overview-feeds.ts";
+const FORMAT = "packages/plugin/src/overview/overview-format.ts";
 const LAUNCH_COPY = "packages/plugin/src/projects/launch-copy.ts";
 const DESTINATIONS = "packages/plugin/src/view/destinations.ts";
 const SHELL = "packages/plugin/src/view/shell.tsx";
@@ -42,8 +43,8 @@ export const OVERVIEW_TEXT_TABLE = {
   openTaskPrefix: ["Open task: ", PANELS, "fragment"],
   calendarGmailNote: ["Google Calendar and Gmail: not part of this version.", PANELS, "fragment"],
   notInVersionSummary: ["Google Calendar and Gmail aren't part of this version", FEEDS, "literal"],
-  nextDuePrefix: ["Next due ", FEEDS, "fragment"],
-  mostRecentOpen: ["Most recent open task", FEEDS, "literal"],
+  nextDuePrefix: ["Next due ", FORMAT, "fragment"],
+  mostRecentOpen: ["Most recent open task", FORMAT, "literal"],
   // The footer.
   calendarSource: ["Google Calendar", PANELS, "literal"],
   gmailSource: ["Gmail", PANELS, "literal"],

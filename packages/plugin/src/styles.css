@@ -3631,8 +3631,9 @@ fieldset.ccc-template-rows > legend {
   color: var(--ccc-ink-muted);
 }
 
-/* The one polite status line: empty before its first message, Label size,
- * muted ink. It is the destination's only live region. */
+/* A polite status line: empty before its first message, Label size, muted
+ * ink. Two use it: the destination's top line, and the diagnostic bundle
+ * block's own line beside its buttons (data-status-region="bundle"). */
 .ccc-command-center .ccc-settings-status {
   min-block-size: var(--ccc-space-md);
   margin: 0;

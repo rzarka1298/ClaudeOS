@@ -1,5 +1,5 @@
 import type { Signal } from "@preact/signals";
-import type { FeedSnapshot } from "./overview-feeds.js";
+import type { FeedSnapshot } from "./feed-snapshot.js";
 
 /** The two operations of a superseding feed, as function-valued properties so they destructure safely. */
 export interface Superseding {

@@ -172,12 +172,14 @@ export function ranked(rows: readonly TaskDueTodayRow[], zone: string): readonly
 }
 
 export function todayTask(row: TodayRowInput): TodayTask {
-  return { taskId: row.row.taskId, title: row.row.title, meta: row.meta };
+  return { taskId: row.row.taskId, title: row.row.title, meta: row.meta, overdue: row.overdue };
 }
 
 export interface TodayRowInput {
   readonly row: TaskDueTodayRow;
   readonly meta: string;
+  /** Whether the feed put this row in the overdue list; carried to the card as a structural flag. */
+  readonly overdue: boolean;
 }
 
 export function ms(iso: string): number {
