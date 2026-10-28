@@ -298,7 +298,7 @@ describe("Test 4: the fields dl", () => {
     });
     expect(
       screen.getByText(
-        "No end event arrived and the process is gone. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.",
+        "No end event arrived, and the process is gone or couldn't be checked. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.",
       ),
     ).toBeTruthy();
     expect(screen.getByText("At least 30 min")).toBeTruthy();

@@ -6,7 +6,6 @@ import {
   isSessionListed,
   NOT_REPORTED,
   presentRunState,
-  SESSION_QUIET_AFTER_MS,
   type SessionView,
   sessionDisplayName,
 } from "@ccc/domain/session.js";
@@ -23,7 +22,11 @@ import { WidgetFooter } from "../widgets/footer.js";
 import type { CardPresentation, FooterModel } from "../widgets/presentation.js";
 import { resolveCardPresentation } from "../widgets/presentation.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
-import { activeSessionsState, sessionsById } from "../widgets/session-signals.js";
+import {
+  activeSessionsState,
+  sessionQuietAfterMs,
+  sessionsById,
+} from "../widgets/session-signals.js";
 import { formatMonthDay, formatTimeOfDay } from "../widgets/usage-format.js";
 import { usageSummary } from "../widgets/usage-signals.js";
 import { DetailPane } from "./agent-runs-detail.js";
@@ -152,6 +155,7 @@ function SessionsTable({
   selected,
   onSelect,
 }: SessionsTableProps): VNode {
+  const quietAfterMs = sessionQuietAfterMs.value;
   const visible = rows.slice(0, shown);
   const hidden = rows.length - visible.length;
 
@@ -205,7 +209,7 @@ function SessionsTable({
                     {name}
                   </button>
                 </th>
-                <td>{stateCellText(session, nowMs, SESSION_QUIET_AFTER_MS)}</td>
+                <td>{stateCellText(session, nowMs, quietAfterMs)}</td>
                 <td data-priority="secondary">{session.projectName ?? "Unclassified"}</td>
                 <td data-priority="secondary">
                   <time dateTime={lastActivityIso} title={formatAbsoluteTime(lastActivityIso)}>
@@ -476,7 +480,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
   // A quiet session is still `running` in the store (D-05) but is neither counted as active nor
   // hidden: it gets its own `N quiet` segment so the caption agrees with the rows (R-04).
   const quietCount = allSessions.filter(
-    (s) => presentRunState(s, now, SESSION_QUIET_AFTER_MS).quiet !== null,
+    (s) => presentRunState(s, now, sessionQuietAfterMs.value).quiet !== null,
   ).length;
   const runningCount = allSessions.filter((s) => s.state === "running").length - quietCount;
   const waitingCount = allSessions.filter((s) => s.state === "waiting-for-approval").length;

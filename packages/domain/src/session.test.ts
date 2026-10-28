@@ -83,7 +83,7 @@ describe("RUN_STATE_DISPLAY (Test 5, D-16, UI-SPEC Run-state vocabulary)", () =>
 
   it("declares the fixed unknown-state explanation and the not-reported string", () => {
     expect(STALE_RUN_EXPLANATION).toBe(
-      "No end event arrived and the process is gone. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.",
+      "No end event arrived, and the process is gone or couldn't be checked. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.",
     );
     expect(NOT_REPORTED).toBe("Not reported");
   });

@@ -1,10 +1,12 @@
 import type { ServiceEvent, ServiceEventType, SnapshotResponse } from "@ccc/domain";
+import { SESSION_QUIET_AFTER_MS } from "@ccc/domain/session.js";
 import { adoptApprovalsFromSnapshot, applyApprovalServiceEvent } from "./approvals/events.js";
 import { applyProjectsDelta, applyProjectsSnapshot } from "./projects/projects-state.js";
 import { applyResearchUpdated } from "./research/events.js";
 import { applyTasksChanged } from "./tasks/events.js";
 import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./widgets/claude-events.js";
 import { adoptCodexSnapshot, applyCodexServiceEvent } from "./widgets/codex-events.js";
+import { sessionQuietAfterMs } from "./widgets/session-signals.js";
 
 /**
  * The appendable fan-out router every phase's own event handling plugs into
@@ -33,10 +35,20 @@ export const EVENT_HANDLERS: Partial<Record<ServiceEventType, (event: ServiceEve
   "codex.integration.updated": applyCodexServiceEvent,
 };
 
+/**
+ * Phase 9 (D-07, R-04): the service's quiet threshold rides every snapshot. An older service omits
+ * it, so a snapshot without the member resets the plugin to the 30-minute default rather than
+ * keeping a value that no longer has a source.
+ */
+function adoptSessionQuietThreshold(snapshot: SnapshotResponse): void {
+  sessionQuietAfterMs.value = snapshot.state.sessionQuietAfterMs ?? SESSION_QUIET_AFTER_MS;
+}
+
 export const SNAPSHOT_APPLIERS: ReadonlyArray<(snapshot: SnapshotResponse) => void> = [
   applyProjectsSnapshot,
   adoptClaudeSnapshot,
   adoptApprovalsFromSnapshot,
+  adoptSessionQuietThreshold,
   adoptCodexSnapshot,
 ];
 

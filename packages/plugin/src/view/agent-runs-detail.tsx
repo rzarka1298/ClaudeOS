@@ -10,7 +10,6 @@ import {
   NOT_REPORTED,
   presentRunState,
   type RunLinkKind,
-  SESSION_QUIET_AFTER_MS,
   type SessionView,
   STALE_RUN_EXPLANATION,
   sessionDisplayName,
@@ -28,7 +27,11 @@ import { connectionState } from "../connection-state.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatDuration } from "../widgets/duration.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
-import { claudeIntegration, sessionsById } from "../widgets/session-signals.js";
+import {
+  claudeIntegration,
+  sessionQuietAfterMs,
+  sessionsById,
+} from "../widgets/session-signals.js";
 import {
   formatExactTokens,
   formatMonthDay,
@@ -306,7 +309,7 @@ function DetailFields({
   readonly session: SessionView;
   readonly nowMs: number;
 }): VNode {
-  const display = presentRunState(session, nowMs, SESSION_QUIET_AFTER_MS);
+  const display = presentRunState(session, nowMs, sessionQuietAfterMs.value);
   const lastActivityIso = session.lastActivityAt ?? session.startedAt;
 
   return (
@@ -600,7 +603,7 @@ export function DetailPane({
   loadSessionUsage,
   headingRef,
 }: DetailPaneProps): VNode {
-  const display = presentRunState(session, nowMs, SESSION_QUIET_AFTER_MS);
+  const display = presentRunState(session, nowMs, sessionQuietAfterMs.value);
 
   // A Run leaving this detail pane (a new selection, or a status outcome
   // fully shown) clears its own status line rather than leaking a stale

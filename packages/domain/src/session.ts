@@ -299,7 +299,7 @@ export function isTerminalRunState(state: RunState): state is TerminalRunState {
 
 /** Shown under a stale Run's state in the detail pane (UI-SPEC, fixed string). */
 export const STALE_RUN_EXPLANATION =
-  "No end event arrived and the process is gone. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.";
+  "No end event arrived, and the process is gone or couldn't be checked. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.";
 
 /** Shown for any field the source did not provide. Never blank, never `0`, never a dash. */
 export const NOT_REPORTED = "Not reported";
