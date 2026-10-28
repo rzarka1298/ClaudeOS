@@ -354,7 +354,7 @@ export function todayStateFor(
   let taskBlock: TodayData["tasks"] = null;
   if (response !== null) {
     const overdue = ranked(response.overdue, zone).map((row) =>
-      todayTask({ row, meta: rowMeta(row, "overdue", nowMs, zone) }),
+      todayTask({ row, meta: rowMeta(row, "overdue", nowMs, zone), overdue: true }),
     );
     // A task overdue and also scheduled today comes back in both arrays; show it
     // once, as overdue, so it neither repeats nor spends two rows of the budget.
@@ -362,14 +362,14 @@ export function todayStateFor(
     const due = ranked(
       response.due.filter((row) => !overdueIds.has(row.taskId)),
       zone,
-    ).map((row) => todayTask({ row, meta: rowMeta(row, "due", nowMs, zone) }));
+    ).map((row) => todayTask({ row, meta: rowMeta(row, "due", nowMs, zone), overdue: false }));
     const rows = [...overdue, ...due];
     const next = response.nextOpen;
     taskBlock = {
       rows,
       nextOpen:
         rows.length === 0 && next !== undefined && next !== null
-          ? todayTask({ row: next, meta: nextOpenMeta(next, nowMs, zone) })
+          ? todayTask({ row: next, meta: nextOpenMeta(next, nowMs, zone), overdue: false })
           : null,
     };
   }
