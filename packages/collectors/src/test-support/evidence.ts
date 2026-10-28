@@ -185,6 +185,10 @@ export function startTimeout(runId: RunId, observedAt: string): Evidence {
   return { kind: "start-timeout", runId, observedAt };
 }
 
+export function identityUnknownTimeout(runId: RunId, observedAt: string): Evidence {
+  return { kind: "identity-unknown-timeout", runId, observedAt };
+}
+
 export function inactivityTimeout(runId: RunId, observedAt: string): Evidence {
   return { kind: "inactivity-timeout", runId, observedAt };
 }

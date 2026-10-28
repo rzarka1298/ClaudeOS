@@ -8,6 +8,7 @@ import type { Evidence } from "@ccc/collectors";
 import {
   newRunId,
   type RunId,
+  SESSION_QUIET_AFTER_MS,
   type SessionRun,
   SessionUpsertedPayloadSchema,
   type SessionView,
@@ -31,6 +32,7 @@ import {
   DEFAULT_LIVENESS_CONFIG,
   type LivenessConfig,
   type LivenessSweeper,
+  livenessConfigFromEnv,
 } from "./liveness.js";
 import {
   type ClaudePipeline,
@@ -403,20 +405,105 @@ describe("D-08 reproduction: an idle session with a live process", () => {
     expect(stateOf(run.runId)).toBe("running");
   });
 
-  // Characterises today's behaviour. 09-10 inverts this deliberately under D-06
-  // (an unchecked identity must stop reading as plain running); red first there.
-  it("identity unknown: nothing applied, today", async () => {
-    table.spawnUnreadable(PID);
-    const run = seedRun({
-      activity: "idle",
-      lastActivityAt: new Date(T0 - IDLE_MS).toISOString(),
+  // 09-10 (D-06): an unchecked identity beyond the quiet threshold stops reading as plain
+  // running. It is sweeper evidence (the plugin never sees process identity), and it only
+  // ever yields `stale`, never an ending.
+  describe("identity unknown beyond the quiet threshold (09-10, D-06, SESS-06)", () => {
+    const QUIET = DEFAULT_LIVENESS_CONFIG.quietAfterMs;
+
+    it("identity unknown at the quiet threshold: identity-unknown-timeout applied, Run stale", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - QUIET).toISOString(),
+      });
+      await sweeperWith().sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(stateOf(run.runId)).toBe("stale");
     });
-    const sweeper = sweeperWith();
-    await sweeper.sweepNow();
-    nowMs = T0 + DEFAULT_LIVENESS_CONFIG.graceMs + DEFAULT_LIVENESS_CONFIG.sweepMs;
-    await sweeper.sweepNow();
-    expect(appliedKinds(run.runId)).toEqual([]);
-    expect(stateOf(run.runId)).toBe("running");
+
+    it("identity unknown one millisecond below the threshold: nothing applied, still running", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - QUIET + 1).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("a waiting-for-approval Run with an unknown identity beyond the threshold goes stale", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        state: "waiting-for-approval",
+        activity: null,
+        lastActivityAt: new Date(T0 - QUIET - 1_000).toISOString(),
+      });
+      await sweeperWith().sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(stateOf(run.runId)).toBe("stale");
+    });
+
+    it("never writes completed or failed, however long the identity stays unknown", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({ lastActivityAt: new Date(T0 - 10 * QUIET).toISOString() });
+      const sweeper = sweeperWith();
+      for (let sweep = 0; sweep < 4; sweep += 1) {
+        await sweeper.sweepNow();
+        nowMs += DEFAULT_LIVENESS_CONFIG.graceMs + DEFAULT_LIVENESS_CONFIG.sweepMs;
+      }
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(["completed", "failed"]).not.toContain(stateOf(run.runId));
+      expect(stateOf(run.runId)).toBe("stale");
+    });
+
+    it("a stale Run whose identity reads same again revives through pid-alive", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({ lastActivityAt: new Date(T0 - QUIET).toISOString() });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      expect(stateOf(run.runId)).toBe("stale");
+      table.spawn(PID, LSTART);
+      nowMs = T0 + DEFAULT_LIVENESS_CONFIG.sweepMs;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout", "pid-alive"]);
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("a matched identity idle past the threshold is still left running (D-05)", async () => {
+      table.spawn(PID, LSTART);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 41 * 60 * 1000).toISOString(),
+      });
+      await sweeperWith().sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("the threshold is quietAfterMs from the config, not a constant", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({ lastActivityAt: new Date(T0 - 120_000).toISOString() });
+      await sweeperWith({ quietAfterMs: 120_000 }).sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+    });
+  });
+});
+
+describe("CCC_QUIET_THRESHOLD_MS (09-10, D-07, T-09-17)", () => {
+  it("reads a positive value", () => {
+    expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: "120000" }).quietAfterMs).toBe(120_000);
+  });
+
+  it("falls back to SESSION_QUIET_AFTER_MS for absent, zero, negative and non-numeric values", () => {
+    expect(livenessConfigFromEnv({}).quietAfterMs).toBe(SESSION_QUIET_AFTER_MS);
+    for (const raw of ["0", "-5", "abc", ""]) {
+      expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: raw }).quietAfterMs).toBe(
+        SESSION_QUIET_AFTER_MS,
+      );
+    }
   });
 });
 

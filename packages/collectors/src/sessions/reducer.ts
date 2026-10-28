@@ -62,7 +62,12 @@ export interface SessionFacts {
 export type Evidence =
   | { readonly kind: "hook"; readonly record: KnownHookRecord; readonly facts: SessionFacts }
   | {
-      readonly kind: "pid-gone" | "pid-alive" | "start-timeout" | "inactivity-timeout";
+      readonly kind:
+        | "pid-gone"
+        | "pid-alive"
+        | "start-timeout"
+        | "inactivity-timeout"
+        | "identity-unknown-timeout";
       readonly runId: RunId;
       readonly observedAt: string;
     }
@@ -348,6 +353,18 @@ export function reduce(
     case "inactivity-timeout":
       return onRun(index, evidence.runId, evidence.kind, (run) =>
         run.pid === null && (run.state === "running" || run.state === "waiting-for-approval")
+          ? upserted(write(run, { state: "stale" }))
+          : NOTHING,
+      );
+
+    // 09-10 (D-06): a pid-bearing Run whose process identity could not be
+    // checked for the whole quiet threshold. Separate from the PID-less
+    // `inactivity-timeout` above, which it never touches. Absence of
+    // evidence is `stale` (unknown) and nothing else (SESS-06): never an
+    // ending, so a later `pid-alive` revives it.
+    case "identity-unknown-timeout":
+      return onRun(index, evidence.runId, evidence.kind, (run) =>
+        run.state === "running" || run.state === "waiting-for-approval"
           ? upserted(write(run, { state: "stale" }))
           : NOTHING,
       );
