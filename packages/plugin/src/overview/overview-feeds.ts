@@ -107,26 +107,12 @@ export function refreshDueToday(): Promise<void> {
   return dueToday.refresh();
 }
 
-let automationSeq = 0;
-
 /** Asks the service for the research status. Same contract as {@link refreshDueToday}. */
-export async function refreshAutomation(): Promise<void> {
-  const seq = ++automationSeq;
-  let answer: ResearchStatusResponse | null = null;
-  try {
-    answer = await researchApi().status();
-  } catch {
-    answer = null;
-  }
-  if (seq !== automationSeq) return;
-  const previous = automationFeed.peek();
-  automationFeed.value =
-    answer === null
-      ? { ...previous, settled: true, failed: true }
-      : { settled: true, value: answer, fetchedAt: Date.now(), failed: false };
-}
+const automation = superseding(automationFeed, () => researchApi().status());
 
-let reportSeq = 0;
+export function refreshAutomation(): Promise<void> {
+  return automation.refresh();
+}
 
 /**
  * Asks the service for the first page of the report list and keeps the newest
@@ -135,24 +121,16 @@ let reportSeq = 0;
  * It reads through the `researchApi()` holder, never the Research view's own
  * `reportRows` signal, which is reset when the last Research view unmounts.
  */
-export async function refreshLatestReport(): Promise<void> {
-  const seq = ++reportSeq;
-  let answer: LatestReportAnswer | null = null;
-  try {
-    const page = await researchApi().list(undefined);
-    answer = {
-      latest: page.rows.find((row): row is ReadableReportRow => row.readable) ?? null,
-      unreadableCount: page.rows.filter((row) => !row.readable).length,
-    };
-  } catch {
-    answer = null;
-  }
-  if (seq !== reportSeq) return;
-  const previous = latestReportFeed.peek();
-  latestReportFeed.value =
-    answer === null
-      ? { ...previous, settled: true, failed: true }
-      : { settled: true, value: answer, fetchedAt: Date.now(), failed: false };
+const latestReport = superseding(latestReportFeed, async (): Promise<LatestReportAnswer> => {
+  const page = await researchApi().list(undefined);
+  return {
+    latest: page.rows.find((row): row is ReadableReportRow => row.readable) ?? null,
+    unreadableCount: page.rows.filter((row) => !row.readable).length,
+  };
+});
+
+export function refreshLatestReport(): Promise<void> {
+  return latestReport.refresh();
 }
 
 /** Refreshes every Overview feed. */
@@ -165,8 +143,8 @@ export function refreshOverviewFeeds(): void {
 /** Clears every feed and invalidates answers still in flight (tests, and unload). */
 export function resetOverviewFeeds(): void {
   dueToday.invalidate();
-  automationSeq += 1;
-  reportSeq += 1;
+  automation.invalidate();
+  latestReport.invalidate();
   dueTodayFeed.value = NEVER;
   automationFeed.value = NEVER;
   latestReportFeed.value = NEVER;
