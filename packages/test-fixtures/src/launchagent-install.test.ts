@@ -412,5 +412,6 @@ describe("FIX2B I2: the production wait defaults are pinned", () => {
     expect(launchctlVerbs(fx).filter((verb) => verb === "print")).toHaveLength(100);
     expect(sleeps(fx)).toEqual(Array.from({ length: 99 }, () => "0.1"));
     expect(launchctlVerbs(fx)).not.toContain("bootstrap");
-  });
+    // ~200 stub processes: allow for a loaded machine.
+  }, 60_000);
 });
