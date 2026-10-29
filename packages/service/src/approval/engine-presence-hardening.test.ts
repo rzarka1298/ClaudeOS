@@ -380,3 +380,66 @@ describe("paths inside the flight that were never exercised (m5)", () => {
     expect(seen).toEqual([hash]);
   });
 });
+
+describe("review follow-ups from Codex run 20261029T023514538Z", () => {
+  it("starts the denial cooldown when the denial is received, not when the prompt was asked", async () => {
+    const port = createPresenceFake();
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    // The owner takes 25 s over the prompt and then denies. Counted from the ask, the 30 s cooldown would
+    // be over six seconds later; counted from the denial it still has 24 s to run.
+    port.script(async () => {
+      h.clock.advance(25_000);
+      return { kind: "denied" };
+    });
+    expect(await approve(h, id)).toEqual({ outcome: "presence-denied" });
+    expect(port.requests).toHaveLength(1);
+
+    h.clock.advance(6_000);
+    expect(await approve(h, id)).toEqual({ outcome: "presence-denied" });
+    expect(port.requests).toHaveLength(1);
+    expect(auditDetails(h, id).at(-1)).toEqual(["presence-refused", "presence-cooldown"]);
+  });
+
+  it("never starts a cooldown earlier than the ask plus the cooldown when the clock steps back during the prompt", async () => {
+    const port = createPresenceFake();
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const asked = h.clock.now();
+    let current = h.clock.now;
+    const engine = engineWithClock(h, () => current());
+    port.script(async () => {
+      current = () => new Date(Date.parse(asked) - 20_000).toISOString();
+      return { kind: "denied" };
+    });
+    expect(await approveVia(engine, h, id)).toEqual({ outcome: "presence-denied" });
+    // 29 s after the ask: still cooling down.
+    current = () => new Date(Date.parse(asked) + PRESENCE_DENIED_COOLDOWN_MS - 1_000).toISOString();
+    expect(await approveVia(engine, h, id)).toEqual({ outcome: "presence-denied" });
+    expect(port.requests).toHaveLength(1);
+  });
+
+  it("holds no shutdown subscription once a check has completed, and shutdown still abandons an in-flight one", async () => {
+    const port = createPresenceFake({ kind: "unavailable" });
+    const h = presenceHarness(port);
+    const engine = createApprovalEngine({ ...h.deps });
+    for (let i = 0; i < 25; i += 1) {
+      const id = h.propose({ operation: WRITE, subject: `s${i}` });
+      await approveVia(engine, h, id);
+      h.engine.withdraw(id);
+      h.clock.advance(61_000);
+    }
+    expect(port.requests).toHaveLength(25);
+    expect(engine.shutdownSubscriptions()).toBe(0);
+
+    const slow = deferredPresence();
+    port.script(slow.script);
+    const id = h.propose({ operation: WRITE, subject: "last" });
+    const pending = approveVia(engine, h, id);
+    await Promise.resolve();
+    expect(engine.shutdownSubscriptions()).toBe(1);
+    engine.beginShutdown();
+    expect(await pending).toEqual({ outcome: "operation-reserved" });
+    expect(engine.shutdownSubscriptions()).toBe(0);
+  });
+});

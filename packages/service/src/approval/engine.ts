@@ -286,6 +286,12 @@ export interface SweepSummary {
   readonly lapsed: number;
 }
 
+/** A test-only window onto the engine's bookkeeping; not part of {@link ApprovalEngine}. */
+export interface EngineProbe {
+  /** How many presence checks are subscribed to shutdown right now (zero once every check has finished). */
+  shutdownSubscriptions(): number;
+}
+
 export interface ApprovalEngine {
   submit(input: SubmitInput): SubmitOutcome;
   decide(input: EngineDecideInput): Promise<DecideResponse>;
@@ -357,7 +363,7 @@ function isoAfter(now: string, ms: number): string {
 // ---------------------------------------------------------------------------
 // The engine
 
-export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
+export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine & EngineProbe {
   const { store, registry, clock, publisher, mirror, log } = deps;
   const presence = deps.presence ?? UNAVAILABLE_PRESENCE;
   const ids = deps.ids ?? { proposalId: newProposalId, noteId: newNoteId };
@@ -760,11 +766,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       : { outcome: "already-decided", state: row.state };
   }
 
-  /** Resolved by {@link beginShutdown}: the single signal every in-flight presence check abandons on (m1). */
-  let abandonFlights: () => void = () => undefined;
-  const shutdownSignal = new Promise<typeof ABANDONED>((resolve) => {
-    abandonFlights = () => resolve(ABANDONED);
-  });
+  /**
+   * The abandon callbacks of the presence checks currently waiting on a port. Each check adds its own and
+   * removes it when it finishes, so a completed check (and its result) is never retained until shutdown;
+   * a shared never-settling promise raced by every check would keep every loser's reaction alive.
+   */
+  const shutdownListeners = new Set<() => void>();
+  function abandonFlights(): void {
+    for (const listener of [...shutdownListeners]) listener();
+  }
 
   /** The port's answer, cut off after {@link PRESENCE_ENGINE_TIMEOUT_MS} (rejects "timeout") or at shutdown ({@link ABANDONED}). */
   async function proveWithin(request: Parameters<PresencePort["prove"]>[0]): Promise<unknown> {
@@ -772,10 +782,16 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     const cutoff = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => reject(new Error("timeout")), PRESENCE_ENGINE_TIMEOUT_MS);
     });
+    let listener: (() => void) | undefined;
+    const abandoned = new Promise<typeof ABANDONED>((resolve) => {
+      listener = () => resolve(ABANDONED);
+      shutdownListeners.add(listener);
+    });
     try {
-      return await Promise.race([presence.prove(request), cutoff, shutdownSignal]);
+      return await Promise.race([presence.prove(request), cutoff, abandoned]);
     } finally {
       clearTimeout(timer);
+      if (listener !== undefined) shutdownListeners.delete(listener);
     }
   }
 
@@ -822,10 +838,14 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     const result = presenceResultOf(answer);
     if (result.kind !== "proved") {
       if (result.kind === "denied") {
-        const until = Date.parse(askedAt) + PRESENCE_DENIED_COOLDOWN_MS;
-        for (const [id, expiresAtMs] of deniedUntil)
-          if (expiresAtMs <= Date.parse(askedAt)) deniedUntil.delete(id);
-        deniedUntil.set(proposalId, until);
+        // The cooldown runs from when the denial arrives, so an owner who deliberates before denying still
+        // gets the full cooldown; a clock that stepped back is clamped to the ask, so it is never shorter
+        // than the ask plus the cooldown.
+        const receivedMs = Math.max(Date.parse(clock.now()), Date.parse(askedAt));
+        for (const [id, expiresAtMs] of deniedUntil) {
+          if (expiresAtMs <= receivedMs) deniedUntil.delete(id);
+        }
+        deniedUntil.set(proposalId, receivedMs + PRESENCE_DENIED_COOLDOWN_MS);
         return refuseApprove(current, "presence-denied");
       }
       return refuseApprove(current, "presence-unavailable");
@@ -1156,6 +1176,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     sweepExpired,
     recover: recovery.recover,
     settled,
+    shutdownSubscriptions: () => shutdownListeners.size,
     beginShutdown: () => {
       stopping = true;
       abandonFlights();
