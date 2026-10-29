@@ -3,3 +3,6 @@
 22417c37fec7458b5bf1551eca0a9785478b2ea3:packages/e2e/src/sanitize.test.ts:generic-api-key:38
 # The same historic finding under its hash in the public projection (scripts/publish-public-branch.sh rewrites commits).
 ab3d3c3f8fb3e1bd9af6737618d4b1951cf75f0a:packages/e2e/src/sanitize.test.ts:generic-api-key:38
+# The 09-FIX7 known-answer vector in a proof unit test: a derived test key (hex) assigned to an identifier that contained
+# "KEY". The identifier was renamed in 09-FIX8; this pins the historic finding only (no path blanket in .gitleaks.toml).
+9c1376792242fa53918e79d262be5436c6ddaf16:packages/service/src/approval/proof.test.ts:generic-api-key:87

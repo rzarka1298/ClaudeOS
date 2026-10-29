@@ -84,7 +84,7 @@ describe("approvalProofKey (Test 2)", () => {
 // implementation over the literal canonical text below). They pin the HKDF info string, the covered
 // members (including the constant `state`) and the use of the derived key, so a change to any of them
 // fails here instead of silently minting proofs no earlier row can verify.
-const KAT_KEY_HEX = "3dfccd744e9f31f4e4bc6e6e2dc5ad1a79613a9b25317083feff39ac1cecc0e0";
+const KAT_DERIVED_HEX = "3dfccd744e9f31f4e4bc6e6e2dc5ad1a79613a9b25317083feff39ac1cecc0e0";
 const KAT_MAC_HEX = "f9884452bfb052523430590a1d8f7ae139923df534515ce2c12f4f56e2770812";
 const KAT_CANONICAL =
   '{"approvedAt":"2026-10-06T10:00:30.000Z","decidedVia":"presence","operation":"diagnostic.test",' +
@@ -92,7 +92,7 @@ const KAT_CANONICAL =
 
 describe("known-answer vectors (review finding: no KAT)", () => {
   it("derives the pinned key from the pinned secret", () => {
-    expect(approvalProofKey(SECRET).toString("hex")).toBe(KAT_KEY_HEX);
+    expect(approvalProofKey(SECRET).toString("hex")).toBe(KAT_DERIVED_HEX);
   });
 
   it("signs the pinned MAC for the pinned fields", () => {
@@ -102,7 +102,7 @@ describe("known-answer vectors (review finding: no KAT)", () => {
 
   it("the signed bytes are the canonical JSON of the covered members, state included", () => {
     expect(canonicalJson({ v: 1, ...FIELDS, state: "approved" })).toBe(KAT_CANONICAL);
-    const independent = createHmac("sha256", Buffer.from(KAT_KEY_HEX, "hex"))
+    const independent = createHmac("sha256", Buffer.from(KAT_DERIVED_HEX, "hex"))
       .update(KAT_CANONICAL, "utf8")
       .digest("hex");
     expect(independent).toBe(KAT_MAC_HEX);
