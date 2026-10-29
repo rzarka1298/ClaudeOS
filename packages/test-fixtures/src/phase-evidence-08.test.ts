@@ -983,7 +983,11 @@ run("validation map (Task 3, Test 4)", () => {
 run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
   const front = /^---\n([\s\S]*?)\n---/.exec(audit)?.[1] ?? "";
   const num = (key: string): number => Number(new RegExp(`^${key}: (\\d+)$`, "m").exec(front)?.[1]);
-  const closed = /^strict-clean: true$/m.test(front);
+  // Closed once Phases 07 and 08 are recorded. A later phase (Phase 9 joined the audit table in plan
+  // 09-21) may still be pending in the same record, so `strict-clean` is not the test of this.
+  const closed = ["07", "08"].every((phase) =>
+    (phaseRows().find((row) => row.phase === phase)?.status ?? "").startsWith("recorded"),
+  );
 
   interface PhaseRow {
     readonly phase: string;
@@ -1002,7 +1006,9 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
   }
 
   it("covers the ten milestone phases and agrees with the Phase 8 script's item count", () => {
-    expect(phaseRows().map((r) => r.phase)).toEqual([
+    // Ten milestone phases; Phase 9 joined the table in plan 09-21 as an eleventh row.
+    const phases = phaseRows().map((r) => r.phase);
+    expect(phases.slice(0, 10)).toEqual([
       "01",
       "02",
       "03",
@@ -1014,7 +1020,9 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
       "07",
       "08",
     ]);
-    expect(num("phases")).toBe(10);
+    expect([10, 11]).toContain(phases.length);
+    if (phases.length === 11) expect(phases[10]).toBe("09");
+    expect(num("phases")).toBe(phases.length);
     expect(num("not-recorded")).toBe(0);
     const total = Number(/^total: (\d+)$/m.exec(section(read("08-UAT.md"), "Summary"))?.[1]);
     expect(total).toBe(39);
@@ -1031,7 +1039,7 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
   });
 
   it("records phases 01 to 06 as recorded or recorded with exceptions, and 07 and 08 as pending the live UAT", () => {
-    for (const row of phaseRows().filter((r) => !["07", "08"].includes(r.phase))) {
+    for (const row of phaseRows().filter((r) => !["07", "08", "09"].includes(r.phase))) {
       expect(["recorded", "recorded-with-exceptions"], row.phase).toContain(row.status);
     }
     for (const phase of ["07", "08"]) {
@@ -1044,7 +1052,9 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
       }
     }
     if (!closed) expect(num("pending-live-uat")).toBe(2);
-    expect(num("recorded") + num("recorded-with-exceptions") + num("pending-live-uat")).toBe(10);
+    expect(num("recorded") + num("recorded-with-exceptions") + num("pending-live-uat")).toBe(
+      num("phases"),
+    );
   });
 
   it("lists the OD-7 exceptions awaiting the owner, and settles them only with a date once closed", () => {
