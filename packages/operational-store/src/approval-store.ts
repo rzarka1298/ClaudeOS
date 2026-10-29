@@ -173,6 +173,7 @@ interface ProposalRow {
   outcome_code: string | null;
   outcome_note: string | null;
   supersedes: string | null;
+  decision_proof: string | null;
   revision: number;
 }
 
@@ -248,6 +249,9 @@ function isAuditEvent(value: string): value is ApprovalAuditEvent {
 
 const BUCKETS = ["pending", "decided", "expired"] as const satisfies readonly ApprovalBucket[];
 
+/** The longest decision proof the store accepts, in characters. */
+const MAX_DECISION_PROOF_CHARS = 2048;
+
 /** The most audit events one read returns; a request never has more than a handful. */
 const AUDIT_READ_LIMIT = 20;
 
@@ -287,6 +291,8 @@ function rowToProposal(row: ProposalRow): StoredProposal {
     outcomeNote: row.outcome_note,
     mirrorNoteId: row.mirror_note_id as NoteId,
     supersedes: row.supersedes as ProposalId | null,
+    // Always set: the column value, or null. An old row has NULL; a missing column never reads as absent.
+    decisionProof: row.decision_proof ?? null,
   };
 }
 
@@ -343,7 +349,7 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
   const decideOne = db.prepare(
     `UPDATE proposals
      SET state = @state, approved_at = @approvedAt, decided_at = @now, decided_via = @via,
-         revision = revision + 1
+         decision_proof = @decisionProof, revision = revision + 1
      WHERE proposal_id = @proposalId AND state = 'pending'`,
   );
 
@@ -529,6 +535,8 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
       approvedAt: approve ? (input.approvedAt ?? input.now) : null,
       now: input.now,
       via: input.via,
+      // Written only in the approving update (D-03); a proof handed to a deny is ignored.
+      decisionProof: approve ? (input.decisionProof ?? null) : null,
     });
     if (changed.changes !== 1) return currentStateResult(row.proposal_id);
     writeAudit(
@@ -717,6 +725,16 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
         assertIso(input.approvedAt, "approvedAt");
         // The instant the owner vouched for cannot be after the instant it is recorded (D-01).
         if (input.approvedAt > input.now) throw new InvalidApprovalInputError("approvedAt");
+      }
+      if (input.decisionProof !== undefined) {
+        // A proof is a short JSON text (about 110 characters today); a bound keeps a bad caller from stuffing the row.
+        if (
+          typeof input.decisionProof !== "string" ||
+          input.decisionProof.length === 0 ||
+          input.decisionProof.length > MAX_DECISION_PROOF_CHARS
+        ) {
+          throw new InvalidApprovalInputError("decisionProof");
+        }
       }
       return decideTx(input);
     },

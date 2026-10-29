@@ -1419,6 +1419,7 @@ const EXPECTED_TRIGGERS = [
   "approval_audit_no_delete",
   "approval_audit_no_replace",
   "approval_audit_no_update",
+  "proposals_decision_proof_write_once",
   "proposals_identity_immutable",
   "proposals_no_delete",
   "proposals_no_replace",
@@ -1432,7 +1433,7 @@ function missingTriggers(handle: Database.Database): string[] {
 }
 
 describe("survival (Test 8, permanent)", () => {
-  it("lists exactly the eight trigger names on a database built from every real migration", () => {
+  it("lists exactly the nine trigger names on a database built from every real migration", () => {
     const fresh = openMigratedMemoryDb();
     try {
       expect(triggerNames(fresh)).toEqual(EXPECTED_TRIGGERS);
@@ -1471,6 +1472,7 @@ describe("survival (Test 8, permanent)", () => {
       );
       applyMigrations(rebuilt, rebuildDir);
       expect(missingTriggers(rebuilt)).toEqual([
+        "proposals_decision_proof_write_once",
         "proposals_identity_immutable",
         "proposals_no_delete",
         "proposals_no_replace",
@@ -2131,5 +2133,340 @@ describe("volume (Test 10)", () => {
     expect(time(() => store.counts())).toBeLessThan(50);
     expect(store.counts()).toEqual({ pending: 100, decided: 1000, expired: 0 });
     expect(store.list("decided", 50)).toHaveLength(50);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-16 (D-03, APPR-12): the decision proof column and its write-once trigger
+
+const PROOF =
+  '{"mac":"0000000000000000000000000000000000000000000000000000000000000000","presence":null,"v":1}';
+const OTHER_PROOF = PROOF.replace("0000", "1111");
+
+function proofOf(proposalId: string): unknown {
+  return (
+    db.prepare("SELECT decision_proof FROM proposals WHERE proposal_id = ?").get(proposalId) as {
+      decision_proof: string | null;
+    }
+  ).decision_proof;
+}
+
+describe("decision proof, store round trip (09-16 Test 1)", () => {
+  it("writes the proof an approving decide is given byte for byte and get returns it", () => {
+    const proposal = submitPending();
+    const result = store.decide(decideInput(proposal, { decisionProof: PROOF }));
+    expect(result.kind).toBe("approved");
+    if (result.kind !== "approved") return;
+    expect(result.proposal.decisionProof).toBe(PROOF);
+    expect(proofOf(proposal.proposalId)).toBe(PROOF);
+    expect(store.get(proposal.proposalId)?.decisionProof).toBe(PROOF);
+    expect(store.listApprovedUnclaimed().map((row) => row.decisionProof)).toContain(PROOF);
+  });
+
+  it("keeps the proof through claim and finish", () => {
+    const proposal = submitPending();
+    store.decide(decideInput(proposal, { decisionProof: PROOF }));
+    store.claim(proposal.proposalId, { pid: 1 }, at(61_000));
+    expect(store.get(proposal.proposalId)?.decisionProof).toBe(PROOF);
+    store.finish({
+      proposalId: proposal.proposalId,
+      state: "executed",
+      code: "executed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: at(62_000),
+    });
+    expect(store.get(proposal.proposalId)?.decisionProof).toBe(PROOF);
+  });
+
+  it("returns null, never absent, for a pending row and every row that did not get a signed approve", () => {
+    const late = { expiresAt: at(20 * HOUR) };
+    const pending = submitPending(late);
+    const denied = submitPending(late);
+    const deniedWithProof = submitPending(late);
+    const expired = submitPending({ expiresAt: at(HOUR) });
+    const withdrawn = submitPending(late);
+    const unsigned = submitPending(late);
+    const lapsed = submitPending(late);
+    store.decide(decideInput(denied, { decision: "deny" }));
+    // A proof handed to a deny is ignored, not stored.
+    store.decide(decideInput(deniedWithProof, { decision: "deny", decisionProof: PROOF }));
+    store.expireDue(at(HOUR));
+    store.withdraw(withdrawn.proposalId, at(3_000));
+    store.decide(decideInput(unsigned));
+    store.decide(decideInput(lapsed, { decisionProof: PROOF }));
+    store.lapseStaleApproved(at(10 * HOUR), { "session.force-terminate": 1_000 });
+    for (const proposal of [pending, denied, deniedWithProof, expired, withdrawn, unsigned]) {
+      const stored = store.get(proposal.proposalId);
+      expect(stored, proposal.proposalId).not.toBeNull();
+      expect(stored?.decisionProof, proposal.proposalId).toBeNull();
+      expect(proofOf(proposal.proposalId), proposal.proposalId).toBeNull();
+    }
+    expect(store.get(lapsed.proposalId)?.state).toBe("lapsed");
+    // Lapsing is not a rewrite of the proof: the approved row keeps what it was approved with.
+    expect(store.get(lapsed.proposalId)?.decisionProof).toBe(PROOF);
+  });
+
+  it("refuses a proof that is empty, not a string or oversized, and writes nothing", () => {
+    const proposal = submitPending();
+    for (const bad of ["", 7 as unknown as string, "x".repeat(2049)]) {
+      expect(() => store.decide(decideInput(proposal, { decisionProof: bad }))).toThrow(
+        InvalidApprovalInputError,
+      );
+    }
+    expect(rowOf(proposal.proposalId).state).toBe("pending");
+  });
+
+  it("a decide that loses to expiry writes no proof", () => {
+    const proposal = submitPending({ expiresAt: at(1_000) });
+    const result = store.decide(decideInput(proposal, { now: at(2_000), decisionProof: PROOF }));
+    expect(result.kind).toBe("expired");
+    expect(proofOf(proposal.proposalId)).toBeNull();
+  });
+});
+
+describe("decision proof, write-once trigger (09-16 Test 2)", () => {
+  const WRITE_ONCE = /decision_proof is written once/;
+
+  it("refuses to change the proof of an approved row, to another value or to NULL", () => {
+    const proposal = submitPending();
+    store.decide(decideInput(proposal, { decisionProof: PROOF }));
+    const id = proposal.proposalId;
+    expect(() =>
+      db
+        .prepare("UPDATE proposals SET decision_proof = ? WHERE proposal_id = ?")
+        .run(OTHER_PROOF, id),
+    ).toThrow(WRITE_ONCE);
+    expect(() =>
+      db.prepare("UPDATE proposals SET decision_proof = NULL WHERE proposal_id = ?").run(id),
+    ).toThrow(WRITE_ONCE);
+    expect(proofOf(id)).toBe(PROOF);
+  });
+
+  it("refuses to change the proof at the claim or the finish of the same row", () => {
+    const proposal = submitPending();
+    store.decide(decideInput(proposal, { decisionProof: PROOF }));
+    const id = proposal.proposalId;
+    expect(() =>
+      db
+        .prepare(
+          "UPDATE proposals SET state = 'executing', decision_proof = ? WHERE proposal_id = ?",
+        )
+        .run(OTHER_PROOF, id),
+    ).toThrow(WRITE_ONCE);
+    expect(rowOf(id).state).toBe("approved");
+  });
+
+  it("refuses to fill a proof in later on a row approved with none", () => {
+    const proposal = submitPending();
+    store.decide(decideInput(proposal));
+    expect(() =>
+      db
+        .prepare("UPDATE proposals SET decision_proof = ? WHERE proposal_id = ?")
+        .run(PROOF, proposal.proposalId),
+    ).toThrow(WRITE_ONCE);
+    expect(proofOf(proposal.proposalId)).toBeNull();
+  });
+
+  it("refuses to set a proof on a pending row unless the same update approves it", () => {
+    const proposal = submitPending();
+    const id = proposal.proposalId;
+    expect(() =>
+      db.prepare("UPDATE proposals SET decision_proof = ? WHERE proposal_id = ?").run(PROOF, id),
+    ).toThrow(WRITE_ONCE);
+    for (const state of ["denied", "expired", "withdrawn"]) {
+      expect(() =>
+        db
+          .prepare("UPDATE proposals SET state = ?, decision_proof = ? WHERE proposal_id = ?")
+          .run(state, PROOF, id),
+      ).toThrow(WRITE_ONCE);
+    }
+    expect(rowOf(id).state).toBe("pending");
+    expect(proofOf(id)).toBeNull();
+  });
+
+  it("allows the approve update that sets the proof, and a no-op assignment afterwards", () => {
+    const proposal = submitPending();
+    const id = proposal.proposalId;
+    expect(() =>
+      db
+        .prepare(
+          "UPDATE proposals SET state = 'approved', decision_proof = ?, revision = revision + 1 WHERE proposal_id = ?",
+        )
+        .run(PROOF, id),
+    ).not.toThrow();
+    expect(proofOf(id)).toBe(PROOF);
+    expect(() =>
+      db.prepare("UPDATE proposals SET decision_proof = ? WHERE proposal_id = ?").run(PROOF, id),
+    ).not.toThrow();
+  });
+
+  it("still lets the payload purge run on a row that carries a proof", () => {
+    const proposal = submitPending();
+    store.decide(decideInput(proposal, { decisionProof: PROOF }));
+    store.claim(proposal.proposalId, { pid: 1 }, at(61_000));
+    store.finish({
+      proposalId: proposal.proposalId,
+      state: "executed",
+      code: "executed",
+      note: null,
+      evidence: null,
+      reconciled: false,
+      now: at(62_000),
+    });
+    expect(store.purgeDecidedPayloads(at(5 * HOUR))).toBe(1);
+    const stored = store.get(proposal.proposalId);
+    expect(stored?.payloadJson).toBeNull();
+    expect(stored?.decisionProof).toBe(PROOF);
+  });
+});
+
+describe("decision proof, no always-allow member (09-16)", () => {
+  it("the new column name does not look like a standing choice", () => {
+    const FORBIDDEN =
+      /always|remember|persist|preference|allow|blanket|auto.?approve|token|secret|credential/i;
+    expect(columnNames(db, "proposals")).toContain("decision_proof");
+    expect("decision_proof").not.toMatch(FORBIDDEN);
+  });
+});
+
+describe("migration 0013 applied (09-16 Test 4, BLOCKING)", () => {
+  const PHASE6_COLUMNS = [
+    "proposal_id",
+    "operation",
+    "subject",
+    "state",
+    "requester_kind",
+    "requester_label",
+    "project_id",
+    "run_id",
+    "reason",
+    "payload_json",
+    "payload_hash",
+    "dedupe_key",
+    "mirror_note_id",
+    "created_at",
+    "expires_at",
+    "approved_at",
+    "decided_at",
+    "decided_via",
+    "claimed_at",
+    "claim_facts_json",
+    "finished_at",
+    "attempts",
+    "outcome_code",
+    "outcome_note",
+    "supersedes",
+    "revision",
+  ];
+
+  it("a fresh file-backed store lists decision_proof and every trigger", () => {
+    const fresh = openMigratedFileDb(join(dir, "fresh.db"));
+    try {
+      expect(columnNames(fresh, "proposals")).toContain("decision_proof");
+      expect(missingTriggers(fresh)).toEqual([]);
+    } finally {
+      fresh.close();
+    }
+  });
+
+  it("a store created at 0012 with Phase 6 rows upgrades in place and keeps every value", () => {
+    const files = readdirSync(REAL_MIGRATIONS_DIR)
+      .filter((name) => name.endsWith(".sql"))
+      .sort();
+    const proofFile = files.findIndex((name) => name.endsWith("_approval_decision_proof.sql"));
+    expect(proofFile).toBe(13);
+    const previousDir = mkdtempSync(join(tmpdir(), "ccc-approval-0012-"));
+    const old = new Database(join(dir, "at-0012.db"));
+    try {
+      for (const name of files.slice(0, proofFile)) {
+        copyFileSync(join(REAL_MIGRATIONS_DIR, name), join(previousDir, name));
+      }
+      applyMigrations(old, previousDir);
+      expect(columnNames(old, "proposals")).not.toContain("decision_proof");
+      const seed = old.prepare(
+        `INSERT INTO proposals (proposal_id, operation, subject, state, requester_kind, requester_label,
+           reason, payload_json, payload_hash, dedupe_key, mirror_note_id, created_at, expires_at,
+           approved_at, decided_at, decided_via, claimed_at, claim_facts_json, attempts, revision)
+         VALUES (@id, 'session.force-terminate', @subject, @state, 'dashboard', 'Test', 'why', '{}',
+           @hash, @dedupe, @note, @created, @expires, @approvedAt, @decidedAt, @via, @claimedAt,
+           @facts, @attempts, 1)`,
+      );
+      const rows = [
+        {
+          id: "p-pending",
+          state: "pending",
+          approvedAt: null,
+          decidedAt: null,
+          via: null,
+          claimedAt: null,
+          facts: null,
+          attempts: 0,
+        },
+        {
+          id: "p-approved",
+          state: "approved",
+          approvedAt: T0,
+          decidedAt: T0,
+          via: "plugin",
+          claimedAt: null,
+          facts: null,
+          attempts: 0,
+        },
+        {
+          id: "p-executing",
+          state: "executing",
+          approvedAt: T0,
+          decidedAt: T0,
+          via: "plugin",
+          claimedAt: T0,
+          facts: "{}",
+          attempts: 1,
+        },
+      ].map((row, index) => ({
+        ...row,
+        subject: `s${index}`,
+        hash: sha256(row.id),
+        dedupe: `d${index}`,
+        note: `n${index}`,
+        created: T0,
+        expires: at(HOUR),
+      }));
+      for (const row of rows) seed.run(row);
+      const before = old.prepare("SELECT * FROM proposals ORDER BY proposal_id").all();
+
+      applyMigrations(old, REAL_MIGRATIONS_DIR);
+
+      const columns = columnNames(old, "proposals");
+      expect(columns).toContain("decision_proof");
+      for (const column of PHASE6_COLUMNS) expect(columns).toContain(column);
+      const after = old.prepare("SELECT * FROM proposals ORDER BY proposal_id").all() as Record<
+        string,
+        unknown
+      >[];
+      expect(after).toHaveLength(3);
+      for (const [index, row] of after.entries()) {
+        const { decision_proof, ...rest } = row;
+        expect(decision_proof).toBeNull();
+        expect(rest).toEqual(before[index]);
+      }
+      expect(missingTriggers(old)).toEqual([]);
+      expect(
+        (old.prepare("SELECT version FROM schema_version").get() as { version: number }).version,
+      ).toBe(files.length);
+
+      // The upgraded store's own store reads the old rows (proof null) and the trigger guards the column.
+      const upgraded = createApprovalStore(old);
+      expect(upgraded.get("p-approved" as never)?.decisionProof).toBeNull();
+      expect(() =>
+        old
+          .prepare("UPDATE proposals SET decision_proof = ? WHERE proposal_id = 'p-approved'")
+          .run(PROOF),
+      ).toThrow(/decision_proof is written once/);
+    } finally {
+      old.close();
+      rmSync(previousDir, { recursive: true, force: true });
+    }
   });
 });

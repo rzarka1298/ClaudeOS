@@ -77,6 +77,7 @@ const APPROVAL_TRIGGERS = [
   "approval_audit_no_delete",
   "approval_audit_no_replace",
   "approval_audit_no_update",
+  "proposals_decision_proof_write_once",
   "proposals_identity_immutable",
   "proposals_no_delete",
   "proposals_no_replace",

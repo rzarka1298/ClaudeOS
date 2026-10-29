@@ -494,6 +494,11 @@ export const proposals = sqliteTable(
     supersedes: text("supersedes"),
     /** Arithmetic: increments on every state change so a client can discard a stale event. */
     revision: integer("revision").notNull().default(1),
+    /**
+     * Phase 9 (09-16, D-03): the decision proof of an approved row (strict JSON `{ v, mac, presence }`).
+     * Written only by the update that moves a pending row to approved; a trigger refuses any later change.
+     */
+    decisionProof: text("decision_proof"),
   },
   (table) => [
     check(
