@@ -3,6 +3,7 @@ import {
   CLASSIFICATION,
   type Clock,
   type MirrorPort,
+  type PresencePort,
   type ProposalId,
   ProposalIdSchema,
 } from "@ccc/domain";
@@ -51,6 +52,11 @@ export interface ApprovalRuntimeDeps {
   readonly env: NodeJS.ProcessEnv;
   /** The display name of a registered project, or null. Display only. */
   readonly projectName?: (projectId: string) => string | null;
+  /**
+   * Verifies the owner's presence for presence-required approvals (D-01). Absent, the engine's
+   * default answers `unavailable`, so every such approval fails closed. The real helper adapter is wired by 09-18.
+   */
+  readonly presence?: PresencePort;
   /** Replaces the vault mirror (tests only). */
   readonly mirror?: MirrorPort;
   /** Replaces the sweeper's timers (tests only). */
@@ -140,6 +146,7 @@ export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntim
     mirror,
     log,
     ...(projectName === undefined ? {} : { projectName }),
+    ...(deps.presence === undefined ? {} : { presence: deps.presence }),
   });
   const sweeper = createExpirySweeper({
     engine,

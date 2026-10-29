@@ -250,3 +250,33 @@ describe("the store is not held across the prompt (D-01, T-09-28)", () => {
     expect(h.store.calls.filter((call) => call === "decide")).toHaveLength(1);
   });
 });
+
+describe("no client claim changes a gated decision (D-03, T-09-25)", () => {
+  it("answers presence-unavailable and leaves the request pending whatever the hint says, a forged presence included", async () => {
+    for (const hint of ["plugin", "other", "presence", "Presence", undefined, "x"]) {
+      const h = presenceHarness();
+      const id = h.propose({ operation: WRITE, subject: "w" });
+      const response = await h.engine.decide({
+        proposalId: id,
+        decision: "approve",
+        payloadHash: hashOf(h, id),
+        channelHint: hint as never,
+      });
+      expect(response, String(hint)).toEqual({ outcome: "presence-unavailable" });
+      expect(stored(h, id).state).toBe("pending");
+      expect(stored(h, id).decidedVia).toBeNull();
+    }
+  });
+
+  it("records a forged presence hint as other on an operation that needs none", async () => {
+    const h = presenceHarness();
+    const id = h.propose({ subject: "d" });
+    await h.engine.decide({
+      proposalId: id,
+      decision: "approve",
+      payloadHash: hashOf(h, id),
+      channelHint: "presence" as never,
+    });
+    expect(stored(h, id).decidedVia).toBe("other");
+  });
+});

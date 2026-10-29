@@ -20,6 +20,7 @@ import {
   DecideRequestSchema,
   type DecideResponse,
   DecideResponseSchema,
+  PRESENCE_PROMPT_TIMEOUT_MS,
 } from "@ccc/domain";
 import type { SocketApiClient } from "./socket-api-client.js";
 import { SocketUnreachableError } from "./socket-api-client.js";
@@ -34,6 +35,14 @@ import { SocketUnreachableError } from "./socket-api-client.js";
  * The value exports of this package pull in Node HTTP, so the plugin receives
  * these functions by injection and never imports them from view code.
  */
+
+/**
+ * How long a decide call may wait (APPR-11, research Pitfall 7). A presence-required approve can sit
+ * at the owner's Touch ID or password prompt for up to {@link PRESENCE_PROMPT_TIMEOUT_MS}; ten more
+ * seconds cover the engine's own work after it, so the plugin never reports a timeout while the
+ * prompt is still up and the service has not yet answered.
+ */
+export const APPROVAL_DECIDE_CLIENT_TIMEOUT_MS = PRESENCE_PROMPT_TIMEOUT_MS + 10_000;
 
 /** Every failure this client can report: the server's closed codes plus the three transport-side ones. */
 export type ApprovalClientErrorCode =
@@ -102,6 +111,7 @@ async function requestApproval<T>(
   body: unknown,
   schema: ResponseParser<T>,
   headers?: Record<string, string>,
+  timeoutMs?: number,
 ): Promise<T> {
   let res: { status: number; body: unknown };
   try {
@@ -110,6 +120,7 @@ async function requestApproval<T>(
       path,
       ...(body === undefined ? {} : { body }),
       ...(headers === undefined ? {} : { headers }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
     });
   } catch (error) {
     if (error instanceof SocketUnreachableError) {
@@ -160,8 +171,9 @@ export function createApprovalsClient(client: SocketApiClient): ApprovalsClient 
         APPROVAL_DECIDE_PATH,
         outgoing(DecideRequestSchema, input),
         DecideResponseSchema,
-        // A hint for the audit trail, never an authority (D-47).
+        // A hint for the audit trail on ungated operations, never an authority (D-03).
         { [DECIDED_VIA_HEADER]: DECIDED_VIA_PLUGIN },
+        APPROVAL_DECIDE_CLIENT_TIMEOUT_MS,
       ),
     test: async (request) =>
       requestApproval(

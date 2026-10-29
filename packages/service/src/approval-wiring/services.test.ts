@@ -11,14 +11,21 @@ import type {
   ServiceEventType,
 } from "@ccc/domain";
 import { applyMigrations, type OperationalStore, openStore } from "@ccc/operational-store";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import * as approvalEntry from "../approval/index.js";
 import {
   type ApprovalRuntimeDeps,
   resolveSweepIntervalMs,
   resolveTestLifetimeMs,
   startApprovalServices,
 } from "./services.js";
+
+// Passes every call through to the real engine, and records what it was built from.
+vi.mock("../approval/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../approval/index.js")>();
+  return { ...actual, createApprovalEngine: vi.fn(actual.createApprovalEngine) };
+});
 
 let base: string;
 let store: OperationalStore;
@@ -499,5 +506,32 @@ describe("the guarded test-lifetime override (Task 3, Test 5)", () => {
       15 * 60 * 1000,
     );
     await runtime.stop();
+  });
+});
+
+describe("the presence port (09-14, Test 3)", () => {
+  const engineDeps = () =>
+    vi.mocked(approvalEntry.createApprovalEngine).mock.calls.at(-1)?.[0] as
+      | { presence?: unknown }
+      | undefined;
+
+  it("hands an optional presence port to the engine", () => {
+    const port = {
+      async prove() {
+        return { kind: "denied" } as const;
+      },
+      async availability() {
+        return "available" as const;
+      },
+    };
+    const runtime = startApprovalServices({ ...baseDeps(fakeOperations()), presence: port });
+    expect(engineDeps()?.presence).toBe(port);
+    void runtime.stop();
+  });
+
+  it("builds the engine with no port when none is given, so the engine's unavailable default stands", () => {
+    const runtime = startApprovalServices(baseDeps(fakeOperations()));
+    expect(engineDeps()).not.toHaveProperty("presence");
+    void runtime.stop();
   });
 });

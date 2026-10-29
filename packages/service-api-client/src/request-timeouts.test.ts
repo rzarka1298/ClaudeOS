@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,9 +7,11 @@ import {
   LAUNCHER_SAVE_VALIDATION_CAP_MS,
   LAUNCHER_TEST_AUTOMATION_CAP_MS,
   newScanRootId,
+  PRESENCE_PROMPT_TIMEOUT_MS,
   type ScanStateResponse,
 } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
+import { APPROVAL_DECIDE_CLIENT_TIMEOUT_MS, createApprovalsClient } from "./approvals-client.js";
 import {
   addScanRoot,
   detectLaunchers,
@@ -216,5 +218,37 @@ describe("testLauncher's client budget for the codex id (plan 05.1-31)", () => {
       LAUNCHER_TEST_CLIENT_TIMEOUT_MS,
       LAUNCHER_TEST_CLIENT_TIMEOUT_MS,
     ]);
+  });
+});
+
+describe("the approval decide budget (09-14, Test 4)", () => {
+  it("exceeds the presence prompt ceiling by ten seconds and is what decide passes as its timeout", async () => {
+    expect(APPROVAL_DECIDE_CLIENT_TIMEOUT_MS).toBe(PRESENCE_PROMPT_TIMEOUT_MS + 10_000);
+    expect(APPROVAL_DECIDE_CLIENT_TIMEOUT_MS).toBeGreaterThan(PRESENCE_PROMPT_TIMEOUT_MS);
+    const { client, seen } = recordingClient({ outcome: "not-found" });
+    await createApprovalsClient(client).decide({
+      proposalId: "0mfk1a2b3c4d5e6f7a8b9c001",
+      decision: "approve",
+      payloadHash: "ab12".repeat(16),
+    });
+    expect(seen[0]?.timeoutMs).toBe(APPROVAL_DECIDE_CLIENT_TIMEOUT_MS);
+  });
+
+  it("keeps the other approval calls on the client default", async () => {
+    const { client, seen } = recordingClient({ outcome: "proposed", proposalId: "x".repeat(25) });
+    await createApprovalsClient(client)
+      .test()
+      .catch(() => undefined);
+    expect(seen[0]?.timeoutMs).toBeUndefined();
+  });
+
+  it("agrees with the helper's own ceiling in scripts/presence/ccc-presence.m (kProveCeilingSeconds)", () => {
+    const source = readFileSync(
+      new URL("../../../scripts/presence/ccc-presence.m", import.meta.url),
+      "utf8",
+    );
+    const match = /kProveCeilingSeconds\s*=\s*(\d+)\s*;/.exec(source);
+    expect(match, "kProveCeilingSeconds not found in the helper source").not.toBeNull();
+    expect(Number(match?.[1]) * 1000).toBe(PRESENCE_PROMPT_TIMEOUT_MS);
   });
 });
