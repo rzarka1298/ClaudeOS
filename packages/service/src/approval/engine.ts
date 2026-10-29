@@ -1073,23 +1073,29 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   ): Promise<StoredProposal | null> {
     // The request stays approved; startup recovery picks it up on the next boot.
     if (stopping) return null;
-    // A row whose proof is missing, malformed or not its own is never started (R-05): claimed so it
-    // can be finished, and failed, never silently repaired.
-    const verdict = await proofVerifies(approved);
-    if (verdict === "invalid") {
-      refuseUnproved(approved);
-      return null;
-    }
-    if (verdict === "pin-unavailable") {
-      // Sound, but the pin could not be read now (09-FIX9): the owner's approval stands. The row stays approved
-      // and the next recovery tries again; it lapses in time like any approval nobody carried out.
-      log.warn({ proposalId: approved.proposalId, code: "approval-proof-pin-unavailable" });
-      return null;
-    }
-    // The pin read above took time; a shutdown that began meanwhile leaves the row approved for the next boot.
-    if (stopping) return null;
+    // Another caller (a concurrent recovery, say) is already carrying this row through the claim: leave it to
+    // them. The mark is set BEFORE the awaited pin read below, so a second caller cannot slip in during it
+    // (09-FIX9) and this caller can only ever release a mark it set itself.
+    if (active.has(approved.proposalId)) return null;
     active.add(approved.proposalId);
+    // Once the attempt has started, `startAttempt` owns the mark and clears it when the run ends.
+    let handedOver = false;
     try {
+      // A row whose proof is missing, malformed or not its own is never started (R-05): claimed so it
+      // can be finished, and failed, never silently repaired.
+      const verdict = await proofVerifies(approved);
+      if (verdict === "invalid") {
+        refuseUnproved(approved);
+        return null;
+      }
+      if (verdict === "pin-unavailable") {
+        // Sound, but the pin could not be read now (09-FIX9): the owner's approval stands. The row stays
+        // approved and the next recovery tries again; it lapses in time like any approval nobody carried out.
+        log.warn({ proposalId: approved.proposalId, code: "approval-proof-pin-unavailable" });
+        return null;
+      }
+      // The pin read above took time; a shutdown that began meanwhile leaves the row approved for the next boot.
+      if (stopping) return null;
       let facts: ClaimFacts = {};
       if (definition.claimFacts !== undefined) {
         const parsed = parseStoredPayload(definition, approved.payloadJson);
@@ -1105,21 +1111,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
           }
         }
       }
-      if (stopping) {
-        active.delete(approved.proposalId);
-        return null;
-      }
+      if (stopping) return null;
       const claim = store.claim(approved.proposalId, facts, clock.now());
-      if (claim.kind === "lost") {
-        active.delete(approved.proposalId);
-        return null;
-      }
+      if (claim.kind === "lost") return null;
       announce(claim.proposal);
+      handedOver = true;
       startAttempt(claim.proposal);
       return claim.proposal;
-    } catch (error) {
-      active.delete(approved.proposalId);
-      throw error;
+    } finally {
+      if (!handedOver) active.delete(approved.proposalId);
     }
   }
 

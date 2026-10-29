@@ -1285,6 +1285,43 @@ describe("presence-required rows at recovery and the claim (09-18 Task 2)", () =
     expect(stateOf(h, proved)).toBe("executed");
   });
 
+  it("Test 6 (09-FIX9): the row is marked active before the awaited pin read, so a concurrent recovery does not enter a second claim", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { h, write } = writeHarness(async () => {
+      await gate;
+      return TEST_PIN;
+    });
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    approveWrite(h, id, (row, now) => presenceProof(row, now));
+
+    const first = h.engine.recover();
+    const second = h.engine.recover();
+    // Let both recoveries reach their pin reads, then let the pin come.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    release();
+    await Promise.all([first, second]);
+    await h.engine.settled();
+
+    expect(h.store.calls.filter((call) => call === "claim")).toHaveLength(1);
+    expect(write.executeCalls).toHaveLength(1);
+    expect(stateOf(h, id)).toBe("executed");
+  });
+
+  it("Test 6b (09-FIX9): a refused or pin-unavailable claim releases the row, so a later recovery can still take it", async () => {
+    let pin: string | null = null;
+    const { h, write } = writeHarness(async () => pin);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    approveWrite(h, id, (row, now) => presenceProof(row, now));
+    await h.engine.recover();
+    pin = TEST_PIN;
+    await h.engine.recover();
+    await h.engine.settled();
+    expect(write.executeCalls).toHaveLength(1);
+  });
+
   it("Test 5: the pin is read only for presence-required rows, never for a MAC-only one", async () => {
     let reads = 0;
     const { h } = writeHarness(async () => {
