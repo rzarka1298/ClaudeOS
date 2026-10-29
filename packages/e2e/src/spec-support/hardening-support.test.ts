@@ -505,7 +505,7 @@ describe("rendererReadBanner and checkBannerDisplayPath (Task 2, item 4)", () =>
   it("fails an absolute path, the home folder, the run root, a missing display path and a live banner", () => {
     expect(
       checkBannerDisplayPath(
-        read("Disconnected — connect ENOENT /Users/USERNAME/.claude-command-center/service.sock"),
+        read("Disconnected — connect ENOENT /Users/USERNAME/run/service.sock"),
         forbidden,
       ).join(" "),
     ).toMatch(/\/Users\//);

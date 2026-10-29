@@ -54,7 +54,7 @@ export interface EvidenceEntry {
 export interface PhaseEvidence {
   readonly phase: string;
   readonly entries: readonly EvidenceEntry[];
-  /** Phases 07 and 08 are walked in the owner's last sitting; pending is expected, not a failure. */
+  /** Phases 07, 08 and 09 are walked in the owner's last sitting; pending is expected, not a failure. */
   readonly pendingAllowed: boolean;
 }
 
@@ -95,7 +95,16 @@ export const PHASE_EVIDENCE: readonly PhaseEvidence[] = [
   },
   { phase: "07", entries: [script("07")], pendingAllowed: true },
   { phase: "08", entries: [script("08")], pendingAllowed: true },
+  // Phase 9 (plan 09-21, D-17) belongs to milestone 1: its owner items are walked at the phase-end
+  // sitting, so pending is expected until they are recorded.
+  { phase: "09", entries: [script("09")], pendingAllowed: true },
 ];
+
+/**
+ * Phases whose own script is the audit's subject while it is being walked: a `status: testing`
+ * front matter with pending items is expected for these and a defect for every other phase.
+ */
+const WALKED_PHASES: ReadonlySet<string> = new Set(["08", "09"]);
 
 // --- results --------------------------------------------------------------------------------
 
@@ -155,7 +164,7 @@ export interface AuditInput {
   readonly only?: readonly string[] | undefined;
   /**
    * The item count each phase's script must have. Defaults to the spec map's count for phases 06,
-   * 07 and 08 (FIX1B B-M2 b); tests with miniature fixtures override it.
+   * 07, 08 and 09 (FIX1B B-M2 b); tests with miniature fixtures override it.
    */
   readonly expectedItems?: Readonly<Record<string, number>> | undefined;
 }
@@ -272,9 +281,9 @@ function scriptAdapter(context: AdapterContext): AdapterOutput {
     out.defects.push("the front matter says complete but items are still pending");
   } else if (!declaredComplete && out.pending === 0 && out.issues === 0) {
     out.defects.push("every item is recorded but the front matter does not say complete");
-  } else if (status === "testing" && out.pending > 0 && context.phase !== "08") {
-    // Phase 8's own script is the audit's subject; every other phase still saying testing is a
-    // defect in that phase's file (research B 4.2).
+  } else if (status === "testing" && out.pending > 0 && !WALKED_PHASES.has(context.phase)) {
+    // Phase 8's and Phase 9's own scripts are the audit's subject; every other phase still saying
+    // testing is a defect in that phase's file (research B 4.2).
     out.defects.push("the front matter still says status: testing; the live walk has not happened");
   }
   return out;
@@ -670,7 +679,7 @@ function isAccepted(value: string | undefined): boolean {
 
 /**
  * The exit rule (D-29). Not strict: every phase `recorded` or `recorded-with-exceptions`, and only
- * 07 and 08 may be `pending-live-uat`. Strict (milestone close) also fails on 07 or 08 pending and
+ * 07, 08 and 09 may be `pending-live-uat`. Strict (milestone close) also fails on any of them pending and
  * on any exception without an acceptance date.
  */
 export function problemsOf(

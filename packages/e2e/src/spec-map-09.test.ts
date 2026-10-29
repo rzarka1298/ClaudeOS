@@ -140,3 +140,102 @@ describe("every hardening spec title belongs to an automated Phase 9 item (Task 
     }
   });
 });
+
+describe("the Phase 9 owner items (Task 3, Tests 1 and 2)", () => {
+  const owners = UAT_ITEM_PLAN_09.filter((item) => item.runClass === "owner");
+
+  it("plans 8 automated items and owner items 9 to 19, each real-session except the decision at 18", () => {
+    expect(UAT_ITEM_PLAN_09).toHaveLength(19);
+    expect(UAT_ITEM_PLAN_09.filter((item) => item.runClass === "auto")).toHaveLength(8);
+    expect(UAT_ITEM_PLAN_09.filter((item) => item.runClass === "auto+look")).toHaveLength(0);
+    expect(owners.map((item) => item.number)).toEqual([9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+    expect(owners.map((item) => item.ownerWhy)).toEqual([
+      "real-session",
+      "real-session",
+      "real-session",
+      "real-session",
+      "real-session",
+      "real-session",
+      "real-session",
+      "real-session",
+      "real-session",
+      "decision",
+      "real-session",
+    ]);
+    for (const item of owners) {
+      expect(item.specFile, `spec ${item.number}`).toBeNull();
+      expect(item.autoPart, `auto-part ${item.number}`).toBeNull();
+      expect(item.via, `via ${item.number}`).toEqual([]);
+    }
+  });
+});
+
+run("the Phase 9 owner items in 09-UAT.md (Task 3, Test 2)", () => {
+  const text = planned ? readFileSync(scriptPath(), "utf8") : "";
+  const parsed = parseUatScript(text);
+  /** The whole block of one item, tags and expected text. */
+  const block = (number: number): string => {
+    const start = text.indexOf(`### ${number}. `);
+    const next = text.indexOf("\n### ", start + 1);
+    const end = next === -1 ? text.indexOf("\n## ", start + 1) : next;
+    return text.slice(start, end === -1 ? undefined : end);
+  };
+
+  it("states the tally of the plan", () => {
+    expect(text).toContain("Tally by tag: auto 8 · auto+look 0 · owner 11 · total 19");
+    expect(parsed.items).toHaveLength(19);
+  });
+
+  it("tags items 9 to 19 run: owner with the plan's owner-why, and none has a spec", () => {
+    for (const item of UAT_ITEM_PLAN_09.filter((entry) => entry.runClass === "owner")) {
+      const read = parsed.items.find((candidate) => candidate.number === item.number);
+      expect(read?.runValue, `run ${item.number}`).toBe("owner");
+      expect(read?.ownerWhy, `owner-why ${item.number}`).toBe(item.ownerWhy);
+      expect(read?.spec, `spec ${item.number}`).toBeNull();
+    }
+  });
+
+  it("item 9 names try-prompt, Cancel giving refused, the gesture giving verified, and Available after Run checks again", () => {
+    const item = block(9);
+    expect(item).toContain("node scripts/presence/try-prompt.mjs");
+    expect(item).toMatch(/Cancel[^\n]*refused/);
+    expect(item).toMatch(/verified/);
+    expect(item).toMatch(/Available/);
+    expect(item).toContain("Run checks again");
+  });
+
+  it("item 10 names the install three times, no Bootstrap failed: 5, one job via launchctl print, and the service answering", () => {
+    const item = block(10);
+    expect(item).toContain("pnpm run service:install");
+    expect(item).toMatch(/three times/);
+    expect(item).toContain("Bootstrap failed: 5");
+    expect(item).toContain("launchctl print");
+    expect(item).toMatch(/Running/);
+  });
+
+  it("covers the other owner-only checks the wave reviews recorded", () => {
+    expect(block(11)).toMatch(/one (Touch ID|prompt)/i);
+    expect(block(11)).toContain("WARNING");
+    expect(block(11)).toContain("service:uninstall");
+    expect(block(12)).toContain("sh scripts/presence/test-custody.sh");
+    expect(block(13)).toContain("pnpm run presence:build");
+    expect(block(14)).toContain("presence-pin-adopted");
+    expect(block(14)).toContain("presence-pin-marker-ignored");
+    expect(block(14)).toMatch(/10 minutes|ten minutes/);
+    expect(block(15)).toContain("presence-pin-changed");
+    expect(block(16)).toMatch(/Unknown/);
+    expect(block(16)).toMatch(/fingerprint/i);
+    expect(block(17)).toMatch(/pending/);
+    expect(block(17)).toMatch(/09-18/);
+    expect(block(18)).toContain("attr_delete_prompts");
+    expect(block(18)).toContain("verdict_sc2");
+    expect(block(19)).toMatch(/shadow/i);
+    expect(block(19)).toContain("list-keychains");
+  });
+
+  it("leaves every owner result [pending] and uses only the USERNAME placeholder for home paths", () => {
+    for (const item of parsed.items)
+      expect(item.resultValue, `result ${item.number}`).toBe("[pending]");
+    expect(text).not.toMatch(/\/Users\/(?!USERNAME\b)[A-Za-z0-9._$<>-]/);
+  });
+});

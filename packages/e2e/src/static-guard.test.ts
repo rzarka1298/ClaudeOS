@@ -47,6 +47,13 @@ const LIVE_SOCKET_REFUSAL_FILES = [
   "src/vault-plugin-data.test.ts",
 ];
 
+/**
+ * Files that only READ the text of the Phase 9 UAT script to pin what its owner items tell the owner
+ * to run (09-21: the install, uninstall and launchd commands appear as quoted steps). They spawn
+ * nothing and touch no service; the agent-run gates stay exact paths, never substring matches.
+ */
+const UAT_SCRIPT_TEXT_READERS = ["src/spec-map-09.test.ts"];
+
 interface LineRule {
   id: string;
   pattern: RegExp;
@@ -58,8 +65,13 @@ const LINE_RULES: LineRule[] = [
     id: "owner-service-lifecycle-script",
     pattern:
       /dev:service|service:install|service:uninstall|service:restart|launchagent\/(install|uninstall|restart)/i,
+    allowedFiles: UAT_SCRIPT_TEXT_READERS,
   },
-  { id: "launchctl", pattern: /launchctl|Library\/LaunchAgents/i },
+  {
+    id: "launchctl",
+    pattern: /launchctl|Library\/LaunchAgents/i,
+    allowedFiles: UAT_SCRIPT_TEXT_READERS,
+  },
   {
     id: "owner-runtime-or-claude-path",
     pattern: /\.claude-command-center|["'`/]\.claude(["'`/]|$)/,
