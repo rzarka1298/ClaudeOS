@@ -26,6 +26,7 @@ import {
   PROPOSAL_STATES,
   type ProposalId,
   type ProposalState,
+  presenceRefusalIsRecordable,
   REQUESTER_KINDS,
   type RequesterKind,
   RequesterSchema,
@@ -408,10 +409,22 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
        AND state IN ('denied', 'expired', 'withdrawn', 'lapsed', 'executed', 'failed', 'unknown')
        AND COALESCE(finished_at, decided_at, created_at) < ?`,
   );
+  // The owner's history: the first row (`requested`) always, then the newest rows up to the limit, so a
+  // run of refusals can never push the request itself out of view (09-FIX6A, M1).
   const selectAudit = db.prepare(
-    `SELECT event, at, detail FROM (
-       SELECT seq, event, at, detail FROM approval_audit WHERE proposal_id = ? ORDER BY seq DESC LIMIT ?
-     ) ORDER BY seq ASC`,
+    `SELECT event, at, detail FROM approval_audit
+     WHERE proposal_id = @proposalId
+       AND (seq = (SELECT MIN(seq) FROM approval_audit WHERE proposal_id = @proposalId)
+            OR seq IN (SELECT seq FROM approval_audit WHERE proposal_id = @proposalId
+                       ORDER BY seq DESC LIMIT @tail))
+     ORDER BY seq ASC`,
+  );
+  /** A proposal's refusal rows so far, and when the latest one with `detail` was written. */
+  const selectRefusalHistory = db.prepare(
+    `SELECT COUNT(*) AS total,
+            (SELECT MAX(at) FROM approval_audit
+              WHERE proposal_id = @proposalId AND event = 'presence-refused' AND detail = @detail) AS last
+     FROM approval_audit WHERE proposal_id = @proposalId AND event = 'presence-refused'`,
   );
 
   /** Runs `fn` as one write transaction taken up front, so two connections racing a read-then-write queue instead of failing. */
@@ -529,19 +542,36 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     return approve ? { kind: "approved", proposal } : { kind: "denied", proposal };
   });
 
-  const refusalTx = immediate((input: DecisionRefusalInput): "recorded" | "not-pending" => {
-    const row = readRow(input.proposalId);
-    if (row?.state !== "pending") return "not-pending";
-    writeAudit(
-      row.proposal_id,
-      "presence-refused",
-      input.at,
-      null,
-      input.payloadHash,
-      input.detail,
-    );
-    return "recorded";
-  });
+  const refusalTx = immediate(
+    (input: DecisionRefusalInput): "recorded" | "suppressed" | "not-pending" => {
+      const row = readRow(input.proposalId);
+      if (row?.state !== "pending") return "not-pending";
+      const history = selectRefusalHistory.get({
+        proposalId: row.proposal_id,
+        detail: input.detail,
+      }) as {
+        total: number;
+        last: string | null;
+      };
+      if (
+        !presenceRefusalIsRecordable(
+          { total: history.total, lastSameReasonAt: history.last },
+          input.at,
+        )
+      ) {
+        return "suppressed";
+      }
+      writeAudit(
+        row.proposal_id,
+        "presence-refused",
+        input.at,
+        null,
+        input.payloadHash,
+        input.detail,
+      );
+      return "recorded";
+    },
+  );
 
   const claimTx = immediate((proposalId: ProposalId, facts: string, now: string): ClaimResult => {
     const changed = claimOne.run({ proposalId, facts, now });
@@ -689,7 +719,7 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
       }
       return decideTx(input);
     },
-    recordDecisionRefusal(input: DecisionRefusalInput): "recorded" | "not-pending" {
+    recordDecisionRefusal(input: DecisionRefusalInput): "recorded" | "suppressed" | "not-pending" {
       assertProposalId(input.proposalId, "proposalId");
       assertIso(input.at, "at");
       if (typeof input.payloadHash !== "string") throw new InvalidApprovalInputError("payloadHash");
@@ -769,7 +799,7 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     auditFor(proposalId: ProposalId): AuditRow[] {
       assertProposalId(proposalId, "proposalId");
       return (
-        selectAudit.all(proposalId, AUDIT_READ_LIMIT) as {
+        selectAudit.all({ proposalId, tail: AUDIT_READ_LIMIT - 1 }) as {
           event: string;
           at: string;
           detail: string | null;

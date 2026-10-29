@@ -136,3 +136,35 @@ describe("a port's answer is validated, and a stepped-back clock is handled (m2)
     expect((row.decidedAt ?? "") >= (row.approvedAt ?? "z")).toBe(true);
   });
 });
+
+describe("a token-holder looping on a pending request cannot flood the record or the log (M1)", () => {
+  it("writes one refusal row and one warning for fifty refusals at the same instant, and the owner still sees `requested`", async () => {
+    const port = createPresenceFake({ kind: "unavailable" });
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    for (let i = 0; i < 50; i += 1) {
+      expect(await approve(h, id)).toEqual({ outcome: "presence-unavailable" });
+    }
+    const refusals = h.store.auditFor(id).filter((row) => row.event === "presence-refused");
+    expect(refusals).toHaveLength(1);
+    expect(h.store.auditFor(id)[0]?.event).toBe("requested");
+    const warnings = h.log.lines.filter((line) => line.level === "warn");
+    expect(warnings.length).toBeLessThanOrEqual(2);
+  });
+
+  it("holds the row count and the warnings at the cap when the refusals are spaced past the window", async () => {
+    const port = createPresenceFake({ kind: "denied" });
+    const h = presenceHarness(port);
+    // Long-lived row: this test is about the record, not about expiry.
+    const id = h.propose({ operation: WRITE, subject: "w", requestedTtlMs: 60_000 });
+    let rows = 0;
+    for (let i = 0; i < 30 && stored(h, id).state === "pending"; i += 1) {
+      await approve(h, id);
+      h.clock.advance(1_500);
+      rows = h.store.auditFor(id).filter((row) => row.event === "presence-refused").length;
+    }
+    expect(rows).toBeLessThanOrEqual(8);
+    expect(h.store.auditFor(id)[0]?.event).toBe("requested");
+    expect(h.log.lines.filter((l) => l.fields.code === "presence-refused").length).toBe(rows);
+  });
+});

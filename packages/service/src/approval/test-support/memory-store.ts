@@ -24,6 +24,7 @@ import {
   PROPOSAL_TRANSITIONS,
   type ProposalId,
   type ProposalState,
+  presenceRefusalIsRecordable,
   type RetryResult,
   type StoredProposal,
   type SubmitResult,
@@ -286,6 +287,17 @@ export function createMemoryApprovalStore(
       calls.push("recordDecisionRefusal");
       const row = rows.get(input.proposalId);
       if (row?.state !== "pending") return "not-pending";
+      const refusals = (audit.get(input.proposalId) ?? []).filter(
+        (entry) => entry.event === "presence-refused",
+      );
+      const sameReason = refusals.filter((entry) => entry.code === input.detail);
+      const lastSameReasonAt = sameReason.reduce<string | null>(
+        (latest, entry) => (latest === null || entry.at > latest ? entry.at : latest),
+        null,
+      );
+      if (!presenceRefusalIsRecordable({ total: refusals.length, lastSameReasonAt }, input.at)) {
+        return "suppressed";
+      }
       writeAudit(input.proposalId, "presence-refused", input.at, input.detail);
       return "recorded";
     },
@@ -409,7 +421,10 @@ export function createMemoryApprovalStore(
 
     auditFor(proposalId: ProposalId) {
       calls.push("auditFor");
-      return (audit.get(proposalId) ?? []).slice(-20).map((entry) => ({ ...entry }));
+      // Mirrors the SQL store: the first row (`requested`) always, then the newest rows up to the limit.
+      const rows = audit.get(proposalId) ?? [];
+      const kept = rows.length <= 20 ? rows : [rows[0], ...rows.slice(-19)];
+      return kept.flatMap((entry) => (entry === undefined ? [] : [{ ...entry }]));
     },
   };
   return store;

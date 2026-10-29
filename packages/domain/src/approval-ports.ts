@@ -173,9 +173,11 @@ export interface ApprovalStorePort {
   /**
    * Puts a refused presence-required approve on the record: one `presence-refused` audit row with the
    * refusal as its detail, no state or revision change. `not-pending` (and nothing written) when the
-   * request is no longer pending.
+   * request is no longer pending; `suppressed` (nothing written) when the refusal repeats one already
+   * on the record inside the window or the proposal's refusal rows are at their cap, so a caller
+   * looping on a pending request cannot grow the append-only trail (see `presenceRefusalIsRecordable`).
    */
-  recordDecisionRefusal(input: DecisionRefusalInput): "recorded" | "not-pending";
+  recordDecisionRefusal(input: DecisionRefusalInput): "recorded" | "suppressed" | "not-pending";
   /** `approved` to `executing`: the single-use claim, recording the facts gathered beforehand. */
   claim(proposalId: ProposalId, facts: ClaimFacts, now: string): ClaimResult;
   /** The one retry after a restart: attempt 2, with the same idempotency key. */

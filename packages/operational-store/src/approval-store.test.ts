@@ -10,6 +10,8 @@ import {
   newNoteId,
   newProposalId,
   type PendingCaps,
+  PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL,
+  PRESENCE_REFUSAL_AUDIT_WINDOW_MS,
   type ProposalState,
 } from "@ccc/domain";
 import Database from "better-sqlite3";
@@ -407,6 +409,80 @@ describe("recordDecisionRefusal (09-14, Test 1)", () => {
       store.recordDecisionRefusal({ ...base, at: "yesterday", detail: "presence-denied" }),
     ).toThrow();
     expect(auditEvents(proposal.proposalId)).toEqual(["requested"]);
+  });
+});
+
+describe("the refusal record is bounded (09-FIX6A, M1)", () => {
+  function refuse(
+    proposal: NewProposal,
+    offsetMs: number,
+    detail: "presence-denied" | "presence-unavailable" = "presence-unavailable",
+  ) {
+    return store.recordDecisionRefusal({
+      proposalId: proposal.proposalId,
+      at: at(offsetMs),
+      payloadHash: proposal.payloadHash,
+      detail,
+    });
+  }
+  const refusalRows = (proposal: NewProposal) =>
+    auditRows(proposal.proposalId).filter((row) => row.event === "presence-refused");
+
+  it("collapses a flood of the same refusal inside the window to one row, and says it did", () => {
+    const proposal = submitPending();
+    expect(refuse(proposal, 1_000)).toBe("recorded");
+    for (let i = 0; i < 5_000; i += 1) {
+      expect(refuse(proposal, 1_000 + (i % 50_000))).toBe("suppressed");
+    }
+    expect(refusalRows(proposal)).toHaveLength(1);
+    expect(auditEvents(proposal.proposalId)).toEqual(["requested", "presence-refused"]);
+  });
+
+  it("records a different reason inside the window, and the same reason again once the window has passed", () => {
+    const proposal = submitPending();
+    expect(refuse(proposal, 1_000)).toBe("recorded");
+    expect(refuse(proposal, 2_000, "presence-denied")).toBe("recorded");
+    expect(refuse(proposal, 3_000)).toBe("suppressed");
+    expect(refuse(proposal, 1_000 + PRESENCE_REFUSAL_AUDIT_WINDOW_MS)).toBe("recorded");
+    expect(refusalRows(proposal)).toHaveLength(3);
+  });
+
+  it("holds a hard cap per proposal however slowly a token-holder keeps refusing", () => {
+    expect(PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL).toBeGreaterThan(0);
+    expect(PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL).toBeLessThan(15);
+    const proposal = submitPending();
+    const results: string[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      results.push(refuse(proposal, 1_000 + i * (PRESENCE_REFUSAL_AUDIT_WINDOW_MS + 1_000)));
+    }
+    expect(refusalRows(proposal)).toHaveLength(PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL);
+    expect(results.filter((r) => r === "recorded")).toHaveLength(
+      PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL,
+    );
+    expect(results.at(-1)).toBe("suppressed");
+  });
+
+  it("keeps the requested row first in the owner's history after 25 or more refusals", () => {
+    const proposal = submitPending();
+    for (let i = 0; i < 30; i += 1) {
+      refuse(proposal, 1_000 + i * (PRESENCE_REFUSAL_AUDIT_WINDOW_MS + 1_000));
+    }
+    const history = store.auditFor(proposal.proposalId);
+    expect(history[0]?.event).toBe("requested");
+    expect(history.length).toBeLessThanOrEqual(20);
+  });
+
+  it("keeps the requested row when the raw rows exceed the read limit, and the newest rows after it", () => {
+    const proposal = submitPending();
+    const insert = db.prepare(
+      "INSERT INTO approval_audit (proposal_id, event, at, decided_via, payload_hash, detail) VALUES (?, 'presence-refused', ?, NULL, ?, 'presence-unavailable')",
+    );
+    for (let i = 0; i < 40; i += 1)
+      insert.run(proposal.proposalId, at(i * 1_000), proposal.payloadHash);
+    const history = store.auditFor(proposal.proposalId);
+    expect(history[0]?.event).toBe("requested");
+    expect(history).toHaveLength(20);
+    expect(history.at(-1)?.at).toBe(at(39 * 1_000));
   });
 });
 
@@ -1935,7 +2011,7 @@ describe("auditFor (Test 8)", () => {
     expect(store.auditFor(newProposalId())).toEqual([]);
   });
 
-  it("is bounded to twenty events, keeping the newest", () => {
+  it("is bounded to twenty events: the requested row, then the newest nineteen (09-FIX6A)", () => {
     const proposal = submitPending();
     for (let i = 0; i < 25; i++) {
       db.prepare(
@@ -1945,7 +2021,8 @@ describe("auditFor (Test 8)", () => {
     const rows = store.auditFor(proposal.proposalId);
     expect(rows).toHaveLength(20);
     expect(rows.at(-1)?.code).toBe("n24");
-    expect(rows[0]?.code).toBe("n5");
+    expect(rows[0]?.event).toBe("requested");
+    expect(rows[1]?.code).toBe("n6");
   });
 
   it("throws on a stored event outside the audit vocabulary", () => {

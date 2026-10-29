@@ -490,6 +490,29 @@ export function fitApprovalsSnapshotToBudget(
  */
 export const PRESENCE_PROMPT_TIMEOUT_MS = 60_000;
 
+/**
+ * How a presence refusal reaches the append-only audit trail without becoming a way to flood it
+ * (09-FIX6A, M1): at most one row per proposal per reason per window, and at most a fixed number of
+ * refusal rows per proposal whatever the spacing. A suppressed refusal still gets its answer; it just
+ * adds no row. Both stores apply {@link presenceRefusalIsRecordable}, so they cannot drift.
+ */
+export const PRESENCE_REFUSAL_AUDIT_WINDOW_MS = 60_000;
+export const PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL = 8;
+
+/**
+ * True when a presence refusal at `at` should get an audit row, given the proposal's refusal history:
+ * how many refusal rows it already has and when the latest one with the SAME reason was written.
+ * A refusal whose time is earlier than the latest (a stepped-back clock) counts as inside the window.
+ */
+export function presenceRefusalIsRecordable(
+  history: { readonly total: number; readonly lastSameReasonAt: string | null },
+  at: string,
+): boolean {
+  if (history.total >= PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL) return false;
+  if (history.lastSameReasonAt === null) return true;
+  return Date.parse(at) - Date.parse(history.lastSameReasonAt) >= PRESENCE_REFUSAL_AUDIT_WINDOW_MS;
+}
+
 /** Every way a decision can end, as the service reports it. */
 export const APPROVAL_DECIDE_OUTCOMES = [
   "decided",

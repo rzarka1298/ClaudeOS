@@ -745,8 +745,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     const startedAt = Date.parse(askedAt);
     presenceStarts = presenceStarts.filter((started) => startedAt - started < PRESENCE_WINDOW_MS);
     if (presenceStarts.length >= PRESENCE_PROMPTS_PER_MINUTE) {
-      log.warn({ proposalId, code: "presence-rate-limited" });
-      return refuseApprove(current, "presence-unavailable");
+      return refuseApprove(current, "presence-unavailable", "presence-rate-limited");
     }
     presenceStarts.push(startedAt);
 
@@ -792,10 +791,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     );
   }
 
-  /** Puts a refused presence-required approve on the record and answers in the closed vocabulary. */
+  /**
+   * Puts a refused presence-required approve on the record and answers in the closed vocabulary. The
+   * store bounds the record (one row per reason per window, a cap per proposal); this warn is bounded
+   * the same way, by logging only a refusal the store actually recorded (09-FIX6A, M1).
+   */
   function refuseApprove(
     current: StoredProposal,
     detail: "presence-denied" | "presence-unavailable",
+    cause?: "presence-rate-limited",
   ): DecideResponse {
     const proposalId = current.proposalId;
     const recorded = store.recordDecisionRefusal({
@@ -804,7 +808,10 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       payloadHash: current.payloadHash,
       detail,
     });
-    log.warn({ proposalId, code: "presence-refused", detail });
+    if (recorded === "recorded") {
+      if (cause !== undefined) log.warn({ proposalId, code: cause });
+      log.warn({ proposalId, code: "presence-refused", detail });
+    }
     if (recorded === "not-pending") {
       // Decided, expired or withdrawn while the prompt was up: say what happened, not the refusal.
       const now = store.get(proposalId);
