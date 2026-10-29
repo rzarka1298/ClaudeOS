@@ -371,6 +371,7 @@ describe("no notification path (Task 1, Test 7)", () => {
       "projectName",
       "claimFactsTimeoutMs",
       "presence",
+      "readPin",
     ] as const;
     type Unlisted = Exclude<keyof ApprovalEngineDeps, (typeof ALLOWED)[number]>;
     // A new dependency (a notifier, say) makes this assignment a compile error.

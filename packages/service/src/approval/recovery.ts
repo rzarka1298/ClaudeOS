@@ -90,8 +90,11 @@ export interface RecoveryHost {
     definition: RegisteredDefinition,
     stored: StoredProposal,
   ): { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly code: string };
-  /** Whether the row's decision proof verifies under the engine's key (R-05). Never throws. */
-  verifyProof(proposal: StoredProposal): "valid" | "invalid";
+  /**
+   * Whether the row's decision proof verifies under the engine's key and, when its operation needs the owner's
+   * presence, whether its presence signature verifies against the pinned key (R-05, 09-18). Never throws.
+   */
+  verifyProof(proposal: StoredProposal): Promise<"valid" | "invalid">;
   /** Claims an approved request that has no valid proof and finishes it `failed` / `proof-invalid` (warns); true when written. */
   refuseUnproved(approved: StoredProposal): boolean;
   /** Records an executing request's outcome and publishes it. */
@@ -158,7 +161,7 @@ export function createRecovery(host: RecoveryHost): Recovery {
     // R-05: checked FIRST, before the registry and payload checks, so a forged row for a reserved or
     // unregistered operation, or with a bad payload, is still counted and warned. An executing row rides
     // the idempotent retry path, so nothing is asked of the operation; an effect may have happened: `unknown`.
-    if (host.verifyProof(proposal) !== "valid") {
+    if ((await host.verifyProof(proposal)) !== "valid") {
       log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
       if (host.finish(proposal, unknownDecision("proof-invalid", null)) !== null) {
         counts.proofInvalid += 1;
@@ -234,9 +237,9 @@ export function createRecovery(host: RecoveryHost): Recovery {
     for (const approved of store.listApprovedUnclaimed()) {
       if (host.isActive(approved.proposalId)) continue;
       if (enabledApprovalRow(registry.table, approved.operation) === undefined) {
-        await guarded(approved, () => {
+        await guarded(approved, async () => {
           // The proof comes first here too, so a forged row of a reserved operation is warned and counted.
-          if (host.verifyProof(approved) !== "valid") {
+          if ((await host.verifyProof(approved)) !== "valid") {
             if (host.refuseUnproved(approved)) counts.proofInvalid += 1;
             return;
           }
@@ -251,7 +254,7 @@ export function createRecovery(host: RecoveryHost): Recovery {
       if (definition === undefined) continue;
       await guarded(approved, async () => {
         // R-05: checked here and again inside the engine's claim, so neither entry point can skip it.
-        if (host.verifyProof(approved) !== "valid") {
+        if ((await host.verifyProof(approved)) !== "valid") {
           if (host.refuseUnproved(approved)) counts.proofInvalid += 1;
           return;
         }

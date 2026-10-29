@@ -25,6 +25,7 @@ import {
   deferredPresence,
   PROVED,
   type PresenceFake,
+  TEST_PIN,
 } from "./test-support/presence-fake.js";
 
 const WRITE = "connector.fake-write";
@@ -146,7 +147,9 @@ describe("a port's answer is validated, and a stepped-back clock is handled (m2)
     expect(row.approvedAt).toBe(asked);
     expect((row.decidedAt ?? "") >= (row.approvedAt ?? "z")).toBe(true);
     // The proof covers the instant the owner vouched for, not the clamped clock read (09-FIX8, M5).
-    expect(verifyDecisionProof(TEST_PROOF_KEY, row)).toBe("valid");
+    expect(
+      verifyDecisionProof(TEST_PROOF_KEY, row, { presenceRequired: true, pin: TEST_PIN }),
+    ).toBe("valid");
   });
 });
 

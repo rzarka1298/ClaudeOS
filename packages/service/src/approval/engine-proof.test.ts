@@ -8,7 +8,7 @@ import { verifyDecisionProof } from "./proof.js";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
 import { createHarness, type Harness, TEST_PROOF_KEY } from "./test-support/harness.js";
-import { createPresenceFake } from "./test-support/presence-fake.js";
+import { createPresenceFake, PROVED, TEST_PIN } from "./test-support/presence-fake.js";
 
 const WRITE = "connector.fake-write";
 
@@ -43,9 +43,13 @@ describe("the engine signs approvals (09-17 Task 1)", () => {
 
     const row = stored(h, approved);
     expect(row.decisionProof).toEqual(expect.any(String));
-    expect(verifyDecisionProof(TEST_PROOF_KEY, row)).toBe("valid");
+    expect(verifyDecisionProof(TEST_PROOF_KEY, row, { presenceRequired: false, pin: null })).toBe(
+      "valid",
+    );
     // Another key does not verify it.
-    expect(verifyDecisionProof(Buffer.alloc(32, 9), row)).toBe("invalid");
+    expect(
+      verifyDecisionProof(Buffer.alloc(32, 9), row, { presenceRequired: false, pin: null }),
+    ).toBe("invalid");
     expect(stored(h, denied).decisionProof ?? null).toBeNull();
   });
 
@@ -65,7 +69,7 @@ describe("the engine signs approvals (09-17 Task 1)", () => {
     const id = h.propose({ operation: WRITE, subject: "w" });
     port.script(async () => {
       h.clock.advance(10_000);
-      return { kind: "proved", scheme: "none", signature: null };
+      return PROVED;
     });
     const asked = h.clock.now();
     const response = await h.engine.decide({
@@ -79,7 +83,9 @@ describe("the engine signs approvals (09-17 Task 1)", () => {
     expect(row.approvedAt).toBe(asked);
     expect(port.requests[0]?.approvedAt).toBe(asked);
     expect(row.decidedVia).toBe("presence");
-    expect(verifyDecisionProof(TEST_PROOF_KEY, row)).toBe("valid");
+    expect(
+      verifyDecisionProof(TEST_PROOF_KEY, row, { presenceRequired: true, pin: TEST_PIN }),
+    ).toBe("valid");
   });
 
   it("Test 2b: the ungated proof covers the instant the store recorded as approvedAt", async () => {
@@ -94,7 +100,9 @@ describe("the engine signs approvals (09-17 Task 1)", () => {
     });
     const row = stored(h, id);
     expect(row.approvedAt).toBe(h.clock.now());
-    expect(verifyDecisionProof(TEST_PROOF_KEY, row)).toBe("valid");
+    expect(verifyDecisionProof(TEST_PROOF_KEY, row, { presenceRequired: false, pin: null })).toBe(
+      "valid",
+    );
   });
 });
 

@@ -272,7 +272,10 @@ export interface PresenceRequest {
  * the check cannot run on this machine right now. Nothing here is a standing choice.
  */
 export type PresenceResult =
-  | { readonly kind: "proved"; readonly scheme: "p256" | "none"; readonly signature: string | null }
+  /** The owner's gesture produced a P-256 signature over the exact approval message (custody K-SE / K-ATTR). */
+  | { readonly kind: "proved"; readonly scheme: "p256"; readonly signature: string }
+  /** The check alone, no key (custody K-SVC): there is no signature to carry. */
+  | { readonly kind: "proved"; readonly scheme: "none"; readonly signature: null }
   | { readonly kind: "denied" }
   | { readonly kind: "unavailable" };
 

@@ -1,6 +1,5 @@
 import { isAbsolute, join } from "node:path";
 import {
-  canonicalJson,
   PAYLOAD_HASH_PATTERN,
   PRESENCE_PROMPT_TIMEOUT_MS,
   PROPOSAL_ID_PATTERN,
@@ -10,6 +9,7 @@ import {
   type PresenceResult,
 } from "@ccc/domain";
 import { z } from "zod";
+import { presenceMessage } from "../approval/index.js";
 import type { CommandOutcome, CommandRunner } from "../projects/command-runner.js";
 
 /**
@@ -185,16 +185,11 @@ export function createHelperPresencePort(options: HelperPresencePortOptions): Pr
     async prove(request: PresenceRequest): Promise<PresenceResult> {
       if (!isValidRequest(request)) return UNAVAILABLE;
       if (!exists(helperPath)) return UNAVAILABLE;
+      // The one canonical message builder is the verifier's (approval/proof.ts): what the helper signs is
+      // exactly what the engine later checks. A request the builder cannot encode proves nothing.
       let message: string;
       try {
-        message = canonicalJson({
-          v: 1,
-          proposalId: request.proposalId,
-          operation: request.operation,
-          payloadHash: request.payloadHash,
-          decision: "approve",
-          approvedAt: request.approvedAt,
-        });
+        message = presenceMessage(request);
       } catch {
         return UNAVAILABLE;
       }
@@ -209,8 +204,9 @@ export function createHelperPresencePort(options: HelperPresencePortOptions): Pr
         if (!parsed.success) return UNAVAILABLE;
         const { scheme, signature } = parsed.data;
         if (scheme !== schemeOf(custody)) return UNAVAILABLE;
-        if ((scheme === "none") !== (signature === null)) return UNAVAILABLE;
-        return { kind: "proved", scheme, signature };
+        if (scheme === "p256" && signature !== null) return { kind: "proved", scheme, signature };
+        if (scheme === "none" && signature === null) return { kind: "proved", scheme, signature };
+        return UNAVAILABLE;
       }
       if (outcome.exitCode === 4) {
         return deniedLine.safeParse(line).success ? { kind: "denied" } : UNAVAILABLE;

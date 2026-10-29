@@ -577,8 +577,15 @@ describe("the decision proof through the composed services (09-17 Task 1, Test 3
     const row = sql.get(approvedId as never);
     if (row === null) throw new Error("expected a row");
     expect(row.decisionProof).toEqual(expect.any(String));
-    expect(approvalEntry.verifyDecisionProof(PROOF_KEY, row)).toBe("valid");
-    expect(approvalEntry.verifyDecisionProof(Buffer.alloc(32, 6), row)).toBe("invalid");
+    expect(
+      approvalEntry.verifyDecisionProof(PROOF_KEY, row, { presenceRequired: false, pin: null }),
+    ).toBe("valid");
+    expect(
+      approvalEntry.verifyDecisionProof(Buffer.alloc(32, 6), row, {
+        presenceRequired: false,
+        pin: null,
+      }),
+    ).toBe("invalid");
 
     const second = runtime.engine.submit({
       operation: "session.force-terminate",

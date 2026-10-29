@@ -333,6 +333,8 @@ describe("Test 6: the ./approval export subpath", () => {
         "buildOperationRegistry",
         "createApprovalEngine",
         "createExpirySweeper",
+        // 09-18: the one canonical presence message the helper adapter hands the helper to sign.
+        "presenceMessage",
         "verifyDecisionProof",
       ].sort(),
     );

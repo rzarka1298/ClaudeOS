@@ -1,21 +1,30 @@
 // The presence gate in `decide` (09-14, D-01, D-02, D-03, R-03, APPR-11). The gate is proven over the
 // in-memory store and the EXTENDED table, because the SQL store classifies through the production
 // table and cannot be handed the test-only `connector.fake-write` row (STATE decision 06-24).
-import type { DecideResponse, ProposalId, StoredProposal } from "@ccc/domain";
+import type { DecideResponse, PresenceRequest, ProposalId, StoredProposal } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
+import {
+  DecisionProofSchema,
+  presenceMessage,
+  verifyDecisionProof,
+  verifyPresenceSignature,
+} from "./proof.js";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
-import { createHarness, type Harness } from "./test-support/harness.js";
+import { createHarness, type Harness, TEST_PROOF_KEY } from "./test-support/harness.js";
 import {
   createPresenceFake,
   deferredPresence,
+  generatePresenceKeys,
   PROVED,
   type PresenceFake,
+  signMessage,
+  TEST_PIN,
 } from "./test-support/presence-fake.js";
 
 const WRITE = "connector.fake-write";
 
-function presenceHarness(port?: PresenceFake): Harness {
+function presenceHarness(port?: PresenceFake, readPin?: () => Promise<string | null>): Harness {
   return createHarness({
     table: EXTENDED_TABLE,
     registry: ([a, b]) =>
@@ -26,6 +35,7 @@ function presenceHarness(port?: PresenceFake): Harness {
         EXTENDED_TABLE,
       ),
     ...(port === undefined ? {} : { presence: port }),
+    ...(readPin === undefined ? {} : { readPin }),
   });
 }
 
@@ -278,5 +288,113 @@ describe("no client claim changes a gated decision (D-03, T-09-25)", () => {
       channelHint: "presence" as never,
     });
     expect(stored(h, id).decidedVia).toBe("other");
+  });
+});
+
+describe("the helper's signature is verified against the pin (09-18 Task 1)", () => {
+  it("Test 2 (tracer): a proved answer with a verifying signature is accepted, stored and re-verifies", async () => {
+    const port = createPresenceFake();
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const response = await approve(h, id, hashOf(h, id), "other");
+    expect(response.outcome).toBe("decided");
+    const row = stored(h, id);
+    expect(row.decidedVia).toBe("presence");
+    const proof = DecisionProofSchema.parse(JSON.parse(row.decisionProof ?? "null"));
+    // ECDSA is randomised: assert the stored part verifies against the pin over this row's message.
+    expect(proof.presence?.scheme).toBe("p256");
+    expect(
+      verifyPresenceSignature(
+        TEST_PIN,
+        presenceMessage({
+          proposalId: id,
+          operation: WRITE,
+          payloadHash: row.payloadHash,
+          approvedAt: row.approvedAt ?? "",
+        }),
+        proof.presence?.sig ?? "",
+      ),
+    ).toBe(true);
+    expect(
+      verifyDecisionProof(TEST_PROOF_KEY, row, { presenceRequired: true, pin: TEST_PIN }),
+    ).toBe("valid");
+  });
+
+  async function refusedWith(
+    answer: (message: string) => unknown,
+    readPin?: () => Promise<string | null>,
+  ): Promise<{ h: Harness; id: ProposalId; response: DecideResponse }> {
+    const port = createPresenceFake((async (request: PresenceRequest) =>
+      answer(presenceMessage(request))) as never);
+    const h = presenceHarness(port, readPin);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const response = await approve(h, id);
+    return { h, id, response };
+  }
+
+  function expectRefused(r: { h: Harness; id: ProposalId; response: DecideResponse }): void {
+    expect(r.response).toEqual({ outcome: "presence-unavailable" });
+    expect(stored(r.h, r.id).state).toBe("pending");
+    expect(stored(r.h, r.id).decidedVia).toBeNull();
+    expect(auditDetails(r.h, r.id).at(-1)).toEqual(["presence-refused", "presence-unavailable"]);
+    expect(r.h.store.calls).not.toContain("decide");
+    expect(
+      r.h.log.lines.some((l) => l.level === "warn" && l.fields.code === "presence-proof-invalid"),
+    ).toBe(true);
+  }
+
+  it("Test 3a: a signature from another key is refused presence-unavailable", async () => {
+    const other = generatePresenceKeys();
+    expectRefused(
+      await refusedWith((m) => ({
+        kind: "proved",
+        scheme: "p256",
+        signature: signMessage(m, other),
+      })),
+    );
+  });
+
+  it("Test 3b: a signature over a different message is refused", async () => {
+    expectRefused(
+      await refusedWith((m) => ({
+        kind: "proved",
+        scheme: "p256",
+        signature: signMessage(`${m} `),
+      })),
+    );
+  });
+
+  it("Test 3c: a missing pin (the reader answers null, or throws) is refused", async () => {
+    expectRefused(
+      await refusedWith(
+        (m) => ({ kind: "proved", scheme: "p256", signature: signMessage(m) }),
+        async () => null,
+      ),
+    );
+    expectRefused(
+      await refusedWith(
+        (m) => ({ kind: "proved", scheme: "p256", signature: signMessage(m) }),
+        async () => {
+          throw new Error("keychain down");
+        },
+      ),
+    );
+  });
+
+  it("Test 3d: scheme none under the recorded K-ATTR custody is refused", async () => {
+    expectRefused(await refusedWith(() => ({ kind: "proved", scheme: "none", signature: null })));
+  });
+
+  it("the pin is read only when a proved answer needs verifying, never for a denial or an ungated approve", async () => {
+    let reads = 0;
+    const read = async (): Promise<string | null> => {
+      reads += 1;
+      return TEST_PIN;
+    };
+    const denied = presenceHarness(createPresenceFake({ kind: "denied" }), read);
+    await approve(denied, denied.propose({ operation: WRITE, subject: "w" }));
+    const plain = presenceHarness(createPresenceFake(), read);
+    await approve(plain, plain.propose({ subject: "d" }));
+    expect(reads).toBe(0);
   });
 });
