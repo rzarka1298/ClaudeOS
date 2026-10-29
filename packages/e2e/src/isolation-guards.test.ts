@@ -358,6 +358,29 @@ describe("service env (Test 4)", () => {
     expect(Object.keys(env)).toHaveLength(15);
   });
 
+  it("quiet kind sets the 5000 ms quiet threshold on top of everything the normal kind sets (09-21)", () => {
+    const normal = buildServiceEnv(paths(root), account, "normal");
+    const quiet = buildServiceEnv(paths(root), account, "quiet");
+    expect(quiet.CCC_QUIET_THRESHOLD_MS).toBe("5000");
+    expect(normal.CCC_QUIET_THRESHOLD_MS).toBeUndefined();
+    for (const [key, value] of Object.entries(normal)) expect(quiet[key], key).toBe(value);
+    expect(Object.keys(quiet).sort()).toEqual(
+      [...Object.keys(normal), "CCC_QUIET_THRESHOLD_MS"].sort(),
+    );
+    // No approval timing override rides along: the quiet kind only adds the threshold (T-09-46).
+    expect(quiet.CCC_APPROVAL_TEST_TTL_MS).toBeUndefined();
+    expect(quiet.CCC_APPROVAL_SWEEP_MS).toBeUndefined();
+    // The fail-closed presence port still applies: the install-secret account is always set.
+    expect(quiet.CCC_INSTALL_SECRET_ACCOUNT).toBe(account);
+    expect(quiet.CCC_RESEARCH_KEY_ACCOUNT).toBe(`${account}-nokey`);
+  });
+
+  it("scrubInheritedEnv also drops an inherited quiet threshold (09-21)", () => {
+    expect(scrubInheritedEnv({ CCC_QUIET_THRESHOLD_MS: "5", KEEP: "yes" })).toEqual({
+      KEEP: "yes",
+    });
+  });
+
   it("refuses the default install-secret account and an account outside the ccc-uat family", () => {
     expect(() => buildServiceEnv(paths(root), "install-secret", "normal")).toThrow();
   });

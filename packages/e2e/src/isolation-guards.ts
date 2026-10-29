@@ -59,6 +59,10 @@ export function noKeyAccountFor(account: string): string {
 
 const EXPIRY_TTL_MS = "15000";
 const EXPIRY_SWEEP_MS = "500";
+/** The quiet kind's threshold: short enough to wait out in a spec, long enough that a poll sees Running. */
+const QUIET_THRESHOLD_MS = "5000";
+/** The service variable that carries the quiet threshold (D-07; the production default is 30 minutes). */
+const QUIET_THRESHOLD_ENV = "CCC_QUIET_THRESHOLD_MS";
 
 export class IsolationError extends Error {
   constructor(message: string) {
@@ -186,7 +190,12 @@ export function refuseRealPaths(
 
 // --- environment builders -----------------------------------------------------------------
 
-export type ServiceKind = "normal" | "expiry";
+/**
+ * `normal`: the isolation variables only. `expiry`: also the two approval timing overrides.
+ * `quiet` (09-21, D-17): also a 5-second quiet threshold, so a session that stops reporting reads
+ * as quiet within one spec instead of after the production 30 minutes. No other kind sets it.
+ */
+export type ServiceKind = "normal" | "expiry" | "quiet";
 
 /**
  * Everything the throwaway service receives, all inside the run root (D-05). The run root itself
@@ -255,6 +264,9 @@ export function buildServiceEnv(
     env[TEST_OVERRIDE_ENV.approvalTtl] = EXPIRY_TTL_MS;
     env[TEST_OVERRIDE_ENV.sweep] = EXPIRY_SWEEP_MS;
   }
+  // The quiet kind adds the threshold and nothing else (T-09-46): the presence port stays
+  // fail-closed through CCC_INSTALL_SECRET_ACCOUNT above, and no run root holds the helper.
+  if (kind === "quiet") env[QUIET_THRESHOLD_ENV] = QUIET_THRESHOLD_MS;
   return env;
 }
 
@@ -262,6 +274,7 @@ const SCRUBBED_ENV_KEYS: readonly string[] = [
   TEST_OVERRIDE_ENV.enable,
   TEST_OVERRIDE_ENV.approvalTtl,
   TEST_OVERRIDE_ENV.sweep,
+  QUIET_THRESHOLD_ENV,
   KEY_ACCOUNT_ENV,
   "CCC_RUNTIME_DIR",
   "CCC_SOCKET_PATH",
