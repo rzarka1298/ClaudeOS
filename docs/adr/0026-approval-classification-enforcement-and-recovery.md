@@ -154,9 +154,12 @@ ever retried after an outcome could not be confirmed.
 ### 5. The audit record is append-only
 
 Every state change writes one audit row in the same transaction, using the fixed vocabulary `requested`, `approved`, `denied`,
-`expired`, `withdrawn`, `claimed`, `executed`, `failed`, `outcome-unknown`, `retried-after-restart`, `reconciled-executed` and
-`lapsed`. History renders only these, never free text. The decision channel (`decided_via`) is recorded only on the `approved` and `denied` audit rows and in
-`proposals.decided_via`, not on every audit row; a decide that loses to expiry records none (see the residual risk below).
+`expired`, `withdrawn`, `claimed`, `executed`, `failed`, `outcome-unknown`, `retried-after-restart`, `reconciled-executed`,
+`lapsed` and `presence-refused`. History renders only these, never free text. `presence-refused` is written when a connector-class approval
+is refused for want of a verified presence proof; the request stays pending and nothing ran. The decision channel (`decided_via`) is recorded only on the `approved` and `denied` audit rows and in
+`proposals.decided_via`, not on every audit row; a decide that loses to expiry records none (see the residual risk below). Its values are
+`plugin` and `other`, an unverified hint taken from a request header, and `presence`, written only by the engine after it has verified
+a presence proof; the header can never yield `presence`.
 
 The table is append-only by triggers in the approvals migration, not by convention:
 

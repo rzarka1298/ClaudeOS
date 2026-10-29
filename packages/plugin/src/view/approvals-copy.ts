@@ -105,6 +105,8 @@ export const NO_RISKS = "None listed.";
 export const DECIDED_THROUGH = {
   plugin: "The command center",
   other: "Another local client",
+  /** The verified channel (D-03): a presence proof was checked, not a header hint. */
+  presence: "The command center, confirmed with your Touch ID or password",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -224,6 +226,7 @@ export const HISTORY_LABEL: Readonly<Record<ApprovalAuditEvent, string>> = {
   "retried-after-restart": "Retried after a restart",
   "reconciled-executed": "Carried out",
   lapsed: "Lapsed",
+  "presence-refused": "Approval refused: your Touch ID or password wasn't confirmed",
 };
 
 // ---------------------------------------------------------------------------

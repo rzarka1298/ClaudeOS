@@ -610,8 +610,10 @@ describe("routes and schemas (Test 6)", () => {
         "retried-after-restart",
         "reconciled-executed",
         "lapsed",
+        "presence-refused",
       ].sort(),
     );
+    expect(APPROVAL_AUDIT_EVENTS.at(-1)).toBe("presence-refused");
   });
 });
 
@@ -777,7 +779,9 @@ describe("summary and snapshot (Test 7)", () => {
 
 describe("decided via (Test 9)", () => {
   it("has the closed vocabulary plugin or other, and the header constant", () => {
-    expect([...DECIDED_VIA]).toEqual(["plugin", "other"]);
+    // `presence` is the verified channel (D-03); `plugin` and `other` stay unverified hints.
+    expect([...DECIDED_VIA]).toEqual(["plugin", "other", "presence"]);
+    expect((DECIDED_VIA as readonly string[]).includes("presence")).toBe(true);
     expect(DECIDED_VIA_PLUGIN).toBe("plugin");
     expect(DECIDED_VIA_HEADER).toMatch(/^X-[A-Za-z-]+$/);
   });
@@ -787,5 +791,11 @@ describe("decided via (Test 9)", () => {
     for (const value of [undefined, "", "Plugin", "other", "curl", "plugin ", "a".repeat(500)]) {
       expect(normaliseDecidedVia(value), String(value)).toBe("other");
     }
+  });
+
+  it("never lets a header claim the verified channel (T-09-22)", () => {
+    expect(normaliseDecidedVia("presence")).toBe("other");
+    expect(normaliseDecidedVia("Presence")).toBe("other");
+    expect(normaliseDecidedVia(" presence")).toBe("other");
   });
 });

@@ -302,14 +302,21 @@ export const APPROVAL_AUDIT_EVENTS = [
   "retried-after-restart",
   "reconciled-executed",
   "lapsed",
+  // A connector-class approval refused for want of a verified presence proof (D-03). The request stays pending.
+  "presence-refused",
 ] as const;
 export type ApprovalAuditEvent = (typeof APPROVAL_AUDIT_EVENTS)[number];
 
 // ---------------------------------------------------------------------------
 // Decided-through channel (D-47)
 
-/** Which client made a decision: the plugin's own UI, or anything else on this machine. */
-export const DECIDED_VIA = ["plugin", "other"] as const;
+/**
+ * Which channel made a decision. `plugin` (the plugin's own UI) and `other` (anything else on this
+ * machine) are an unverified hint taken from a request header. `presence` means the engine verified
+ * a presence proof (D-03): only the engine writes it, after the proof checks out, and
+ * `normaliseDecidedVia` can never produce it.
+ */
+export const DECIDED_VIA = ["plugin", "other", "presence"] as const;
 export type DecidedVia = (typeof DECIDED_VIA)[number];
 /** The request header the plugin sets on a decision. A hint for the audit trail, never an authority. */
 export const DECIDED_VIA_HEADER = "X-Ccc-Decided-Via";

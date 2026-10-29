@@ -104,6 +104,9 @@ describe("the locked strings (UI-SPEC Copywriting Contract, Test 8)", () => {
   it("names who made a decision in a fixed vocabulary", () => {
     expect(DECIDED_THROUGH.plugin).toBe("The command center");
     expect(DECIDED_THROUGH.other).toBe("Another local client");
+    expect(DECIDED_THROUGH.presence).toBe(
+      "The command center, confirmed with your Touch ID or password",
+    );
   });
 
   it("labels every audit event, and only from the fixed history vocabulary", () => {
@@ -121,6 +124,7 @@ describe("the locked strings (UI-SPEC Copywriting Contract, Test 8)", () => {
         "Outcome unknown",
         "Retried after a restart",
         "Lapsed",
+        "Approval refused: your Touch ID or password wasn't confirmed",
       ]),
     );
   });

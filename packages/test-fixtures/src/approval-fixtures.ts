@@ -857,7 +857,9 @@ export function diagnosticEffectRows(db: Db, proposalId: string): number {
 }
 
 /** The state each audit event leaves a request in. `retried-after-restart` keeps it `executing`. */
-const STATE_AFTER: Readonly<Record<ApprovalAuditEvent, ProposalState>> = {
+const STATE_AFTER: Readonly<
+  Record<Exclude<ApprovalAuditEvent, "presence-refused">, ProposalState>
+> = {
   requested: "pending",
   approved: "approved",
   denied: "denied",
@@ -892,6 +894,12 @@ export function auditPathProblems(
     if (index === 0) return;
     if (event === "requested") {
       problems.push(`step ${index + 1}: requested appears again`);
+      return;
+    }
+    if (event === "presence-refused") {
+      // Not a transition: the request stays pending (D-03), so it is legal only while pending.
+      if (current !== "pending")
+        problems.push(`step ${index + 1}: a presence refusal outside pending`);
       return;
     }
     const next = STATE_AFTER[event];

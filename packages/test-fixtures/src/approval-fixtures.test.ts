@@ -2,6 +2,7 @@ import type { ProposalId } from "@ccc/domain";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   auditEvents,
+  auditPathProblems,
   createCountingOperation,
   createFakeClock,
   createRecordingLog,
@@ -156,5 +157,23 @@ describe("Test 1: the fixtures prove themselves", () => {
     expect(violations.join("\n")).toContain("a message string was passed");
     // A report names keys and kinds only, never a value.
     expect(violations.join("\n")).not.toContain("xxxx");
+  });
+});
+
+describe("09-13: a presence refusal is a non-transition audit event", () => {
+  it("is legal while the request is pending, any number of times, and never changes the state", () => {
+    expect(
+      auditPathProblems(
+        ["requested", "presence-refused", "presence-refused", "approved"],
+        "approved",
+      ),
+    ).toEqual([]);
+    expect(auditPathProblems(["requested", "presence-refused"], "pending")).toEqual([]);
+  });
+
+  it("is illegal once the request has left pending", () => {
+    expect(
+      auditPathProblems(["requested", "approved", "presence-refused"], "approved"),
+    ).not.toEqual([]);
   });
 });
