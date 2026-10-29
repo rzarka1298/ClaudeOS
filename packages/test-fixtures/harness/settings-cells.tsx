@@ -123,7 +123,7 @@ const SECTION_EXPECTS: Readonly<Record<SectionId, readonly string[]>> = {
   "approvals-tasks": ["Rebuild task index"],
   paths: ["~/ExampleVault"],
   visual: ["Reduced motion"],
-  security: ["Present"],
+  security: ["Present", "Approval presence check", "Unavailable"],
   schedules: ["sources configured"],
   diagnostics: ["Subsystems"],
 };

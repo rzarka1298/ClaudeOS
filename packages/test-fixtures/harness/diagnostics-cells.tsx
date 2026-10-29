@@ -68,6 +68,7 @@ interface DiagnosticsCaseSpec {
 }
 
 const SHOW_PREVIEW: Press = { button: "Show bundle preview" };
+const COPY_BUNDLE: Press = { button: "Copy bundle" };
 
 const CASES: Readonly<Record<string, DiagnosticsCaseSpec>> = {
   "diagnostics-fresh": {
@@ -120,6 +121,16 @@ const CASES: Readonly<Record<string, DiagnosticsCaseSpec>> = {
     at: "now",
     presses: [SHOW_PREVIEW],
     expect: ["Copy bundle", "Save bundle", "bundleVersion"],
+  },
+  // Phase 9 (09-22; D-09): after Copy bundle the block's own status line reads `Bundle copied.`
+  // beside the buttons. The fixture host's clipboard seam resolves, so nothing leaves the page.
+  "diagnostics-bundle-after-copy": {
+    answer: "ok",
+    behaviour: "answer",
+    connection: LIVE,
+    at: "now",
+    presses: [SHOW_PREVIEW, COPY_BUNDLE],
+    expect: ["Copy bundle", "bundleVersion", "Bundle copied."],
   },
   "diagnostics-bundle-refused": {
     answer: "ok",

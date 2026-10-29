@@ -226,6 +226,7 @@ function adaptToday(data: Fields): TodayData {
     taskId: task.taskId,
     title: task.title,
     meta: task.overdue ? "Overdue since Sep 20" : "Due 5:00 PM",
+    overdue: task.overdue,
   }));
   // The prototype fixtures model failures as whole-card `failure` variants, never as a
   // line inside a ready card, so the automation block is the clean one.

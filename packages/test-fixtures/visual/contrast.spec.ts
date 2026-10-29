@@ -172,7 +172,15 @@ const PAGES: readonly PageSpec[] = [
     // Settings, so this page is also where that rule's contrast is measured (UI-SPEC review item).
     name: "settings security",
     params: { view: "settings", case: "settings-security", width: "full", nav: "1" },
-    mustSample: ["Transcript analysis", "Always allow", "Present", "Install secret in keychain"],
+    mustSample: [
+      "Transcript analysis",
+      "Always allow",
+      "Present",
+      "Install secret in keychain",
+      "Approval presence check",
+      "Unavailable",
+      "Key fingerprint",
+    ],
     focus: [NAV_ITEM, SWITCH],
   },
   {
@@ -212,6 +220,13 @@ const PAGES: readonly PageSpec[] = [
     // `Save bundle` is `aria-disabled` here (no save dialog in the harness), so it is exempt from the
     // text check like every disabled control; the reason it is described by is on the page and measured.
     mustSample: ["Copy bundle", "bundleVersion", "save dialog isn't available"],
+    focus: [NAV_ITEM, BUNDLE_PREVIEW],
+  },
+  {
+    // Phase 9 (09-22; D-09): the block's own status line after Copy bundle.
+    name: "diagnostics bundle after copy",
+    params: { view: "diagnostics", case: "diagnostics-bundle-after-copy", width: "full", nav: "1" },
+    mustSample: ["Bundle copied.", "bundleVersion"],
     focus: [NAV_ITEM, BUNDLE_PREVIEW],
   },
   {

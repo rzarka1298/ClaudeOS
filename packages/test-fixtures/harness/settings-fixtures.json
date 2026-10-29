@@ -314,6 +314,9 @@
       "installSecret": "present",
       "researchKey": "absent"
     },
+    "approvalPresence": "unavailable",
+    "approvalPresenceReason": "pin-changed",
+    "approvalPresencePin": "0a1b2c3d",
     "paths": {
       "vault": "~/ExampleVault",
       "runtimeDir": "~/ExampleService",

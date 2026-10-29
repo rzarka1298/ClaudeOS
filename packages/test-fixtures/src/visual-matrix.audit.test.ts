@@ -123,13 +123,13 @@ const CODEX_SPEC_CELLS = 47;
 /** The Research spec's cells (plan 07-16): one baseline each, in its own spec file. */
 const RESEARCH_SPEC_CELLS = 17;
 /**
- * The contrast guard's tests (`contrast.spec.ts`): 9 Phase 7 pages, 21 Phase 8 pages (08-21) and 2 Phase 9
- * pages (09-22, the quiet session on Agent runs and on the Active sessions card) under a light and a dark
+ * The contrast guard's tests (`contrast.spec.ts`): 9 Phase 7 pages, 21 Phase 8 pages (08-21) and 3 Phase 9
+ * pages (09-22: the quiet session on Agent runs and on the Active sessions card, the bundle after Copy) under a light and a dark
  * host, plus 2 blank-page non-vacuity tests; no image.
  */
-const CONTRAST_GUARD_TESTS = 66;
-/** The Settings spec's pixel cells (plan 08-21): the nine sections, narrow layouts, Diagnostics, bundle and Overview states. */
-const SETTINGS_SPEC_CELLS = 32;
+const CONTRAST_GUARD_TESTS = 68;
+/** The Settings spec's pixel cells (plan 08-21): the nine sections, narrow layouts, Diagnostics, bundle (plus 09-22's after-copy) and Overview states. */
+const SETTINGS_SPEC_CELLS = 33;
 
 /** The titles `playwright test --list` prints for one spec file. */
 function titlesOf(listing: string, specFile: string): string[] {

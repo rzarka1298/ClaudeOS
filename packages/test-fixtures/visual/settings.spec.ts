@@ -100,6 +100,8 @@ const CELLS: readonly PixelCell[] = [
   { view: "diagnostics", caseId: "diagnostics-bundle", width: "full", motion: "full" },
   { view: "diagnostics", caseId: "diagnostics-bundle", width: "narrow", motion: "full" },
   { view: "diagnostics", caseId: "diagnostics-bundle-refused", width: "full", motion: "full" },
+  // Phase 9 (09-22; D-09): the block's own status line after Copy bundle.
+  { view: "diagnostics", caseId: "diagnostics-bundle-after-copy", width: "full", motion: "full" },
   {
     view: "diagnostics",
     caseId: "diagnostics-bundle-service-away",
@@ -282,6 +284,36 @@ async function expectRefusalWithoutPreview(page: Page): Promise<void> {
   await expect(page.locator(".ccc-bundle-preview")).toHaveCount(0);
 }
 
+/**
+ * Phase 9 (09-22; D-04, 09-19, FIX10A): the Security section carries the `Approval presence check`
+ * row between `Research key in keychain` and `Always allow`, with the chip as a word beside its glyph,
+ * a reason line, and (for an Unavailable answer that holds a pin) the key fingerprint. Asserted by
+ * words before the shot, so a baseline can never bless a section without the row.
+ */
+async function expectPresenceRow(page: Page): Promise<void> {
+  const terms = await page
+    .locator(".ccc-settings-content dl.ccc-detail-fields dt")
+    .allTextContents();
+  const row = terms.indexOf("Approval presence check");
+  expect(row).toBeGreaterThan(-1);
+  expect(terms[row - 1]).toBe("Research key in keychain");
+  expect(terms[row + 1]).toBe("Always allow");
+  const value = page
+    .locator(".ccc-settings-content dl.ccc-detail-fields dt", {
+      hasText: "Approval presence check",
+    })
+    .locator("xpath=following-sibling::dd[1]");
+  await expect(value).toContainText("Unavailable");
+  await expect(value).toContainText("The stored key is not the one this service trusted");
+  await expect(value).toContainText("Key fingerprint");
+}
+
+/** After Copy bundle the bundle block's own status line reads `Bundle copied.` (D-09). */
+async function expectBundleCopied(page: Page): Promise<void> {
+  await expectBundlePreview(page);
+  await expect(page.getByText("Bundle copied.")).toBeVisible();
+}
+
 /** The Overview shows exactly the five slice cards. */
 async function expectFiveCards(page: Page): Promise<void> {
   await expect(page.locator(".ccc-card")).toHaveCount(5);
@@ -289,7 +321,12 @@ async function expectFiveCards(page: Page): Promise<void> {
 
 /** Per-cell assertions, run before the screenshot. */
 const ASSERTIONS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
-  "settings-security-narrow": expectNoHorizontalScroll,
+  "settings-security-full": expectPresenceRow,
+  "settings-security-narrow": async (page) => {
+    await expectPresenceRow(page);
+    await expectNoHorizontalScroll(page);
+  },
+  "diagnostics-bundle-after-copy-full": expectBundleCopied,
   "settings-integrations-narrow": expectNoHorizontalScroll,
   "settings-diagnostics-narrow": expectNoHorizontalScroll,
   "diagnostics-fresh-narrow": expectNoHorizontalScroll,
