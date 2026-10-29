@@ -243,7 +243,9 @@ describe("never retried (Task 2, Test 4)", () => {
     const h = createHarness({
       registry: ([d, t]) =>
         buildOperationRegistry(
-          [d, t, send].map((f) => f?.definition).filter((def) => def !== undefined),
+          [d, t, send, fakeNamed("connector.fake-write")]
+            .map((f) => f?.definition)
+            .filter((def) => def !== undefined),
           EXTENDED_TABLE,
         ),
     });

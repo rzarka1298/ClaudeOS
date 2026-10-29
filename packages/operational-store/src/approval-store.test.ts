@@ -329,6 +329,83 @@ describe("decide, deny (Test 4)", () => {
   });
 });
 
+describe("recordDecisionRefusal (09-14, Test 1)", () => {
+  it("writes one presence-refused audit row with the detail and changes nothing else on a pending request", () => {
+    const proposal = submitPending({ operation: "diagnostic.test" });
+    const before = rowOf(proposal.proposalId);
+    expect(
+      store.recordDecisionRefusal({
+        proposalId: proposal.proposalId,
+        at: at(30_000),
+        payloadHash: proposal.payloadHash,
+        detail: "presence-unavailable",
+      }),
+    ).toBe("recorded");
+    const rows = auditRows(proposal.proposalId);
+    expect(rows.map((row) => row.event)).toEqual(["requested", "presence-refused"]);
+    expect(rows[1]).toMatchObject({
+      at: at(30_000),
+      decided_via: null,
+      payload_hash: proposal.payloadHash,
+      detail: "presence-unavailable",
+    });
+    expect(rowOf(proposal.proposalId)).toEqual(before);
+    expect(store.auditFor(proposal.proposalId).at(-1)).toMatchObject({
+      event: "presence-refused",
+      code: "presence-unavailable",
+    });
+    // A second refusal is a second row: each refusal is on the record.
+    store.recordDecisionRefusal({
+      proposalId: proposal.proposalId,
+      at: at(40_000),
+      payloadHash: proposal.payloadHash,
+      detail: "presence-denied",
+    });
+    expect(auditEvents(proposal.proposalId)).toEqual([
+      "requested",
+      "presence-refused",
+      "presence-refused",
+    ]);
+  });
+
+  it("returns not-pending and inserts nothing for a request that is not pending", () => {
+    const proposal = submitPending();
+    store.decide(decideInput(proposal, { decision: "deny" }));
+    const count = auditRows(proposal.proposalId).length;
+    expect(
+      store.recordDecisionRefusal({
+        proposalId: proposal.proposalId,
+        at: at(90_000),
+        payloadHash: proposal.payloadHash,
+        detail: "presence-denied",
+      }),
+    ).toBe("not-pending");
+    expect(auditRows(proposal.proposalId)).toHaveLength(count);
+    expect(
+      store.recordDecisionRefusal({
+        proposalId: newProposalId(),
+        at: at(90_000),
+        payloadHash: proposal.payloadHash,
+        detail: "presence-denied",
+      }),
+    ).toBe("not-pending");
+  });
+
+  it("refuses a detail outside the closed pair and a malformed time", () => {
+    const proposal = submitPending();
+    const base = {
+      proposalId: proposal.proposalId,
+      at: at(1_000),
+      payloadHash: proposal.payloadHash,
+    };
+    expect(() => store.recordDecisionRefusal({ ...base, detail: "free text" as never })).toThrow();
+    expect(() =>
+      store.recordDecisionRefusal({ ...base, at: "yesterday", detail: "presence-denied" }),
+    ).toThrow();
+    expect(auditEvents(proposal.proposalId)).toEqual(["requested"]);
+  });
+});
+
 describe("decide, refusals (Test 5)", () => {
   it("a wrong hash changes nothing and writes no audit row", () => {
     const proposal = submitPending();

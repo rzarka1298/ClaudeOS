@@ -101,6 +101,9 @@ export class MinimalStore implements ApprovalStorePort {
   decide(): ReturnType<ApprovalStorePort["decide"]> {
     return { kind: "not-found" };
   }
+  recordDecisionRefusal(): ReturnType<ApprovalStorePort["recordDecisionRefusal"]> {
+    return "not-pending";
+  }
   claim(): ReturnType<ApprovalStorePort["claim"]> {
     return { kind: "lost" };
   }

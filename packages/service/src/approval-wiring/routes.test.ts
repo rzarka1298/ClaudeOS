@@ -303,7 +303,7 @@ describe("decide outcomes (tracer test 6)", () => {
       body: { proposalId: proposalId(7), decision: "deny", payloadHash: HASH },
     });
     expect(fake.decideCalls).toEqual([
-      { proposalId: proposalId(7), decision: "deny", payloadHash: HASH, via: "other" },
+      { proposalId: proposalId(7), decision: "deny", payloadHash: HASH, channelHint: "other" },
     ]);
   });
 });
@@ -316,7 +316,7 @@ describe("decided via (tracer test 7)", () => {
       body,
       headers: { [DECIDED_VIA_HEADER]: DECIDED_VIA_PLUGIN },
     });
-    expect(fake.decideCalls.at(-1)?.via).toBe("plugin");
+    expect(fake.decideCalls.at(-1)?.channelHint).toBe("plugin");
   });
 
   it("derives other for no header, another value, a doubled header or a smuggled value", async () => {
@@ -338,7 +338,7 @@ describe("decided via (tracer test 7)", () => {
       });
       expect(reply.status).toBe(200);
       expect(fake.decideCalls).toHaveLength(1);
-      expect(fake.decideCalls[0]?.via).toBe("other");
+      expect(fake.decideCalls[0]?.channelHint).toBe("other");
     }
   });
 });

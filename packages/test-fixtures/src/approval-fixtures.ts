@@ -17,6 +17,7 @@ import {
   type ExecuteContext,
   type ExecuteOutcome,
   type OperationDefinition,
+  type PresencePort,
   type ProposalId,
   type ProposalState,
   type ReconcileVerdict,
@@ -293,7 +294,9 @@ export const FAKE_CONNECTOR_ROW: ClassificationRow = {
   maxApprovalAgeMs: 5 * 60_000,
   retry: "never",
   modifiable: false,
-  // Models a later connector row (D-02); nothing decides it, so the requirement is only stated.
+  // A connector-class row (D-02): the engine asks the presence port before it decides an approve
+  // (09-14), so every rig that decides this row is given {@link PROVING_PRESENCE}. The service's
+  // own extended test table has a separate `connector.fake-send` row with `presence: "none"`.
   presence: "required",
   summary: "send a fake message",
 };
@@ -491,6 +494,11 @@ export function createCrashInjector(): CrashInjector {
         decide: guard("decide", (...a: Parameters<ApprovalStorePort["decide"]>) =>
           store.decide(...a),
         ),
+        recordDecisionRefusal: guard(
+          "recordDecisionRefusal",
+          (...a: Parameters<ApprovalStorePort["recordDecisionRefusal"]>) =>
+            store.recordDecisionRefusal(...a),
+        ),
         claim(...a: Parameters<ApprovalStorePort["claim"]>) {
           if (fenced) throw new CrashSignal("claim (after the crash)");
           if (armed === "after-decision") {
@@ -570,6 +578,8 @@ export interface World {
   /** Every operation registered: the two enabled rows plus any extra. */
   readonly operations: readonly CountingOperation[];
   readonly table: ClassificationTable;
+  /** The presence port the engine asks for presence-required approvals; absent, the engine's fail-closed default. */
+  readonly presence: PresencePort | undefined;
   readonly log: RecordingLog;
   readonly injector: CrashInjector;
   /** A counter that keeps submitted subjects distinct across restarts. */
@@ -580,8 +590,20 @@ export interface WorldOptions {
   readonly extraOperations?: readonly CountingOperation[];
   /** An injected classification table. Defaults to the production table. */
   readonly table?: ClassificationTable;
+  /** Answers presence checks for a rig that decides a presence-required row (a stand-in, never a real proof). */
+  readonly presence?: PresencePort;
   readonly start?: string;
 }
+
+/** A presence port that always proves, under the `none` scheme: a test stand-in for the owner's gesture. */
+export const PROVING_PRESENCE: PresencePort = {
+  async prove() {
+    return { kind: "proved", scheme: "none", signature: null };
+  },
+  async availability() {
+    return "available";
+  },
+};
 
 export function createWorld(options: WorldOptions = {}): World {
   const diagnostic = createCountingOperation("diagnostic.test");
@@ -593,6 +615,7 @@ export function createWorld(options: WorldOptions = {}): World {
     terminate,
     operations: [diagnostic, terminate, ...(options.extraOperations ?? [])],
     table: options.table ?? CLASSIFICATION,
+    presence: options.presence,
     log: createRecordingLog(),
     injector: createCrashInjector(),
     nextSubject() {
@@ -666,6 +689,7 @@ export function openEngine(
       ? {}
       : { claimFactsTimeoutMs: options.claimFactsTimeoutMs }),
     ...(options.projectName === undefined ? {} : { projectName: options.projectName }),
+    ...(world.presence === undefined ? {} : { presence: world.presence }),
   });
 
   let closed = false;
@@ -706,7 +730,7 @@ export function openEngine(
         proposalId,
         decision,
         payloadHash: hashOf(proposalId),
-        via: "plugin",
+        channelHint: "plugin",
       });
     },
     get isClosed() {

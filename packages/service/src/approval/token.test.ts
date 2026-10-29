@@ -81,7 +81,7 @@ describe("token confinement (Test 4)", () => {
       proposalId: id,
       decision: "approve",
       payloadHash: stored?.payloadHash ?? "",
-      via: "plugin",
+      channelHint: "plugin",
     });
     await h.engine.settled();
     expect(h.diagnostic.executeCalls).toHaveLength(1);

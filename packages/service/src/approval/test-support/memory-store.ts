@@ -11,11 +11,13 @@ import {
   type ApprovalBucket,
   type ApprovalStorePort,
   type AuditRow,
+  CLASSIFICATION,
   type ClaimFacts,
   type ClaimResult,
-  classifyOperation,
+  type ClassificationTable,
   type DecideInput,
   type DecideResult,
+  type DecisionRefusalInput,
   type FinishInput,
   type NewProposal,
   type PendingCaps,
@@ -41,13 +43,9 @@ function assertLegal(from: ProposalState, to: ProposalState): void {
   }
 }
 
-function isEnabledApprovalOperation(operation: string): boolean {
-  const classified = classifyOperation(operation);
-  return (
-    classified !== undefined &&
-    classified.row.class === "approval-required" &&
-    classified.row.status === "enabled"
-  );
+function isEnabledApprovalOperation(table: ClassificationTable, operation: string): boolean {
+  const row = Object.hasOwn(table, operation) ? table[operation] : undefined;
+  return row?.class === "approval-required" && row.status === "enabled";
 }
 
 export interface MemoryApprovalStore extends ApprovalStorePort {
@@ -65,7 +63,14 @@ export interface MemoryApprovalStore extends ApprovalStorePort {
   readonly finishes: FinishInput[];
 }
 
-export function createMemoryApprovalStore(): MemoryApprovalStore {
+/**
+ * `table` is the classification the store decides against: the production table by default (the SQL
+ * store classifies through it and cannot be given another), or the extended table of a test that
+ * needs a connector-class row the production table does not have.
+ */
+export function createMemoryApprovalStore(
+  table: ClassificationTable = CLASSIFICATION,
+): MemoryApprovalStore {
   const rows = new Map<string, Row>();
   const audit = new Map<string, AuditRow[]>();
   const calls: string[] = [];
@@ -252,6 +257,9 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
 
     decide(input: DecideInput): DecideResult {
       calls.push("decide");
+      if (input.approvedAt !== undefined && input.approvedAt > input.now) {
+        throw new Error("invalid approval input: approvedAt");
+      }
       const row = rows.get(input.proposalId);
       if (!row) return { kind: "not-found" };
       if (row.state !== "pending") return { kind: "already-decided", state: row.state };
@@ -261,17 +269,25 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
         writeAudit(row.proposalId, "expired", input.now, null);
         return { kind: "expired", proposal: toStored(row) };
       }
-      if (!isEnabledApprovalOperation(row.operation)) return { kind: "operation-reserved" };
+      if (!isEnabledApprovalOperation(table, row.operation)) return { kind: "operation-reserved" };
       if (input.expectedHash !== row.payloadHash) return { kind: "hash-mismatch" };
       const approve = input.decision === "approve";
       change(row, approve ? "approved" : "denied");
-      row.approvedAt = approve ? input.now : null;
+      row.approvedAt = approve ? (input.approvedAt ?? input.now) : null;
       row.decidedAt = input.now;
       row.decidedVia = input.via;
       writeAudit(row.proposalId, approve ? "approved" : "denied", input.now, null);
       return approve
         ? { kind: "approved", proposal: toStored(row) }
         : { kind: "denied", proposal: toStored(row) };
+    },
+
+    recordDecisionRefusal(input: DecisionRefusalInput) {
+      calls.push("recordDecisionRefusal");
+      const row = rows.get(input.proposalId);
+      if (row?.state !== "pending") return "not-pending";
+      writeAudit(input.proposalId, "presence-refused", input.at, input.detail);
+      return "recorded";
     },
 
     claim(proposalId: ProposalId, facts: ClaimFacts, now: string): ClaimResult {

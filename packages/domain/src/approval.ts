@@ -318,12 +318,17 @@ export type ApprovalAuditEvent = (typeof APPROVAL_AUDIT_EVENTS)[number];
  */
 export const DECIDED_VIA = ["plugin", "other", "presence"] as const;
 export type DecidedVia = (typeof DECIDED_VIA)[number];
+/**
+ * The channels a client can claim: everything except the verified one. The route and the engine take
+ * this narrower type, so passing `presence` as a hint is a compile error (D-03, T-09-22).
+ */
+export type UnverifiedDecidedVia = Exclude<DecidedVia, "presence">;
 /** The request header the plugin sets on a decision. A hint for the audit trail, never an authority. */
 export const DECIDED_VIA_HEADER = "X-Ccc-Decided-Via";
 export const DECIDED_VIA_PLUGIN: DecidedVia = "plugin";
 
 /** Anything other than the exact plugin value is `other`, so a decision from outside is visible. */
-export function normaliseDecidedVia(value: string | undefined): DecidedVia {
+export function normaliseDecidedVia(value: string | undefined): UnverifiedDecidedVia {
   return value === DECIDED_VIA_PLUGIN ? "plugin" : "other";
 }
 

@@ -150,7 +150,7 @@ describe("Test 1: service restart", () => {
       proposalId: ids[0] as string,
       decision: "approve",
       payloadHash: hashes[0] as string,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(decided.outcome).toBe("decided");
     await next.engine.settled();
@@ -247,7 +247,7 @@ describe("Test 4: a decision racing the expiry sweep (APPR-06, D-09, T-06-05)", 
         proposalId: id,
         decision: "approve",
         payloadHash: rig.hashOf(id),
-        via: "plugin",
+        channelHint: "plugin",
       });
 
     // The decision starts first at the instant its request expires: it settles the request itself.
@@ -281,7 +281,12 @@ describe("Test 4: a decision racing the expiry sweep (APPR-06, D-09, T-06-05)", 
     rig.world.clock.advance(MINUTE_MS - 1);
 
     const [decided, swept] = await Promise.all([
-      rig.engine.decide({ proposalId: id, decision: "approve", payloadHash: hash, via: "plugin" }),
+      rig.engine.decide({
+        proposalId: id,
+        decision: "approve",
+        payloadHash: hash,
+        channelHint: "plugin",
+      }),
       sweeper.sweepNow(),
     ]);
     await rig.engine.settled();
@@ -301,7 +306,7 @@ describe("Test 4: a decision racing the expiry sweep (APPR-06, D-09, T-06-05)", 
       proposalId: id,
       decision: "approve",
       payloadHash: hash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     // The store reports a repeated decision on a settled request by its state (D-14, D-16).
     expect(late).toEqual({ outcome: "already-decided", state: "expired" });
@@ -457,19 +462,19 @@ describe("Test 7: the audit is complete, legal and immutable (APPR-08, T-06-07)"
       proposalId: a,
       decision: "approve",
       payloadHash: rig.hashOf(a),
-      via: "plugin",
+      channelHint: "plugin",
     });
     await rig.engine.decide({
       proposalId: b,
       decision: "deny",
       payloadHash: rig.hashOf(b),
-      via: "other",
+      channelHint: "other",
     });
     await rig.engine.decide({
       proposalId: c,
       decision: "deny",
       payloadHash: rig.hashOf(c),
-      via: "plugin",
+      channelHint: "plugin",
     });
     await rig.engine.settled();
     const via = (id: ProposalId, event: string) =>

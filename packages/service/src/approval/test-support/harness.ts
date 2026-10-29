@@ -7,7 +7,9 @@ import {
   type ApprovalLog,
   type ApprovalUpsertedPayload,
   CLASSIFICATION,
+  type ClassificationTable,
   type NoteId,
+  type PresencePort,
   type ProposalId,
   type Requester,
   type StoredProposal,
@@ -86,10 +88,14 @@ export interface HarnessOptions {
   readonly mirrorRejects?: boolean;
   readonly projectName?: ApprovalEngineDeps["projectName"];
   readonly claimFactsTimeoutMs?: number;
+  /** The classification the memory store decides against (default: production). Pair with a registry built over the same table. */
+  readonly table?: ClassificationTable;
+  /** The presence port the engine asks for presence-required approvals (default: the engine's unavailable port). */
+  readonly presence?: PresencePort;
 }
 
 export function createHarness(options: HarnessOptions = {}): Harness {
-  const store = createMemoryApprovalStore();
+  const store = createMemoryApprovalStore(options.table);
   const clock = createTestClock();
   const diagnostic = createFakeOperation("diagnostic.test");
   const terminate = createFakeOperation("session.force-terminate");
@@ -130,6 +136,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
       },
     },
     ...(options.projectName === undefined ? {} : { projectName: options.projectName }),
+    ...(options.presence === undefined ? {} : { presence: options.presence }),
     ...(options.claimFactsTimeoutMs === undefined
       ? {}
       : { claimFactsTimeoutMs: options.claimFactsTimeoutMs }),

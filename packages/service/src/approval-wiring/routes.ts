@@ -85,8 +85,8 @@ export function approvalsBudgetFor(restOfSnapshotBytes: number): number {
   return Math.max(0, Math.min(APPROVAL_RESPONSE_BUDGET_BYTES, remaining));
 }
 
-/** The decision channel: the plugin's own header value exactly, anything else is `other`. */
-function decidedViaOf(req: IncomingMessage) {
+/** The channel hint: the plugin's own header value exactly, anything else is `other`. Never `presence` (D-03). */
+function channelHintOf(req: IncomingMessage) {
   const raw = req.headers[DECIDED_VIA_HEADER.toLowerCase()];
   return normaliseDecidedVia(typeof raw === "string" ? raw : undefined);
 }
@@ -163,9 +163,12 @@ const getHandler = postRoute(
 /**
  * `POST /api/v1/approvals/decide`: approve once or deny one request. A business
  * outcome (decided, hash-mismatch, expired, already-decided, not-found,
- * operation-reserved) is a 200 in the closed vocabulary: the request was
- * understood, the answer is the outcome. The channel is derived from a client
- * header and recorded; it is an accident detector, never a trust signal (D-47).
+ * operation-reserved, presence-denied, presence-unavailable) is a 200 in the
+ * closed vocabulary: the request was understood, the answer is the outcome. The
+ * decided-via header is a hint for the audit trail on operations that need no
+ * presence; it is an accident detector, never a trust signal, and the engine
+ * never consults it to accept a decision. Authorisation for a connector-class
+ * approval is the engine's presence check (D-03, T-09-25).
  */
 const decideHandler = postRoute(
   APPROVAL_DECIDE_PATH,
@@ -175,7 +178,7 @@ const decideHandler = postRoute(
       proposalId: body.proposalId,
       decision: body.decision,
       payloadHash: body.payloadHash,
-      via: decidedViaOf(req),
+      channelHint: channelHintOf(req),
     });
     sendJson(res, 200, result);
   },

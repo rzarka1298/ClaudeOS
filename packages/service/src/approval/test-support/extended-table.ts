@@ -16,6 +16,18 @@ export const EXTENDED_TABLE = {
     presence: "none",
     summary: "send a fake message",
   },
+  // The connector-class shape (D-02): an enabled write that needs the owner's verified presence.
+  // Test-only: never in the production CLASSIFICATION, and named for a fake external write (GMAIL-08).
+  "connector.fake-write": {
+    class: "approval-required",
+    status: "enabled",
+    ttlMs: 60_000,
+    maxApprovalAgeMs: 60_000,
+    retry: "never",
+    modifiable: false,
+    presence: "required",
+    summary: "write to a fake external service",
+  },
   "connector.fake-reserved": {
     class: "approval-required",
     status: "reserved",

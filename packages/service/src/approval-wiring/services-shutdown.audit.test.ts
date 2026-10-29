@@ -102,7 +102,7 @@ describe("startApprovalServices.stop (D-09)", () => {
       proposalId: raised.proposalId,
       decision: "approve",
       payloadHash: found.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(started).toBe(true);

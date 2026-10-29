@@ -15,6 +15,7 @@ import {
   delay,
   FAKE_CONNECTOR,
   type OpenedEngine,
+  PROVING_PRESENCE,
   readExecutions,
 } from "./approval-fixtures.js";
 
@@ -64,7 +65,7 @@ describe("Test 2: twenty simultaneous approvals on one connection", () => {
             proposalId: id,
             decision: "approve",
             payloadHash: hash,
-            via: "plugin",
+            channelHint: "plugin",
           }),
         ),
       );
@@ -100,7 +101,7 @@ describe("Test 3: ten approvals on each of two database connections", () => {
             proposalId: id,
             decision: "approve",
             payloadHash: hash,
-            via: "plugin",
+            channelHint: "plugin",
           }),
         );
       }
@@ -154,7 +155,7 @@ const { parentPort, workerData } = require("node:worker_threads");
         proposalId: workerData.proposalId,
         decision: "approve",
         payloadHash: workerData.payloadHash,
-        via: "plugin",
+        channelHint: "plugin",
       }),
     ),
   );
@@ -223,7 +224,12 @@ describe("Test 4: a deny racing an approve", () => {
     const approveFirst = rig.propose();
     const denyFirst = rig.propose();
     const call = (id: string, decision: "approve" | "deny") =>
-      rig.engine.decide({ proposalId: id, decision, payloadHash: rig.hashOf(id), via: "plugin" });
+      rig.engine.decide({
+        proposalId: id,
+        decision,
+        payloadHash: rig.hashOf(id),
+        channelHint: "plugin",
+      });
 
     const [won, lost] = await Promise.all([
       call(approveFirst, "approve"),
@@ -267,7 +273,7 @@ describe("Test 4: a deny racing an approve", () => {
             proposalId: id,
             decision: step.decision,
             payloadHash: hash,
-            via: "plugin",
+            channelHint: "plugin",
           }),
         ),
       );
@@ -355,7 +361,11 @@ function sourceFiles(dir: string): string[] {
 describe("Test 7: the Phase 7 contract is the operation definition alone (D-43)", () => {
   it("runs a connector defined only in the fixtures exactly once, with no engine change", async () => {
     const connector = createFakeConnector();
-    const rig = rigs.start({ extraOperations: [connector.operation], table: connector.table });
+    const rig = rigs.start({
+      extraOperations: [connector.operation],
+      table: connector.table,
+      presence: PROVING_PRESENCE,
+    });
     const requester = { kind: "connector" as const, label: "Fake connector" };
 
     // The registry built from the injected copy accepts the extra definition; the engine is unchanged.
@@ -393,7 +403,7 @@ describe("Test 7: the Phase 7 contract is the operation definition alone (D-43)"
             proposalId: id,
             decision: "approve",
             payloadHash: hash,
-            via: "plugin",
+            channelHint: "plugin",
           }),
         ),
       );

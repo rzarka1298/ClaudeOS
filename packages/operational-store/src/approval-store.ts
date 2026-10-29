@@ -14,6 +14,7 @@ import {
   type DecidedVia,
   type DecideInput,
   type DecideResult,
+  type DecisionRefusalInput,
   type DiagnosticEffectsPort,
   dedupeKeyOf,
   type FinishInput,
@@ -528,6 +529,20 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     return approve ? { kind: "approved", proposal } : { kind: "denied", proposal };
   });
 
+  const refusalTx = immediate((input: DecisionRefusalInput): "recorded" | "not-pending" => {
+    const row = readRow(input.proposalId);
+    if (row?.state !== "pending") return "not-pending";
+    writeAudit(
+      row.proposal_id,
+      "presence-refused",
+      input.at,
+      null,
+      input.payloadHash,
+      input.detail,
+    );
+    return "recorded";
+  });
+
   const claimTx = immediate((proposalId: ProposalId, facts: string, now: string): ClaimResult => {
     const changed = claimOne.run({ proposalId, facts, now });
     if (changed.changes !== 1) return { kind: "lost" };
@@ -668,6 +683,15 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
       }
       if (!isDecidedVia(input.via)) throw new InvalidApprovalInputError("via");
       return decideTx(input);
+    },
+    recordDecisionRefusal(input: DecisionRefusalInput): "recorded" | "not-pending" {
+      assertProposalId(input.proposalId, "proposalId");
+      assertIso(input.at, "at");
+      if (typeof input.payloadHash !== "string") throw new InvalidApprovalInputError("payloadHash");
+      if (input.detail !== "presence-denied" && input.detail !== "presence-unavailable") {
+        throw new InvalidApprovalInputError("detail");
+      }
+      return refusalTx(input);
     },
     list(bucket: ApprovalBucket, limit: number): StoredProposal[] {
       if (!BUCKETS.includes(bucket)) throw new InvalidApprovalInputError("bucket");

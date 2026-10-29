@@ -38,7 +38,7 @@ async function approve(h: Harness, id: string): Promise<DecideResponse> {
     proposalId: id,
     decision: "approve",
     payloadHash: stored?.payloadHash ?? "",
-    via: "plugin",
+    channelHint: "plugin",
   });
 }
 
@@ -122,7 +122,7 @@ describe("tracer: submit, approve, claim, execute, finish (Task 1)", () => {
         proposalId: id,
         decision: "deny",
         payloadHash: stored?.payloadHash ?? "",
-        via: "plugin",
+        channelHint: "plugin",
       });
       expect(result.outcome).toBe("decided");
       if (result.outcome === "decided") expect(result.approval.state).toBe("denied");
@@ -167,7 +167,7 @@ describe("tracer: submit, approve, claim, execute, finish (Task 1)", () => {
       expect(h.diagnostic.executeCalls[0]?.payload).toEqual({ note: "from the row" });
     });
 
-    it("a decide request cannot carry a payload: the input has only id, decision, hash and via", async () => {
+    it("a decide request cannot carry a payload: the input has only id, decision, hash and channelHint", async () => {
       const h = createHarness();
       const id = h.propose({ payload: { note: "from the row" } });
       const stored = h.store.get(id);
@@ -175,7 +175,7 @@ describe("tracer: submit, approve, claim, execute, finish (Task 1)", () => {
         proposalId: id,
         decision: "approve",
         payloadHash: stored?.payloadHash ?? "",
-        via: "plugin",
+        channelHint: "plugin",
         // @ts-expect-error a payload field is not part of the decide input
         payload: { note: "smuggled" },
       });
@@ -295,7 +295,7 @@ async function decideWith(
     proposalId: id,
     decision,
     payloadHash: hash ?? h.store.get(id as ProposalId)?.payloadHash ?? "",
-    via,
+    channelHint: via,
   });
 }
 
@@ -390,7 +390,9 @@ describe("submit rejections (Task 2, Test 2)", () => {
     const h = createHarness({
       registry: ([a, b]) =>
         buildOperationRegistry(
-          [a, b, third].map((f) => f?.definition).filter((d) => d !== undefined),
+          [a, b, third, fakeNamed("connector.fake-write")]
+            .map((f) => f?.definition)
+            .filter((d) => d !== undefined),
           EXTENDED_TABLE,
         ),
     });
@@ -887,7 +889,7 @@ describe("withdraw and decidedVia (Task 2, Test 10)", () => {
       proposalId: c,
       decision: "deny",
       payloadHash: h.store.get(c)?.payloadHash ?? "",
-      via: "someone-else" as never,
+      channelHint: "someone-else" as never,
     });
     await h.engine.settled();
     expect(h.store.get(a)?.decidedVia).toBe("other");

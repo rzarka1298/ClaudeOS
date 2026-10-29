@@ -52,7 +52,11 @@ describe("the approval store has no way to write an audit row alone (D-13)", () 
     applyMigrations(db);
     const names = Object.keys(createApprovalStore(db));
     expect(names.filter((n) => /audit/i.test(n))).toEqual(["auditFor"]);
-    expect(names.filter((n) => /^(append|insert|write|record|log)/i.test(n))).toEqual([]);
+    // The one audited non-transition (09-14, D-01): a refused presence-required approve is on the
+    // record while the request stays pending. It changes no state, so state and audit cannot disagree.
+    expect(names.filter((n) => /^(append|insert|write|record|log)/i.test(n))).toEqual([
+      "recordDecisionRefusal",
+    ]);
     db.close();
   });
 });

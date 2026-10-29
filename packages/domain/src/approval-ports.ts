@@ -91,6 +91,24 @@ export interface DecideInput {
   readonly expectedHash: string;
   readonly now: string;
   readonly via: DecidedVia;
+  /**
+   * The instant the owner vouched for the approval (D-01): fixed before a presence prompt, so it can be
+   * earlier than `now`. Absent, the store records `now` as before. Never later than `now`. The expiry
+   * check still runs against `now`, so a request that lapsed while the prompt was up is expired.
+   */
+  readonly approvedAt?: string;
+}
+
+/** Why a presence-required approve was refused without deciding the request (D-01). */
+export type PresenceRefusalDetail = "presence-denied" | "presence-unavailable";
+
+/** What the engine hands the store to put a presence refusal on the record. */
+export interface DecisionRefusalInput {
+  readonly proposalId: ProposalId;
+  readonly at: string;
+  /** The payload hash the owner was asked to approve. */
+  readonly payloadHash: string;
+  readonly detail: PresenceRefusalDetail;
 }
 
 export type DecideResult =
@@ -141,7 +159,8 @@ export type ApprovalBucket = "pending" | "decided" | "expired";
  * The persistence port. Synchronous: it is implemented over better-sqlite3 in
  * the operational store. Every method is ONE transaction that includes its own
  * audit row, and there is deliberately no method that writes an audit row on
- * its own, so "state and audit disagree" is unrepresentable (D-13, Pitfall 2).
+ * its own, so "state and audit disagree" is unrepresentable (D-13, Pitfall 2). The one
+ * exception, `recordDecisionRefusal`, records a refusal that changes no state (09-14).
  * Every state change is a compare-and-set on the source state; losing the race
  * returns a result, never an exception.
  */
@@ -151,6 +170,12 @@ export interface ApprovalStorePort {
   list(bucket: ApprovalBucket, limit: number): StoredProposal[];
   counts(): { readonly pending: number; readonly decided: number; readonly expired: number };
   decide(input: DecideInput): DecideResult;
+  /**
+   * Puts a refused presence-required approve on the record: one `presence-refused` audit row with the
+   * refusal as its detail, no state or revision change. `not-pending` (and nothing written) when the
+   * request is no longer pending.
+   */
+  recordDecisionRefusal(input: DecisionRefusalInput): "recorded" | "not-pending";
   /** `approved` to `executing`: the single-use claim, recording the facts gathered beforehand. */
   claim(proposalId: ProposalId, facts: ClaimFacts, now: string): ClaimResult;
   /** The one retry after a restart: attempt 2, with the same idempotency key. */

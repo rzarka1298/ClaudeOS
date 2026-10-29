@@ -18,6 +18,7 @@ import {
   canonicalJson,
   type DecidedVia,
   type DecideResponse,
+  type DecideResult,
   dedupeKeyOf,
   type EnabledOperation,
   type ExecuteContext,
@@ -31,6 +32,8 @@ import {
   normaliseDecidedVia,
   type OperationDefinition,
   PAYLOAD_HASH_PATTERN,
+  type PresencePort,
+  type PresenceResult,
   type ProposalId,
   ProposalIdSchema,
   type Requester,
@@ -38,6 +41,7 @@ import {
   RunIdSchema,
   resolveTtlMs,
   type StoredProposal,
+  type UnverifiedDecidedVia,
 } from "@ccc/domain";
 import { payloadHashOf, recomputeFromStored } from "./canonical-hash.js";
 import { mintToken } from "./mint/mint-token.js";
@@ -140,7 +144,25 @@ export interface ApprovalEngineDeps {
   readonly projectName?: (projectId: string) => string | null;
   /** The longest `claimFacts` may take before the claim goes ahead with no facts. Defaults to 5000. */
   readonly claimFactsTimeoutMs?: number;
+  /**
+   * Verifies the owner's presence for an approve whose classification row says `presence: "required"`
+   * (D-01, D-02). Absent, {@link UNAVAILABLE_PRESENCE} stands in, so every such approval fails closed.
+   */
+  readonly presence?: PresencePort;
 }
+
+/**
+ * The port used when none is wired: it can prove nothing and says so, so a presence-required approval
+ * is refused `presence-unavailable` rather than waved through (D-01).
+ */
+export const UNAVAILABLE_PRESENCE: PresencePort = {
+  async prove() {
+    return { kind: "unavailable" };
+  },
+  async availability() {
+    return "unavailable";
+  },
+};
 
 const DEFAULT_CLAIM_FACTS_TIMEOUT_MS = 5000;
 
@@ -190,7 +212,11 @@ export interface EngineDecideInput {
   readonly proposalId: string;
   readonly decision: ApprovalDecision;
   readonly payloadHash: string;
-  readonly via: DecidedVia;
+  /**
+   * An unverified hint recorded for operations that need no presence; never consulted for a
+   * presence-required approval (D-03). It can never produce `presence`: only a proved check does.
+   */
+  readonly channelHint: UnverifiedDecidedVia;
 }
 
 /** The detail of one request: the service-built view, or the reason there is none, plus what is always known. */
@@ -300,6 +326,7 @@ function isoAfter(now: string, ms: number): string {
 
 export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
   const { store, registry, clock, publisher, mirror, log } = deps;
+  const presence = deps.presence ?? UNAVAILABLE_PRESENCE;
   const ids = deps.ids ?? { proposalId: newProposalId, noteId: newNoteId };
   const ledger = createTokenLedger();
   const inflight = new Set<Promise<void>>();
@@ -549,8 +576,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
 
   async function decide(input: EngineDecideInput): Promise<DecideResponse> {
     // Shutting down: a late decision must not claim, start or even approve anything. The closed
-    // DecideResponse vocabulary has no "unavailable" outcome (adding one ripples through the domain,
-    // client and plugin); "operation-reserved" is the closest refusal that leaves the request untouched.
+    // DecideResponse vocabulary's `presence-unavailable` means the owner's presence could not be
+    // checked, which is not this; "operation-reserved" is the closest refusal that leaves the request untouched.
     if (stopping) return { outcome: "operation-reserved" };
     const id = ProposalIdSchema.safeParse(input.proposalId);
     if (!id.success) return { outcome: "not-found" };
@@ -577,15 +604,34 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
         log.error({ proposalId, code: "stored-hash-mismatch", payloadHash: current.payloadHash });
         return { outcome: "hash-mismatch" };
       }
+      // Denial never asks for presence (R-03); a presence-required approve goes through the gate (D-01).
+      if (input.decision === "approve" && presenceRequired(current.operation)) {
+        return decideWithPresence(current);
+      }
     }
 
-    const result = store.decide({
+    return settleDecision(
       proposalId,
-      decision: input.decision,
-      expectedHash: input.payloadHash,
-      now: clock.now(),
-      via: normaliseDecidedVia(input.via),
-    });
+      store.decide({
+        proposalId,
+        decision: input.decision,
+        expectedHash: input.payloadHash,
+        now: clock.now(),
+        via: channelOf(input),
+      }),
+    );
+  }
+
+  /** The recorded channel of an ungated decision: the hint, with `presence` unreachable from outside (D-03). */
+  function channelOf(input: EngineDecideInput): DecidedVia {
+    return normaliseDecidedVia(input.channelHint);
+  }
+
+  /** Turns the store's answer into the closed response, announcing and starting the effect as the result calls for. */
+  function settleDecision(
+    proposalId: ProposalId,
+    result: DecideResult,
+  ): Promise<DecideResponse> | DecideResponse {
     switch (result.kind) {
       case "not-found":
         return { outcome: "not-found" };
@@ -607,6 +653,80 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
         announce(result.proposal);
         return approvedFlow(result.proposal);
     }
+  }
+
+  // --- the presence gate (D-01, D-02, D-03, R-03) -----------------------------
+
+  /** True when approving `operation` needs the owner's verified presence. An unreadable row fails closed. */
+  function presenceRequired(operation: string): boolean {
+    const row = Object.hasOwn(registry.table, operation) ? registry.table[operation] : undefined;
+    return row?.class === "approval-required" && row.presence !== "none";
+  }
+
+  /**
+   * An approve of a presence-required request: the owner's presence is asked for BEFORE the store is
+   * asked to decide, never inside its transaction, so no database lock is held across a prompt
+   * (D-01). Only a `proved` answer reaches `store.decide`; a refusal stays on the record and leaves
+   * the request pending.
+   */
+  async function decideWithPresence(current: StoredProposal): Promise<DecideResponse> {
+    const proposalId = current.proposalId;
+    const approvedAt = clock.now();
+    let result: PresenceResult;
+    try {
+      result = await presence.prove({
+        proposalId,
+        operation: current.operation,
+        payloadHash: current.payloadHash,
+        approvedAt,
+      });
+    } catch {
+      // A port that fails is a port that proved nothing; never log the error text.
+      log.warn({ proposalId, code: "presence-check-failed" });
+      result = { kind: "unavailable" };
+    }
+    if (result.kind !== "proved") {
+      return refuseApprove(
+        current,
+        result.kind === "denied" ? "presence-denied" : "presence-unavailable",
+      );
+    }
+    // Shutting down mid-prompt: the request stays pending for the next boot.
+    if (stopping) return { outcome: "operation-reserved" };
+    return settleDecision(
+      proposalId,
+      store.decide({
+        proposalId,
+        decision: "approve",
+        expectedHash: current.payloadHash,
+        now: clock.now(),
+        approvedAt,
+        via: "presence",
+      }),
+    );
+  }
+
+  /** Puts a refused presence-required approve on the record and answers in the closed vocabulary. */
+  function refuseApprove(
+    current: StoredProposal,
+    detail: "presence-denied" | "presence-unavailable",
+  ): DecideResponse {
+    const proposalId = current.proposalId;
+    const recorded = store.recordDecisionRefusal({
+      proposalId,
+      at: clock.now(),
+      payloadHash: current.payloadHash,
+      detail,
+    });
+    log.warn({ proposalId, code: "presence-refused", detail });
+    if (recorded === "not-pending") {
+      // Decided, expired or withdrawn while the prompt was up: say what happened, not the refusal.
+      const now = store.get(proposalId);
+      return now === null
+        ? { outcome: "not-found" }
+        : { outcome: "already-decided", state: now.state };
+    }
+    return { outcome: detail };
   }
 
   /** Claim, then start the effect WITHOUT awaiting it: decide returns once the request is `executing` (D-14). */

@@ -141,7 +141,7 @@ describe("startApprovalServices: shutdown refuses late decisions (wave-5 review)
       proposalId: one.proposalId,
       decision: "approve",
       payloadHash: oneFound.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(ops.executed).toHaveLength(1);
 
@@ -157,7 +157,7 @@ describe("startApprovalServices: shutdown refuses late decisions (wave-5 review)
       proposalId: two.proposalId,
       decision: "approve",
       payloadHash: twoFound.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(late.outcome).not.toBe("decided");
     await runtime.settled();
@@ -254,7 +254,7 @@ describe("startApprovalServices: the test approval round trip (Task 1, Tests 1 a
       proposalId,
       decision: "approve",
       payloadHash: found.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(decided.outcome).toBe("decided");
     await runtime.settled();
@@ -264,7 +264,7 @@ describe("startApprovalServices: the test approval round trip (Task 1, Tests 1 a
       proposalId,
       decision: "approve",
       payloadHash: found.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(again.outcome).toBe("already-decided");
     await runtime.settled();
@@ -309,7 +309,7 @@ describe("startApprovalServices: the test approval round trip (Task 1, Tests 1 a
       proposalId: raised.proposalId,
       decision: "approve",
       payloadHash: flipOneCharacter(found.payloadHash),
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(result.outcome).toBe("hash-mismatch");
     await runtime.settled();
@@ -328,7 +328,7 @@ describe("startApprovalServices: the test approval round trip (Task 1, Tests 1 a
       proposalId: raised.proposalId,
       decision: "deny",
       payloadHash: found.payloadHash,
-      via: "other",
+      channelHint: "other",
     });
     const after = runtime.services.get(raised.proposalId);
     if (after.kind !== "found") throw new Error("expected found");
