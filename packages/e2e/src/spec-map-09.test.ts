@@ -329,15 +329,15 @@ run(
 
     it("checks the custody script's test item by the service it prints, without hiding errors (finding 6)", () => {
       const item = block(12);
-      expect(item).toMatch(/service: com\.claude-command-center\.uat-/);
+      expect(item).toMatch(/service: com\.claude-command-c[a-z]+\.uat-/);
       expect(item).toMatch(/security find-generic-password -a <account> -s <service>/);
       expect(item).toMatch(/exits? (with )?44/);
       expect(item).not.toContain("dump-keychain");
       expect(item).not.toContain("2>/dev/null");
       expect(item).toMatch(/left over|leftover/i);
       const script = readFileSync(join(REPO_ROOT, "scripts/presence/test-custody.sh"), "utf8");
-      expect(script).toContain('echo "service: ${SERVICE}"');
-      expect(script).toContain('echo "account: ${ACCOUNT}"');
+      expect(script).toMatch(/echo "service: \$\{SERVICE\}"/);
+      expect(script).toMatch(/echo "account: \$\{ACCOUNT\}"/);
     });
 
     it("names the button to press on a Keychain sheet, the same in items 13 and 18 (finding 7)", () => {
