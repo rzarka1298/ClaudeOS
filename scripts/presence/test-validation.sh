@@ -105,6 +105,10 @@ stub_build cancel-malformed "${CANCEL}" 60 malformed
 stub_build accept-signfail "${ACCEPT}" 60 current fail
 stub_build accept-delfail "${ACCEPT}" 60 current ok -25244
 stub_build accept-lookuperr "${ACCEPT}" 60 error
+# The prompt stub test-custody.sh uses (one binary, outcome chosen by an env read that exists only in the copy).
+CUSTODY_STUB=$(sed -n "s/^stub_build harness '\(.*\)'\$/\1/p" "${HERE}/test-custody.sh" | sed 's/\\&/\&/g')
+[ -n "${CUSTODY_STUB}" ] || { echo "FATAL: test-custody.sh has no harness stub" >&2; exit 1; }
+stub_build selectable "${CUSTODY_STUB}" 60 current
 
 PID=$(printf 'a%.0s' $(seq 25))
 MSGHASH=$(printf 'b%.0s' $(seq 64))
@@ -133,6 +137,12 @@ OUT=$("${WORK}/cancel" prove --message "${GOOD}"); RC=$?
 [ "${RC}" -eq 4 ] && [ "${OUT}" = '{"v":1,"result":"denied","error":-2}' ] && check ok "cancel: denied, LAError code, no cause" || check no "cancel: denied, LAError code, no cause (rc ${RC}: ${OUT})"
 OUT=$("${WORK}/silent" prove --message "${GOOD}"); RC=$?
 [ "${RC}" -eq 4 ] && [ "${OUT}" = '{"v":1,"result":"denied","error":-9,"cause":"timeout"}' ] && check ok "timeout: denied, exit 4, cause timeout" || check no "timeout: denied, exit 4, cause timeout (rc ${RC}: ${OUT})"
+
+# test-custody.sh's single harness binary: unset env accepts, CCC_HARNESS_PROMPT=cancel cancels, same binary.
+OUT=$("${WORK}/selectable" prove --message "${GOOD}"); RC=$?
+[ "${RC}" -eq 0 ] && printf '%s' "${OUT}" | grep -q '"result":"proved"' && check ok "custody harness stub: accepts by default" || check no "custody harness stub: accepts by default (rc ${RC}: ${OUT})"
+OUT=$(CCC_HARNESS_PROMPT=cancel "${WORK}/selectable" prove --message "${GOOD}"); RC=$?
+[ "${RC}" -eq 4 ] && [ "${OUT}" = '{"v":1,"result":"denied","error":-2}' ] && check ok "custody harness stub: CCC_HARNESS_PROMPT=cancel cancels on the same binary" || check no "custody harness stub: cancel (rc ${RC}: ${OUT})"
 
 # M1 (FIX6B): a pin that a different binary enrolled (a rebuild without re-enrol) is stale: reported before any prompt.
 OUT=$("${WORK}/accept-stale" prove --message "${GOOD}"); RC=$?
@@ -228,5 +238,8 @@ OUT=$("${REAL}" unenrol extra); RC=$?
 [ "${RC}" -eq 2 ] && [ "${OUT}" = '{"v":1,"error":"usage"}' ] && check ok "unenrol with an extra argument is a usage error (nothing is deleted)" || check no "unenrol with an extra argument is a usage error (rc ${RC}: ${OUT})"
 OUT=$("${REAL}" bogus); RC=$?
 [ "${RC}" -eq 2 ] && check ok "unknown subcommand: exit 2" || check no "unknown subcommand: exit 2 (rc ${RC})"
+
+# test-custody.sh (owner-run, not runnable by an agent) is checked statically: one enrolling binary for every case.
+sh "${HERE}/test-custody-fixture.sh" || FAIL=1
 
 exit "${FAIL}"
