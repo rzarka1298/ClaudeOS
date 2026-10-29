@@ -1,22 +1,31 @@
 import { describe, expect, it } from "vitest";
-import type { PinObservation, PresenceInspection } from "./approval-wiring/presence.js";
+import type {
+  ObservedPin,
+  PinObservation,
+  PresenceInspection,
+} from "./approval-wiring/presence.js";
 import { createApprovalPresenceDiagnosticsPort } from "./diagnostics-wiring.js";
 
 /**
  * Plan 09-19 Task 1 (D-04, T-09-42, T-09-43): the presence check the diagnostics services are handed. It folds the
  * helper's own non-prompting check and the guarded pin read into one closed answer, and it can never say
  * `available` unless both agree. Fakes only: no helper is started and no Keychain item is read.
+ *
+ * 09-FIX10A: the pin read returns the conclusion of that very read (`ObservedPin`); there is no shared "latest
+ * observation" slot for a concurrent approval read to overwrite.
  */
+
+function observed(observation: PinObservation, pin: string | null = "pin"): ObservedPin {
+  return { pin, observation };
+}
 
 function build(options: {
   sandbox?: boolean;
   helperPresent?: boolean;
   inspection?: PresenceInspection | (() => Promise<PresenceInspection>);
-  pin?: PinObservation | null;
-  pinRead?: string | null;
+  read?: ObservedPin | (() => Promise<ObservedPin>);
 }) {
   const calls = { inspect: 0, readPin: 0 };
-  let observation: PinObservation | null = null;
   const port = createApprovalPresenceDiagnosticsPort({
     sandbox: options.sandbox ?? false,
     helperPresent: () => options.helperPresent ?? true,
@@ -27,15 +36,15 @@ function build(options: {
     },
     readPin: async () => {
       calls.readPin += 1;
-      observation = options.pin ?? null;
-      return options.pinRead === undefined ? "pin" : options.pinRead;
+      const r = options.read ?? observed(TRUSTED);
+      return typeof r === "function" ? r() : r;
     },
-    lastPinObservation: () => observation,
   });
   return { port, calls };
 }
 
 const TRUSTED: PinObservation = { verdict: "trusted", fingerprint: "0a1b2c3d" };
+const NO_PIN: PinObservation = { verdict: "none", fingerprint: null };
 const signal = new AbortController().signal;
 
 describe("precheck: what is knowable without starting anything", () => {
@@ -49,7 +58,7 @@ describe("precheck: what is knowable without starting anything", () => {
 
 describe("check: available only when the helper and the pin agree", () => {
   it("a trusted pin with an available helper check is available, with the pin's fingerprint", async () => {
-    const { port, calls } = build({ pin: TRUSTED });
+    const { port, calls } = build({ read: observed(TRUSTED) });
     expect(await port.check(signal)).toEqual({
       state: "available",
       reason: null,
@@ -59,12 +68,14 @@ describe("check: available only when the helper and the pin agree", () => {
   });
 
   it("an adopted pin is available too (an install just replaced it)", async () => {
-    const { port } = build({ pin: { verdict: "adopted", fingerprint: "11223344" } });
+    const { port } = build({ read: observed({ verdict: "adopted", fingerprint: "11223344" }) });
     expect(await port.check(signal)).toMatchObject({ state: "available", fingerprint: "11223344" });
   });
 
   it("a changed pin is unavailable with pin-changed even when the helper check says available, and shows the new fingerprint", async () => {
-    const { port } = build({ pin: { verdict: "changed", fingerprint: "deadbeef" }, pinRead: null });
+    const { port } = build({
+      read: observed({ verdict: "changed", fingerprint: "deadbeef" }, null),
+    });
     expect(await port.check(signal)).toEqual({
       state: "unavailable",
       reason: "pin-changed",
@@ -76,15 +87,14 @@ describe("check: available only when the helper and the pin agree", () => {
     for (const reason of ["not-enrolled", "pin-stale"] as const) {
       const { port } = build({
         inspection: { state: "unavailable", reason },
-        pin: { verdict: "changed", fingerprint: "deadbeef" },
-        pinRead: null,
+        read: observed({ verdict: "changed", fingerprint: "deadbeef" }, null),
       });
       expect(await port.check(signal), reason).toMatchObject({ reason: "pin-changed" });
     }
   });
 
   it("the helper says enrolled but the service cannot read the pin: unavailable (check-failed), never available", async () => {
-    const { port } = build({ pin: { verdict: "none", fingerprint: null }, pinRead: null });
+    const { port } = build({ read: observed(NO_PIN, null) });
     expect(await port.check(signal)).toEqual({
       state: "unavailable",
       reason: "check-failed",
@@ -95,8 +105,7 @@ describe("check: available only when the helper and the pin agree", () => {
   it("not enrolled, stale and cannot-evaluate keep their reason; the pin is read for the first two only", async () => {
     const a = build({
       inspection: { state: "unavailable", reason: "not-enrolled" },
-      pin: { verdict: "none", fingerprint: null },
-      pinRead: null,
+      read: observed(NO_PIN, null),
     });
     expect(await a.port.check(signal)).toEqual({
       state: "unavailable",
@@ -105,7 +114,7 @@ describe("check: available only when the helper and the pin agree", () => {
     });
     const b = build({
       inspection: { state: "unavailable", reason: "pin-stale" },
-      pin: TRUSTED,
+      read: observed(TRUSTED),
     });
     expect(await b.port.check(signal)).toEqual({
       state: "unavailable",
@@ -131,26 +140,21 @@ describe("check: available only when the helper and the pin agree", () => {
   });
 
   it("a throwing helper check or pin read is check-failed", async () => {
-    const throwing = build({
-      inspection: () => Promise.reject(new Error("boom")),
-      pin: TRUSTED,
-    });
+    const throwing = build({ inspection: () => Promise.reject(new Error("boom")) });
     expect(await throwing.port.check(signal)).toEqual({
       state: "unavailable",
       reason: "check-failed",
       fingerprint: null,
     });
-    let observation: PinObservation | null = null;
-    const port = createApprovalPresenceDiagnosticsPort({
-      sandbox: false,
-      helperPresent: () => true,
-      inspect: async () => ({ state: "available", reason: null }),
-      readPin: async () => {
-        throw new Error("boom");
-      },
-      lastPinObservation: () => observation,
+    const badRead = build({ read: () => Promise.reject(new Error("boom")) });
+    expect(await badRead.port.check(signal)).toMatchObject({
+      state: "unavailable",
+      reason: "check-failed",
     });
-    observation = TRUSTED;
+  });
+
+  it("a read that answers without an observation is check-failed, never available", async () => {
+    const { port } = build({ read: (() => Promise.resolve({ pin: "pin" })) as never });
     expect(await port.check(signal)).toMatchObject({
       state: "unavailable",
       reason: "check-failed",
@@ -166,23 +170,33 @@ describe("check: available only when the helper and the pin agree", () => {
     });
     expect(calls).toEqual({ inspect: 0, readPin: 0 });
   });
+});
 
-  it("an observation left by an earlier read (a boot or approve read) is not mistaken for this read's", async () => {
-    // The fake pin reader sets no observation this time: the stale one must not make the answer available.
-    let observation: PinObservation | null = TRUSTED;
-    const port = createApprovalPresenceDiagnosticsPort({
-      sandbox: false,
-      helperPresent: () => true,
-      inspect: async () => ({ state: "available", reason: null }),
-      readPin: async () => "pin",
-      lastPinObservation: () => observation,
-      clearPinObservation: () => {
-        observation = null;
+describe("09-FIX10A MAJOR 1: the observation belongs to the read that made it (no shared last-read slot)", () => {
+  it("concurrent reads each report their own conclusion: a trusted read elsewhere cannot turn this read's changed pin into available", async () => {
+    // Two reads in flight through one guard: this check's read concluded `changed`, an approval's concluded
+    // `trusted`, and the approval's resolves last. Reproduced with the shared slot: the changed pin was reported
+    // available. Each read now carries its own observation.
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const mine = observed({ verdict: "changed", fingerprint: "deadbeef" }, null);
+    const theirs = observed({ verdict: "trusted", fingerprint: "0a1b2c3d" });
+    const { port } = build({
+      read: async () => {
+        // The approval's read settles while this one is still resolving.
+        void Promise.resolve(theirs);
+        await gate;
+        return mine;
       },
     });
-    expect(await port.check(signal)).toMatchObject({
+    const pending = port.check(signal);
+    release();
+    expect(await pending).toEqual({
       state: "unavailable",
-      reason: "check-failed",
+      reason: "pin-changed",
+      fingerprint: "deadbeef",
     });
   });
 });

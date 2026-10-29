@@ -1,6 +1,6 @@
 import { MIN_SUPPORTED_CLAUDE_VERSION } from "@ccc/collectors";
 import type { ApprovalPresenceReason, ResearchStatusResponse } from "@ccc/domain";
-import type { PinObservation, PresenceInspection } from "./approval-wiring/presence.js";
+import type { ObservedPin, PresenceInspection } from "./approval-wiring/presence.js";
 import type { UsageServices } from "./claude/usage-services.js";
 import type { CodexIntegrationService } from "./codex/integration-routes.js";
 import type {
@@ -145,12 +145,12 @@ export interface ApprovalPresenceDiagnosticsDeps {
   readonly helperPresent: () => boolean;
   /** The helper port's non-prompting `check`, with the closed reason when unavailable. */
   readonly inspect: () => Promise<PresenceInspection>;
-  /** The GUARDED pin reader: an attribute-only Keychain read that also records the trust verdict. */
-  readonly readPin: () => Promise<string | null>;
-  /** The conclusion of the most recent guarded read (set by the guard's `observe`), or null. */
-  readonly lastPinObservation: () => PinObservation | null;
-  /** Forgets the last conclusion, so the read this check makes is the one it reports. */
-  readonly clearPinObservation?: (() => void) | undefined;
+  /**
+   * The GUARDED pin reader, returning the pin AND the conclusion of this very read: an attribute-only Keychain
+   * read. There is no shared "latest observation" state, so a concurrent approval read cannot change what this
+   * check reports (09-FIX10A).
+   */
+  readonly readPin: () => Promise<ObservedPin>;
 }
 
 const CHECK_FAILED: ApprovalPresenceCheck = {
@@ -201,15 +201,14 @@ export function createApprovalPresenceDiagnosticsPort(
       if (inspection.reason !== null && SETTLED_BY_HELPER.includes(inspection.reason)) {
         return { state: "unavailable", reason: inspection.reason, fingerprint: null };
       }
-      deps.clearPinObservation?.();
+      let observed: ObservedPin["observation"];
       try {
-        await deps.readPin();
+        observed = (await deps.readPin()).observation;
       } catch {
         return CHECK_FAILED;
       }
       if (signal.aborted) return CHECK_FAILED;
-      const observed = deps.lastPinObservation();
-      if (observed === null) return CHECK_FAILED;
+      if (typeof observed !== "object" || observed === null) return CHECK_FAILED;
       if (observed.verdict === "changed") {
         return { state: "unavailable", reason: "pin-changed", fingerprint: observed.fingerprint };
       }

@@ -951,3 +951,52 @@ describe("09-19: guardPinReader reports what it saw (verdict and a short non-sec
     expect(await read()).toBe("pin");
   });
 });
+
+describe("09-FIX10A: observed() hands each read its own conclusion", () => {
+  const sha = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+  it("two reads in flight through one guard each report their own verdict, whichever settles last", async () => {
+    const pins = ["pin-two", "pin-one"];
+    const releases: (() => void)[] = [];
+    const guard = guardPinReader({
+      read: () =>
+        new Promise<string | null>((resolve) => {
+          const pin = pins.shift() ?? null;
+          releases.push(() => resolve(pin));
+        }),
+      recorded: { get: () => sha("pin-one"), set: () => undefined },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+    });
+    const first = guard.observed(); // sees pin-two: changed
+    const second = guard.observed(); // sees pin-one: trusted
+    releases[1]?.();
+    releases[0]?.();
+    expect(await second).toEqual({
+      pin: "pin-one",
+      observation: { verdict: "trusted", fingerprint: sha("pin-one").slice(0, 8) },
+    });
+    expect(await first).toEqual({
+      pin: null,
+      observation: { verdict: "changed", fingerprint: sha("pin-two").slice(0, 8) },
+    });
+  });
+
+  it("the plain reader and observed() are one guard: same pin, same record", async () => {
+    let recorded: string | null = null;
+    const guard = guardPinReader({
+      read: async () => "pin-one",
+      recorded: {
+        get: () => recorded,
+        set: (v) => {
+          recorded = v;
+        },
+      },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+    });
+    expect(await guard()).toBe("pin-one");
+    expect(recorded).toBe(sha("pin-one"));
+    expect((await guard.observed()).observation.verdict).toBe("trusted");
+  });
+});

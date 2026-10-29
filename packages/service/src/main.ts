@@ -19,7 +19,6 @@ import {
   createInstallMarker,
   guardPinReader,
   isPresenceSandbox,
-  type PinObservation,
   PRESENCE_PIN_INSTALL_MARKER,
   PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS,
   PRESENCE_PIN_META_KEY,
@@ -383,14 +382,10 @@ async function main(): Promise<void> {
     exists: existsSync,
     homeDir,
   });
-  // What the guard concluded on its latest read, for Diagnostics (09-19): a verdict and a short non-secret
-  // fingerprint, never the pin.
-  let pinObservation: PinObservation | null = null;
+  // Diagnostics reads the pin through `presencePinReader.observed`, which returns the conclusion of that very read
+  // (a verdict and a short non-secret fingerprint, never the pin): no shared "latest" state (09-FIX10A).
   const presencePinReader = guardPinReader({
     read: pinReaderFromEnv(process.env, readItemComment),
-    observe: (observation) => {
-      pinObservation = observation;
-    },
     recorded: {
       get: () => store.readServiceMeta(PRESENCE_PIN_META_KEY),
       set: (sha256Hex) => store.writeServiceMeta(PRESENCE_PIN_META_KEY, sha256Hex),
@@ -536,11 +531,7 @@ async function main(): Promise<void> {
         sandbox: isPresenceSandbox(process.env),
         helperPresent: () => existsSync(presenceHelperPath(runtimeDir)),
         inspect: () => presencePort.inspect(),
-        readPin: presencePinReader,
-        lastPinObservation: () => pinObservation,
-        clearPinObservation: () => {
-          pinObservation = null;
-        },
+        readPin: presencePinReader.observed,
       }),
       db: store.db,
       now: () => new Date(),

@@ -443,23 +443,42 @@ export interface PinGuardDeps {
  * (or that also rewrites the record in the service store) is adopted, which is why the spike keeps the verdict at
  * partially met.
  */
-export function guardPinReader(deps: PinGuardDeps): PinReader {
+export function guardPinReader(deps: PinGuardDeps): GuardedPinReader {
+  const observed = guardPinReaderObserved(deps);
+  const read: PinReader = async () => (await observed()).pin;
+  return Object.assign(read, { observed });
+}
+
+/** A {@link PinReader} that also offers {@link ObservedPin} reads (same guard, same record, same warnings). */
+export type GuardedPinReader = PinReader & { readonly observed: () => Promise<ObservedPin> };
+
+/** One guarded read's result together with the conclusion that read itself reached (09-FIX10A). */
+export interface ObservedPin {
+  readonly pin: string | null;
+  readonly observation: PinObservation;
+}
+
+/**
+ * The guard behind {@link guardPinReader}, handing back, with each read's pin, the conclusion THAT read reached. Diagnostics uses
+ * this instead of a shared "latest observation" slot, which a concurrent approval read could overwrite between a
+ * check's read and its look at the slot. `deps.observe` still hears every conclusion.
+ */
+export function guardPinReaderObserved(deps: PinGuardDeps): () => Promise<ObservedPin> {
   const warned = new Set<string>();
   let markerIgnoredLogged = false;
-  const observe = (observation: PinObservation): void => {
+  const NONE: PinObservation = { verdict: "none", fingerprint: null };
+  const conclude = (pin: string | null, observation: PinObservation): ObservedPin => {
     try {
       deps.observe?.(observation);
     } catch {
       // A listener's failure never changes what the guard returns.
     }
+    return { pin, observation };
   };
   return async () => {
     try {
       const pin = await deps.read();
-      if (pin === null) {
-        observe({ verdict: "none", fingerprint: null });
-        return null;
-      }
+      if (pin === null) return conclude(null, NONE);
       const fingerprint = createHash("sha256").update(pin, "utf8").digest("hex");
       const shortFingerprint = fingerprint.slice(0, 8);
       const recorded = deps.recorded.get();
@@ -477,31 +496,26 @@ export function guardPinReader(deps: PinGuardDeps): PinReader {
       if (recorded === null) {
         deps.recorded.set(fingerprint);
         if (installing) deps.installMarker.clear();
-        observe({ verdict: "trusted", fingerprint: shortFingerprint });
-        return pin;
+        return conclude(pin, { verdict: "trusted", fingerprint: shortFingerprint });
       }
       if (recorded === fingerprint) {
         if (installing) deps.installMarker.clear();
-        observe({ verdict: "trusted", fingerprint: shortFingerprint });
-        return pin;
+        return conclude(pin, { verdict: "trusted", fingerprint: shortFingerprint });
       }
       if (installing) {
         deps.recorded.set(fingerprint);
         deps.installMarker.clear();
         deps.log.warn({ code: "presence-pin-adopted" });
-        observe({ verdict: "adopted", fingerprint: shortFingerprint });
-        return pin;
+        return conclude(pin, { verdict: "adopted", fingerprint: shortFingerprint });
       }
       if (!warned.has(fingerprint)) {
         warned.add(fingerprint);
         deps.log.warn({ code: "presence-pin-changed" });
       }
-      observe({ verdict: "changed", fingerprint: shortFingerprint });
-      return null;
+      return conclude(null, { verdict: "changed", fingerprint: shortFingerprint });
     } catch {
       // A record that cannot be read or written proves nothing about the pin: no pin.
-      observe({ verdict: "none", fingerprint: null });
-      return null;
+      return conclude(null, NONE);
     }
   };
 }
