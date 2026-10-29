@@ -1,5 +1,11 @@
+import { lstatSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { type DriverBrowser, pollUntil } from "../driver.js";
+import { APPROVALS_COPY } from "./approvals-copy.js";
+import { HEALTH_ATTRS, HEALTH_CLASSES } from "./health-copy.js";
 import { OVERVIEW_CLASSES, OVERVIEW_TEXT } from "./overview-copy.js";
+import { SETTINGS_TEXT } from "./settings-copy.js";
+import { applyWindowBounds, type RectLite, readWindowFacts } from "./shot-layout.js";
 import { WAIT } from "./tasks-support.js";
 
 /**
@@ -40,6 +46,14 @@ export const QUIET_TEXT_OWNERS: readonly { readonly text: string; readonly file:
   { text: "ccc-hero-caption", file: "packages/plugin/src/widgets/frame.tsx" },
   { text: "ccc-session-row-link", file: "packages/plugin/src/view/agent-runs.tsx" },
   { text: "ccc-agent-runs-table", file: "packages/plugin/src/view/agent-runs.tsx" },
+  { text: "ccc-connection-status", file: "packages/plugin/src/view/shell.tsx" },
+  { text: "ccc-status-text", file: "packages/plugin/src/view/shell.tsx" },
+  { text: "Disconnected — ", file: "packages/plugin/src/view/shell.tsx" },
+  {
+    text: "This is a test service, which never starts the presence helper.",
+    file: "packages/plugin/src/view/settings-security.tsx",
+  },
+  { text: "ccc-settings-section-title", file: "packages/plugin/src/view/launchers-settings.tsx" },
 ];
 
 export interface QuietDomConfig {
@@ -430,4 +444,389 @@ export async function expectRunningAfterEvent(
     }
   }
   throw new Error(`${describe} after ${attempts} events: ${last}`);
+}
+
+// ---------------------------------------------------------------------------
+// Item 3: the bundle outcome line sits inside the viewport of its button
+
+/** The most the bundle line may sit away from the button that raised it, in CSS px. */
+export const MAX_LINE_GAP_PX = 160;
+
+export interface BundleGeometryConfig {
+  readonly toolbar: string;
+  readonly attrStatusRegion: string;
+  readonly bundleRegion: string;
+}
+
+export const BUNDLE_GEOMETRY_CONFIG: BundleGeometryConfig = {
+  toolbar: HEALTH_CLASSES.healthToolbar,
+  attrStatusRegion: HEALTH_ATTRS.statusRegion,
+  bundleRegion: "bundle",
+};
+
+export interface Box {
+  readonly top: number;
+  readonly bottom: number;
+}
+
+export interface BundleGeometry {
+  readonly viewportHeight: number;
+  readonly line: (Box & { readonly text: string }) | null;
+  readonly buttons: readonly (Box & { readonly label: string })[];
+}
+
+interface GNode {
+  textContent: string | null;
+  getBoundingClientRect(): { top: number; bottom: number };
+  scrollIntoView(options: { block: string }): void;
+}
+
+declare const innerHeight: number;
+
+/**
+ * Reads the bundle status line and every toolbar button of the page as text and vertical extents,
+ * with the viewport height. SELF-CONTAINED (renderer function; no nested named function).
+ */
+export function rendererReadBundleGeometry(c: BundleGeometryConfig): BundleGeometry {
+  const line = document.querySelector(
+    `[${c.attrStatusRegion}="${c.bundleRegion}"]`,
+  ) as unknown as GNode | null;
+  const found = document.querySelectorAll(`.${c.toolbar} button`) as unknown as ArrayLike<GNode>;
+  const buttons: { label: string; top: number; bottom: number }[] = [];
+  for (let i = 0; i < found.length; i += 1) {
+    const node = found[i] as GNode;
+    const box = node.getBoundingClientRect();
+    buttons.push({
+      label: (node.textContent ?? "").replace(/\s+/g, " ").trim(),
+      top: box.top,
+      bottom: box.bottom,
+    });
+  }
+  let lineBox: { text: string; top: number; bottom: number } | null = null;
+  if (line !== null) {
+    const box = line.getBoundingClientRect();
+    lineBox = {
+      text: (line.textContent ?? "").replace(/\s+/g, " ").trim(),
+      top: box.top,
+      bottom: box.bottom,
+    };
+  }
+  return { viewportHeight: innerHeight, line: lineBox, buttons };
+}
+
+/** Scrolls the toolbar button named `label` to the middle of the viewport, as a person would. */
+export function rendererScrollButtonIntoView(c: BundleGeometryConfig, label: string): boolean {
+  const found = document.querySelectorAll(`.${c.toolbar} button`) as unknown as ArrayLike<GNode>;
+  for (let i = 0; i < found.length; i += 1) {
+    const node = found[i] as GNode;
+    if ((node.textContent ?? "").replace(/\s+/g, " ").trim() === label) {
+      node.scrollIntoView({ block: "center" });
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The outcome line is in the viewport (wholly), so is its button, and the two are within
+ * {@link MAX_LINE_GAP_PX} of each other: the line is where the person's eyes already are (D-09).
+ */
+export function checkBundleLineInView(geometry: BundleGeometry, buttonLabel: string): string[] {
+  const line = geometry.line;
+  if (line === null) return ["the bundle status line is not on the page"];
+  const button = geometry.buttons.find((entry) => entry.label === buttonLabel);
+  if (button === undefined) return [`the ${buttonLabel} button is not on the page`];
+  const problems: string[] = [];
+  if (line.text === "") problems.push("the bundle status line is empty");
+  const inView = (box: Box): boolean => box.top >= 0 && box.bottom <= geometry.viewportHeight;
+  if (!inView(line)) problems.push("the bundle status line is outside the viewport");
+  if (!inView(button)) problems.push(`the ${buttonLabel} button is outside the viewport`);
+  const gap =
+    line.top >= button.bottom ? line.top - button.bottom : Math.max(0, button.top - line.bottom);
+  if (gap > MAX_LINE_GAP_PX) {
+    problems.push(`the bundle status line is more than ${MAX_LINE_GAP_PX} px from ${buttonLabel}`);
+  }
+  return problems;
+}
+
+/** The slice of the wdio browser the window sizing uses. */
+export interface WindowBrowser {
+  execute<T, A extends unknown[]>(fn: (...args: A) => T, ...args: A): Promise<T>;
+  setWindowRect(x: number, y: number, width: number, height: number): Promise<unknown>;
+  pause(ms: number): Promise<unknown>;
+}
+
+/**
+ * Runs `during` with the window's height set to `heightPx` (width and place unchanged) and puts the
+ * window back afterwards, even when `during` throws. Obsidian's own Electron window API goes first,
+ * WebDriver's setWindowRect is the fallback. If the viewport never gets that short the item fails
+ * naming the sizes: a layout check on a window that stayed tall would prove nothing.
+ */
+export async function withWindowHeight<T>(
+  browser: WindowBrowser,
+  heightPx: number,
+  during: (innerHeightPx: number) => Promise<T>,
+  options: { settleMs?: number } = {},
+): Promise<T> {
+  const before = await browser.execute(readWindowFacts);
+  const original: RectLite | null =
+    before.bounds ??
+    (before.outerWidth > 0 && before.outerHeight > 0
+      ? {
+          x: before.screenX,
+          y: before.screenY,
+          width: before.outerWidth,
+          height: before.outerHeight,
+        }
+      : null);
+  if (original === null) {
+    throw new Error("The window's size could not be read, so it cannot be shortened.");
+  }
+  const target: RectLite = { ...original, height: heightPx };
+  const electron =
+    before.via === "electron"
+      ? await browser.execute(applyWindowBounds, target, false).catch(() => false)
+      : false;
+  if (!electron) await browser.setWindowRect(target.x, target.y, target.width, target.height);
+  try {
+    const settleMs = options.settleMs ?? 5_000;
+    let facts = await browser.execute(readWindowFacts);
+    for (let waited = 0; facts.innerHeight > heightPx && waited < settleMs; waited += 250) {
+      await browser.pause(250);
+      facts = await browser.execute(readWindowFacts);
+    }
+    if (facts.innerHeight > heightPx) {
+      throw new Error(
+        `The window did not become short: its viewport is ${facts.innerHeight} px high, wanted at most ${heightPx} px.`,
+      );
+    }
+    return await during(facts.innerHeight);
+  } finally {
+    if (electron) {
+      await browser.execute(applyWindowBounds, original, before.maximized).catch(() => false);
+    } else {
+      await browser
+        .setWindowRect(original.x, original.y, original.width, original.height)
+        .catch(() => undefined);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Item 4: the disconnected banner shows a display path
+
+export interface BannerConfig {
+  readonly container: string;
+  readonly text: string;
+}
+
+export const BANNER_CONFIG: BannerConfig = {
+  container: "ccc-connection-status",
+  text: "ccc-status-text",
+};
+
+export interface BannerRead {
+  readonly present: boolean;
+  readonly state: string | null;
+  readonly text: string;
+}
+
+/** Reads the shell's connection status: its `data-state` and visible text. SELF-CONTAINED. */
+export function rendererReadBanner(c: BannerConfig): BannerRead {
+  const box = document.querySelector(`.${c.container}`);
+  if (box === null) return { present: false, state: null, text: "" };
+  const span = box.querySelector(`.${c.text}`);
+  return {
+    present: true,
+    state: box.getAttribute("data-state"),
+    text: ((span === null ? box.textContent : span.textContent) ?? "").replace(/\s+/g, " ").trim(),
+  };
+}
+
+const DISCONNECTED_PREFIX = "Disconnected — ";
+
+/**
+ * The banner is disconnected, names where it looked as a display path (`…/folder/file` or `~/...`),
+ * and holds no absolute path: not `/Users/`, not the home folder, not the run root (D-11, DIAG-06).
+ */
+export function checkBannerDisplayPath(
+  read: BannerRead,
+  facts: { readonly homeDir: string; readonly runRoot: string },
+): string[] {
+  if (!read.present) return ["the connection banner is not on the page"];
+  if (read.state !== "disconnected") {
+    return [`the connection banner is ${read.state ?? "unreadable"}, not disconnected`];
+  }
+  const problems: string[] = [];
+  if (!read.text.startsWith(DISCONNECTED_PREFIX)) {
+    problems.push(`the banner does not start with "${DISCONNECTED_PREFIX.trim()}"`);
+  }
+  if (read.text.includes("/Users/")) problems.push("the banner holds a /Users/ path");
+  if (facts.homeDir !== "" && read.text.includes(facts.homeDir)) {
+    problems.push("the banner holds the home folder");
+  }
+  if (read.text.includes(facts.runRoot)) problems.push("the banner holds the run root path");
+  if (!read.text.includes("…/") && !read.text.includes("~/")) {
+    problems.push("the banner shows no display path");
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Item 5: Settings > Security reads the presence check as Unavailable in the sandbox
+
+export interface PresenceFactLike {
+  readonly name: string;
+  readonly text: string;
+  readonly loading: boolean;
+  readonly chips: readonly { readonly word: string }[];
+}
+
+const SANDBOX_REASON = "This is a test service, which never starts the presence helper.";
+
+/**
+ * The `Approval presence check` row reads `Unavailable` with the sandbox reason: the throwaway
+ * service never starts the helper (D-04, T-09-46), so Available here would mean the sandbox reached
+ * the real one.
+ */
+export function checkPresenceUnavailable(facts: readonly PresenceFactLike[]): string[] {
+  const name = SETTINGS_TEXT.factApprovalPresence;
+  const fact = facts.find((entry) => entry.name === name);
+  if (fact === undefined) return [`the ${name} row is missing`];
+  if (fact.loading) return [`the ${name} row is still loading`];
+  const word = fact.chips[0]?.word ?? "no chip";
+  const problems: string[] = [];
+  if (word !== SETTINGS_TEXT.chipUnavailable) {
+    problems.push(`the ${name} row reads "${word}", not ${SETTINGS_TEXT.chipUnavailable}`);
+  }
+  if (!fact.text.includes(SANDBOX_REASON)) {
+    problems.push(`the ${name} row does not give the sandbox reason`);
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Item 6: a test approval is approved with no prompt and reads decided through the command center
+
+/** The request pane's `Decided through` line is exactly the plain command center. */
+export function checkDecidedThrough(fields: Readonly<Record<string, string>>): string[] {
+  const value = fields[APPROVALS_COPY.decidedThroughTerm];
+  if (value === undefined) return ["the request pane has no Decided through line"];
+  if (value !== APPROVALS_COPY.decidedThroughPlugin) {
+    return [`Decided through reads "${value}", not "${APPROVALS_COPY.decidedThroughPlugin}"`];
+  }
+  return [];
+}
+
+const HELPER_NAME = /^ccc-presence/;
+const MAX_WALK_DEPTH = 8;
+
+/**
+ * Every file or folder named like the presence helper below `root` (symlinks are listed, never
+ * followed). A sandbox run root must hold none: the throwaway service has nowhere to spawn it from.
+ */
+export function findPresenceHelpers(root: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const path = join(dir, name);
+      if (HELPER_NAME.test(name)) found.push(path);
+      if (depth < MAX_WALK_DEPTH && lstatSync(path).isDirectory()) walk(path, depth + 1);
+    }
+  };
+  walk(root, 0);
+  return found.sort();
+}
+
+// ---------------------------------------------------------------------------
+// Item 7: the Launchers and Today headings
+
+export interface HeadingConfig {
+  readonly content: string;
+  readonly title: string;
+}
+
+export const HEADING_CONFIG: HeadingConfig = {
+  content: HEALTH_CLASSES.settingsContent,
+  title: HEALTH_CLASSES.settingsSectionTitle,
+};
+
+export interface HeadingRead {
+  readonly present: boolean;
+  readonly text: string;
+  readonly textTransform: string;
+}
+
+declare const getComputedStyle: (node: unknown) => { textTransform: string };
+
+/** Reads the open Settings section's heading and how CSS transforms it. SELF-CONTAINED. */
+export function rendererReadLaunchersHeading(c: HeadingConfig): HeadingRead {
+  const heading = document.querySelector(`.${c.content} h3.${c.title}`);
+  if (heading === null) return { present: false, text: "", textTransform: "" };
+  return {
+    present: true,
+    text: (heading.textContent ?? "").replace(/\s+/g, " ").trim(),
+    textTransform: getComputedStyle(heading).textTransform,
+  };
+}
+
+const LAUNCHERS_HEADING = "Launchers";
+
+/** The heading reads `Launchers` and is shown as written, not uppercased by the stylesheet. */
+export function checkLaunchersHeading(read: HeadingRead): string[] {
+  if (!read.present) return ["the Launchers heading is not on the page"];
+  const problems: string[] = [];
+  if (read.text !== LAUNCHERS_HEADING) {
+    problems.push(`the heading reads "${read.text}", not ${LAUNCHERS_HEADING}`);
+  }
+  if (read.textTransform === "uppercase") {
+    problems.push("the heading is shown in uppercase by the stylesheet");
+  }
+  return problems;
+}
+
+export interface TodayCardLike {
+  readonly title: string;
+  readonly sections: readonly { readonly text: string; readonly focal: boolean }[];
+}
+
+/** With an overdue task the Today card's focal heading reads `Due today and overdue`. */
+export function checkTodayOverdueHeading(cards: readonly TodayCardLike[]): string[] {
+  const today = cards.find((card) => card.title === OVERVIEW_TEXT.todayTitle);
+  if (today === undefined) return [`there is no ${OVERVIEW_TEXT.todayTitle} card`];
+  const focal = today.sections.find((section) => section.focal);
+  if (focal === undefined) return ["the Today card has no focal heading"];
+  return focal.text === OVERVIEW_TEXT.dueTodayOverdueHeading
+    ? []
+    : [`the Today heading reads "${focal.text}", not "${OVERVIEW_TEXT.dueTodayOverdueHeading}"`];
+}
+
+// ---------------------------------------------------------------------------
+// Item 8: the Phase 7 research run still publishes one report after the pipeline split
+
+export interface ReportListLike {
+  readonly ok: boolean;
+  readonly rows: readonly {
+    readonly readable: boolean;
+    readonly sourceCount: number;
+  }[];
+}
+
+/** One run on fixture sources ended well and published exactly one readable report with sources. */
+export function checkOneReport(input: ReportListLike): string[] {
+  const problems: string[] = [];
+  if (!input.ok) problems.push("the research run did not end well");
+  const readable = input.rows.filter((row) => row.readable);
+  if (readable.length !== 1) {
+    problems.push(`the Reports list holds ${readable.length} readable report(s), not 1`);
+  } else if ((readable[0]?.sourceCount ?? 0) < 1) {
+    problems.push("the report lists no sources");
+  }
+  return problems;
 }

@@ -33,4 +33,18 @@ function automated(
 export const UAT_ITEM_PLAN_09: readonly ItemPlan[] = [
   // A quiet idle session reads Idle, is not counted as running, and a new event restores Running.
   automated(1, "auto", ["dom"], HARDENING),
+  // A quiet working session reads "No events for", not Running (R-04).
+  automated(2, "auto", ["dom"], HARDENING),
+  // Copy bundle's outcome sits in the bundle's own line, inside the viewport of its button (D-09).
+  automated(3, "auto", ["dom", "spy"], HARDENING),
+  // The disconnected banner shows a display path, never /Users/ (D-11).
+  automated(4, "auto", ["dom", "proc"], HARDENING),
+  // Settings > Security reads the presence check Unavailable in the sandbox (D-04).
+  automated(5, "auto", ["dom", "fs"], HARDENING),
+  // A test approval is approved with no prompt and reads decided through the command center (D-02).
+  automated(6, "auto", ["dom", "fs"], HARDENING),
+  // The Launchers and Today headings (folded polish).
+  automated(7, "auto", ["dom"], HARDENING),
+  // The Phase 7 research run still publishes one report after the pipeline split (D-12).
+  automated(8, "auto", ["dom"], HARDENING),
 ];

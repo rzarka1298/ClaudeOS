@@ -14,25 +14,92 @@
  */
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { createApprovalsClient, createTasksClient } from "@ccc/service-api-client";
 import { browser, expect } from "@wdio/globals";
-import { assertSandboxConnected, type DriverBrowser } from "../src/driver.js";
+import { obsidianPage } from "wdio-obsidian-service";
+import { assertSandboxConnected, type DriverBrowser, pollUntil } from "../src/driver.js";
 import { appendLedger } from "../src/ledger.js";
 import { readProcessTable } from "../src/process-table.js";
 import { installConsoleCapture } from "../src/renderer-spies.js";
-import { installResultRecorder, type RecorderOptions } from "../src/results.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
 import {
+  clearPending,
+  selectOnlyPendingRequest,
+  supportBrowser,
+  waitForPane,
+} from "../src/spec-support/approvals-support.js";
+import {
   asQuietBrowser,
+  BANNER_CONFIG,
+  BUNDLE_GEOMETRY_CONFIG,
+  type BundleGeometry,
   buildSessionEventRecord,
   checkAgentRunsIdle,
   checkAgentRunsRunning,
+  checkAgentRunsSilent,
+  checkBannerDisplayPath,
+  checkBundleLineInView,
   checkCardIdle,
   checkCardRunning,
+  checkDecidedThrough,
+  checkLaunchersHeading,
+  checkOneReport,
+  checkPresenceUnavailable,
+  checkTodayOverdueHeading,
   expectRunningAfterEvent,
+  findPresenceHelpers,
+  HEADING_CONFIG,
   openQuietView,
+  rendererReadBanner,
+  rendererReadBundleGeometry,
+  rendererReadLaunchersHeading,
+  rendererScrollButtonIntoView,
   type SessionEvent,
+  type WindowBrowser,
   waitForQuiet,
+  withWindowHeight,
 } from "../src/spec-support/hardening-support.js";
+import { HEALTH_TEXT } from "../src/spec-support/health-copy.js";
+import {
+  asHealthBrowser,
+  checkSettled,
+  openBundlePreview,
+  openDiagnostics,
+  pressBundleButton,
+  readHealth,
+  reopenDiagnostics,
+  waitForHealth,
+  waitForLive,
+} from "../src/spec-support/health-support.js";
+import { OVERVIEW_TEXT } from "../src/spec-support/overview-copy.js";
+import {
+  asOverviewBrowser,
+  readOverviewCards,
+  reopenOverview,
+  waitForVerdict,
+} from "../src/spec-support/overview-support.js";
+import {
+  rendererClearSpies,
+  rendererInstallSpies,
+  rendererReadSpies,
+} from "../src/spec-support/research-dom.js";
+import {
+  asResearchBrowser,
+  clearResearchNotes,
+  type ResearchEnvironment,
+  runScenario,
+  startResearchEnvironment,
+  VAULT_TASKS_AT_LEAST,
+} from "../src/spec-support/research-support.js";
+import { installSessionGuard, type SessionGuardHooks } from "../src/spec-support/session-guard.js";
+import { SETTINGS_TEXT } from "../src/spec-support/settings-copy.js";
+import {
+  asSettingsBrowser,
+  openSettingsSection,
+  pressRowControl,
+  waitForSettings,
+} from "../src/spec-support/settings-support.js";
 import {
   buildSessionStartRecord,
   ledgerPidsOf,
@@ -42,13 +109,31 @@ import {
   type SacrificialDeps,
   spawnSacrificialChild,
 } from "../src/spec-support/synthetic-session.js";
+import {
+  asTasksBrowser,
+  localDateIn,
+  recordResults,
+  runSetUpManagedVault,
+  shiftLocalDate,
+  WAIT,
+} from "../src/spec-support/tasks-support.js";
 
 /** Past the 5 second quiet threshold of the quiet service kind, with room for one sweep. */
 const QUIET_WAIT_MS = 7_000;
 
 const qb = asQuietBrowser(browser);
+const hb = asHealthBrowser(browser);
+const sb = asSettingsBrowser(browser);
+const ob = asOverviewBrowser(browser);
+const rb = asResearchBrowser(browser);
+const tb = asTasksBrowser(browser);
+const ab = supportBrowser(browser);
 
-describe("hardening: quiet sessions", () => {
+// One recorder for the whole file: it sees every finished `it` of both describes.
+recordResults(loadRunContext(), (hook) => afterEach(hook as Mocha.Func));
+
+describe("hardening: quiet sessions", function () {
+  this.timeout(300_000);
   let context: RunContext;
   let fixture: ReturnType<typeof serviceFixtureFor> | undefined;
   const registry: SacrificialChild[] = [];
@@ -106,10 +191,6 @@ describe("hardening: quiet sessions", () => {
 
   before(async function startRun() {
     context = loadRunContext();
-    installResultRecorder({
-      afterEach: afterEach as unknown as RecorderOptions["afterEach"],
-      resultsPath: context.paths.resultsPath,
-    });
     await service().resetData();
     await service().start({ kind: "quiet" });
     await assertSandboxConnected(browser as unknown as DriverBrowser, {
@@ -165,5 +246,205 @@ describe("hardening: quiet sessions", () => {
       "the session to read Running in Agent runs after a new event",
     );
     expect(checkAgentRunsRunning(agent, session.name)).toEqual([]);
+  });
+
+  it("[09-UAT#02] A quiet working session reads No events for, not Running", async () => {
+    const session = await startSession("working");
+    // PostToolUse is the last event: the session said it was working, then went silent.
+    await send(session, "PostToolUse");
+    await browser.pause(QUIET_WAIT_MS);
+    await openQuietView(qb, "agent-runs");
+    const read = await waitForQuiet(
+      qb,
+      (current) => checkAgentRunsSilent(current, session.name),
+      "the session to read No events for in Agent runs",
+    );
+    expect(checkAgentRunsSilent(read, session.name)).toEqual([]);
+  });
+});
+
+describe("hardening: settings, approvals and research", function () {
+  this.timeout(300_000);
+  let env: ResearchEnvironment;
+  const context = loadRunContext();
+
+  // A closed Obsidian stops the file with one clear message, not a cascade of timeouts.
+  installSessionGuard({ beforeEach, afterEach } as unknown as SessionGuardHooks, () =>
+    browser.execute(() => true),
+  );
+
+  before(async () => {
+    await assertSandboxConnected(tb, { expectedSocketPath: context.socketPath });
+    env = await startResearchEnvironment();
+    await runSetUpManagedVault(tb, VAULT_TASKS_AT_LEAST);
+    clearResearchNotes(obsidianPage.getVaultPath(), context.runRoot);
+    // The environment restarted the service and the plugin reconnects a moment later, which reloads
+    // Diagnostics. Let that happen now, not under the first press of an item.
+    await openDiagnostics(hb);
+    await waitForLive(hb);
+  });
+
+  after(async () => {
+    await env?.stop();
+  });
+
+  /** Opens Diagnostics, waits for a settled answer and returns it with the preview offered. */
+  async function offeredBundle(): Promise<void> {
+    await openDiagnostics(hb);
+    // Leaving and coming back mounts the block again, so its preview starts closed.
+    await reopenDiagnostics(hb);
+    await waitForHealth(hb, checkSettled, "the first answer", WAIT.connect);
+    await openBundlePreview(hb);
+  }
+
+  it("[09-UAT#03] Copy bundle's outcome appears beside its button at a short window height", async () => {
+    await offeredBundle();
+    const topLineBefore = (await readHealth(hb)).statusLine;
+    await hb.execute(rendererInstallSpies);
+    let geometry: BundleGeometry | undefined;
+    await withWindowHeight(browser as unknown as WindowBrowser, 600, async () => {
+      // A person scrolls the button into view before pressing it; the press must not need a scroll back.
+      for (let attempt = 1; ; attempt += 1) {
+        await hb.execute(rendererClearSpies);
+        await hb.execute(
+          rendererScrollButtonIntoView,
+          BUNDLE_GEOMETRY_CONFIG,
+          HEALTH_TEXT.copyBundle,
+        );
+        await pressBundleButton(hb, HEALTH_TEXT.copyBundle);
+        try {
+          await pollUntil(
+            async () => (await readHealth(hb)).bundleStatusLine === HEALTH_TEXT.bundleCopied,
+            {
+              timeoutMs: 5_000,
+              intervalMs: 100,
+              describe: `the bundle line to read "${HEALTH_TEXT.bundleCopied}"`,
+            },
+          );
+          break;
+        } catch (error) {
+          // The page can reload under a press while the plugin reconnects; offer the block again.
+          if (attempt >= 3) throw error;
+          await offeredBundle();
+        }
+      }
+      geometry = await hb.execute(rendererReadBundleGeometry, BUNDLE_GEOMETRY_CONFIG);
+    });
+    if (geometry === undefined) throw new Error("The bundle geometry was not read.");
+    expect(checkBundleLineInView(geometry, HEALTH_TEXT.copyBundle)).toEqual([]);
+    // The outcome is in the bundle's own line; the destination's top line stayed silent (D-09).
+    const after = await readHealth(hb);
+    expect(after.statusLine).toBe(topLineBefore);
+    expect(after.statusLine).not.toContain(HEALTH_TEXT.bundleCopied);
+    // The copy went to the spy, not to the owner's clipboard.
+    expect((await hb.execute(rendererReadSpies)).clipboard.length).toBeGreaterThan(0);
+  });
+
+  it("[09-UAT#04] The disconnected banner shows a display path with no /Users/", async () => {
+    await offeredBundle();
+    await env.stopService();
+    const read = await pollUntil(
+      async () => {
+        const banner = await browser.execute(rendererReadBanner, BANNER_CONFIG);
+        return banner.state === "disconnected" ? banner : null;
+      },
+      { ...WAIT.connect, describe: "the banner to read Disconnected" },
+    );
+    expect(checkBannerDisplayPath(read, { homeDir: homedir(), runRoot: context.runRoot })).toEqual(
+      [],
+    );
+    await env.startService();
+    await pollUntil(
+      async () => (await browser.execute(rendererReadBanner, BANNER_CONFIG)).state === "live",
+      { ...WAIT.connect, describe: "the banner to read Live again" },
+    );
+    await waitForLive(hb);
+  });
+
+  it("[09-UAT#05] Settings > Security reads Approval presence check Unavailable in the sandbox", async () => {
+    await openSettingsSection(sb, "security");
+    const read = await waitForSettings(
+      sb,
+      (current) => {
+        const fact = current.facts.find(
+          (entry) => entry.name === SETTINGS_TEXT.factApprovalPresence,
+        );
+        return fact === undefined || fact.loading ? ["the presence row has not loaded"] : [];
+      },
+      "the presence row to load",
+      WAIT.connect,
+    );
+    expect(checkPresenceUnavailable(read.facts)).toEqual([]);
+    // No helper exists in the run root for the sandbox service to start.
+    expect(findPresenceHelpers(context.runRoot)).toEqual([]);
+  });
+
+  it("[09-UAT#06] A test approval is approved with no prompt and reads decided through the command center", async () => {
+    const approvals = createApprovalsClient(env.client);
+    await clearPending(approvals);
+    await openSettingsSection(sb, "approvals-tasks");
+    await pressRowControl(sb, SETTINGS_TEXT.rowSendTest);
+    await pollUntil(async () => ((await approvals.list()).pending.length === 1 ? true : null), {
+      timeoutMs: 30_000,
+      intervalMs: 500,
+      describe: "a pending test approval",
+    });
+    await selectOnlyPendingRequest(ab);
+    expect(
+      await browser.execute(() => {
+        const button = document.querySelector("[data-decision='approve']") as HTMLElement | null;
+        if (button === null) return false;
+        button.click();
+        return true;
+      }),
+    ).toBe(true);
+    const done = await waitForPane(
+      ab,
+      (pane) => pane.state === "executed",
+      "the approved test request to be carried out",
+    );
+    expect(checkDecidedThrough(done.fields)).toEqual([]);
+    // Nothing asked for Touch ID: the sandbox run root holds no presence helper at all.
+    expect(findPresenceHelpers(context.runRoot)).toEqual([]);
+  });
+
+  it("[09-UAT#07] The Launchers heading reads Launchers and the Today heading reads Due today and overdue", async () => {
+    await openSettingsSection(sb, "launchers");
+    const heading = await pollUntil(
+      async () => {
+        const read = await browser.execute(rendererReadLaunchersHeading, HEADING_CONFIG);
+        return read.present ? read : null;
+      },
+      { ...WAIT.short, describe: "the Launchers heading" },
+    );
+    expect(checkLaunchersHeading(heading)).toEqual([]);
+
+    // An overdue task: the Today heading must say so (the feed words an overdue row "Overdue ...").
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    await createTasksClient(env.client).create({
+      title: "Phase 9 overdue task",
+      intent: "ready",
+      zone,
+      dueDate: shiftLocalDate(localDateIn(zone, Date.now()), -1),
+    });
+    await reopenOverview(ob);
+    const cards = await waitForVerdict(
+      ob,
+      (current) => checkTodayOverdueHeading(current),
+      `the Today heading to read ${OVERVIEW_TEXT.dueTodayOverdueHeading}`,
+      WAIT.connect,
+    );
+    expect(checkTodayOverdueHeading(cards)).toEqual([]);
+    expect((await readOverviewCards(ob)).length).toBeGreaterThan(0);
+  });
+
+  it("[09-UAT#08] One research run on fixture sources still publishes one report with its sources", async () => {
+    const run = await runScenario(rb, env, "base");
+    const list = await env.research.list({ limit: 10 });
+    const rows = list.rows.map((row) => ({
+      readable: row.readable,
+      sourceCount: row.readable ? row.sourceCount : 0,
+    }));
+    expect(checkOneReport({ ok: run.ok, rows })).toEqual([]);
   });
 });
