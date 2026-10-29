@@ -92,6 +92,8 @@ export interface RecoveryHost {
   ): { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly code: string };
   /** Whether the row's decision proof verifies under the engine's key (R-05). Never throws. */
   verifyProof(proposal: StoredProposal): "valid" | "invalid";
+  /** Claims an approved request that has no valid proof and finishes it `failed` / `proof-invalid` (warns); true when written. */
+  refuseUnproved(approved: StoredProposal): boolean;
   /** Records an executing request's outcome and publishes it. */
   finish(proposal: StoredProposal, decision: FinishDecision): StoredProposal | null;
   /** Runs one claimed attempt WITHOUT awaiting it; registered for `settled()`. */
@@ -130,15 +132,6 @@ const RESERVED_DECISION: FinishDecision = {
   reconciled: false,
 };
 
-/** An approved row with no valid proof never ran, so `failed` is the truthful end state (R-05). */
-const PROOF_INVALID_FAILED: FinishDecision = {
-  state: "failed",
-  code: "proof-invalid",
-  note: null,
-  evidence: null,
-  reconciled: false,
-};
-
 const ZERO: RecoverySummary = {
   expired: 0,
   reconciled: 0,
@@ -162,6 +155,16 @@ export function createRecovery(host: RecoveryHost): Recovery {
 
   /** Reconciles one executing request first, then retries it once, or records what the evidence supports. */
   async function recoverExecuting(proposal: StoredProposal, counts: Counts): Promise<void> {
+    // R-05: checked FIRST, before the registry and payload checks, so a forged row for a reserved or
+    // unregistered operation, or with a bad payload, is still counted and warned. An executing row rides
+    // the idempotent retry path, so nothing is asked of the operation; an effect may have happened: `unknown`.
+    if (host.verifyProof(proposal) !== "valid") {
+      log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
+      if (host.finish(proposal, unknownDecision("proof-invalid", null)) !== null) {
+        counts.proofInvalid += 1;
+      }
+      return;
+    }
     const definition = registry.lookup(proposal.operation);
     const row = enabledApprovalRow(registry.table, proposal.operation);
     if (definition === undefined || row === undefined) {
@@ -176,16 +179,6 @@ export function createRecovery(host: RecoveryHost): Recovery {
     if (!payload.ok) {
       // The row cannot be trusted, so nothing is asked of the operation; an effect may have happened.
       if (host.finish(proposal, unknownDecision(payload.code, null)) !== null) counts.unknown += 1;
-      return;
-    }
-
-    // R-05: an executing row rides the idempotent retry path, so its proof is checked before reconcile
-    // or retry. Nothing is asked of the operation; an effect may have happened, so `unknown`.
-    if (host.verifyProof(proposal) !== "valid") {
-      log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
-      if (host.finish(proposal, unknownDecision("proof-invalid", null)) !== null) {
-        counts.proofInvalid += 1;
-      }
       return;
     }
 
@@ -237,20 +230,18 @@ export function createRecovery(host: RecoveryHost): Recovery {
     if (host.finish(claim.proposal, RESERVED_DECISION) !== null) counts.failed += 1;
   }
 
-  /** An approved request with no valid proof is claimed so it can be finished, and failed; it never starts. */
-  function failUnproved(approved: StoredProposal, counts: Counts): void {
-    log.warn({ proposalId: approved.proposalId, code: "approval-proof-invalid" });
-    const claim = store.claim(approved.proposalId, {}, clock.now());
-    if (claim.kind !== "claimed") return;
-    host.announce(claim.proposal);
-    if (host.finish(claim.proposal, PROOF_INVALID_FAILED) !== null) counts.proofInvalid += 1;
-  }
-
   async function recoverApproved(counts: Counts): Promise<void> {
     for (const approved of store.listApprovedUnclaimed()) {
       if (host.isActive(approved.proposalId)) continue;
       if (enabledApprovalRow(registry.table, approved.operation) === undefined) {
-        await guarded(approved, () => failUnexecutable(approved, counts));
+        await guarded(approved, () => {
+          // The proof comes first here too, so a forged row of a reserved operation is warned and counted.
+          if (host.verifyProof(approved) !== "valid") {
+            if (host.refuseUnproved(approved)) counts.proofInvalid += 1;
+            return;
+          }
+          failUnexecutable(approved, counts);
+        });
       }
     }
     counts.lapsed += host.lapseStale(clock.now());
@@ -261,7 +252,7 @@ export function createRecovery(host: RecoveryHost): Recovery {
       await guarded(approved, async () => {
         // R-05: checked here and again inside the engine's claim, so neither entry point can skip it.
         if (host.verifyProof(approved) !== "valid") {
-          failUnproved(approved, counts);
+          if (host.refuseUnproved(approved)) counts.proofInvalid += 1;
           return;
         }
         if (await host.claimAndStart(approved, definition)) counts.claimed += 1;

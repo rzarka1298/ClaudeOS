@@ -61,6 +61,11 @@ export interface MemoryApprovalStore extends ApprovalStorePort {
   tamperPayloadJson(proposalId: ProposalId, payloadJson: string | null): void;
   /** Rewrites the stored reason behind the store's back. */
   tamperReason(proposalId: ProposalId, reason: string): void;
+  /** Rewrites the decision columns the proof covers behind the store's back (09-FIX8: a change during an await). */
+  tamperDecision(
+    proposalId: ProposalId,
+    patch: { readonly decidedVia?: StoredProposal["decidedVia"]; readonly approvedAt?: string },
+  ): void;
   /** Every audit event of a row, oldest first, with no cap. */
   auditEvents(proposalId: ProposalId): ApprovalAuditEvent[];
   /** The finish inputs the store was handed, in order. */
@@ -142,6 +147,12 @@ export function createMemoryApprovalStore(
     tamperPayloadJson(proposalId, payloadJson) {
       const row = rows.get(proposalId);
       if (row) row.payloadJson = payloadJson;
+    },
+    tamperDecision(proposalId, patch) {
+      const row = rows.get(proposalId);
+      if (!row) return;
+      if (patch.decidedVia !== undefined) row.decidedVia = patch.decidedVia;
+      if (patch.approvedAt !== undefined) row.approvedAt = patch.approvedAt;
     },
     tamperReason(proposalId, reason) {
       const row = rows.get(proposalId);

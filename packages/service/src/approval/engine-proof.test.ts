@@ -3,6 +3,7 @@
 // skip the proof.
 import type { ProposalId, StoredProposal } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
+import { createApprovalEngine } from "./engine.js";
 import { verifyDecisionProof } from "./proof.js";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
@@ -94,5 +95,66 @@ describe("the engine signs approvals (09-17 Task 1)", () => {
     const row = stored(h, id);
     expect(row.approvedAt).toBe(h.clock.now());
     expect(verifyDecisionProof(TEST_PROOF_KEY, row)).toBe("valid");
+  });
+});
+
+describe("a row changed while the engine awaits is not executed (09-FIX8, item 1)", () => {
+  async function approveWithTamper(
+    patchOf: (h: Harness) => Parameters<Harness["store"]["tamperDecision"]>[1],
+  ): Promise<{ h: Harness; id: ProposalId }> {
+    const h = createHarness();
+    const id = h.propose();
+    // The claim facts are awaited between the engine's proof check and the claim: change the row there.
+    h.diagnostic.onClaimFacts = () => h.store.tamperDecision(id, patchOf(h));
+    await h.engine.decide({
+      proposalId: id,
+      decision: "approve",
+      payloadHash: hashOf(h, id),
+      channelHint: "plugin",
+    });
+    await h.engine.settled();
+    return { h, id };
+  }
+
+  it("decided_via changed during the claimFacts await: nothing runs, the row ends failed / proof-invalid, a warning is logged", async () => {
+    const { h, id } = await approveWithTamper(() => ({ decidedVia: "other" }));
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+    expect(stored(h, id).state).toBe("failed");
+    expect(stored(h, id).outcomeCode).toBe("proof-invalid");
+    expect(
+      h.log.lines.filter((l) => l.fields.code === "approval-proof-invalid" && l.level === "warn"),
+    ).toHaveLength(1);
+  });
+
+  it("approved_at changed during the claimFacts await: nothing runs", async () => {
+    const { h, id } = await approveWithTamper((h) => ({
+      // One second earlier than the real instant: still young, so only the proof can refuse it.
+      approvedAt: new Date(Date.parse(h.clock.now()) - 1_000).toISOString(),
+    }));
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+    expect(stored(h, id).outcomeCode).toBe("proof-invalid");
+  });
+
+  it("control: an untouched row still runs", async () => {
+    const { h, id } = await approveWithTamper(() => ({}));
+    expect(h.diagnostic.executeCalls).toHaveLength(1);
+    expect(stored(h, id).state).toBe("executed");
+  });
+});
+
+describe("the engine refuses a key of the wrong length (09-FIX8, item 4)", () => {
+  it.each([0, 16, 31, 33, 64])("a %i-byte key throws at construction", (bytes) => {
+    const h = createHarness();
+    expect(() => createApprovalEngine({ ...h.deps, proofKey: Buffer.alloc(bytes, 7) })).toThrow(
+      RangeError,
+    );
+  });
+
+  it("a 32-byte key is accepted, and a non-Buffer is refused", () => {
+    const h = createHarness();
+    expect(() => createApprovalEngine({ ...h.deps, proofKey: Buffer.alloc(32, 7) })).not.toThrow();
+    expect(() =>
+      createApprovalEngine({ ...h.deps, proofKey: new Uint8Array(32) as unknown as Buffer }),
+    ).toThrow(RangeError);
   });
 });

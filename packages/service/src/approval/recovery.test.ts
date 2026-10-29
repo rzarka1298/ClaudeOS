@@ -1004,3 +1004,74 @@ describe("a row without a valid proof is never executed (09-17 Task 2)", () => {
     expect(h.diagnostic.reconcileCalls).toHaveLength(0);
   });
 });
+
+describe("a row changed while recovery awaits is not retried (09-FIX8, item 1)", () => {
+  it("decided_via changed during the reconcile await: the retry is refused, the row ends unknown / proof-invalid, execute is never called", async () => {
+    const h = createHarness();
+    const id = h.propose();
+    leaveExecuting(h, id);
+    const { reconcile } = h.diagnostic.definition;
+    h.diagnostic.definition.reconcile = async (...args) => {
+      const verdict = await reconcile.apply(h.diagnostic.definition, args);
+      // The file is edited while recovery waits for the reconcile answer.
+      h.store.tamperDecision(id, { decidedVia: "other" });
+      return verdict;
+    };
+    h.diagnostic.verdicts.push({ kind: "effect-absent" });
+
+    const summary = await h.engine.recover();
+    await h.engine.settled();
+
+    expect(h.diagnostic.reconcileCalls).toHaveLength(1);
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+    expect(stateOf(h, id)).toBe("unknown");
+    expect(h.store.get(id)?.outcomeCode).toBe("proof-invalid");
+    expect(summary.retried).toBe(1);
+    expect(
+      h.log.lines.filter((l) => l.fields.code === "approval-proof-invalid" && l.level === "warn"),
+    ).toHaveLength(1);
+  });
+});
+
+describe("the proof is checked before the registry and payload checks (09-FIX8, item 3)", () => {
+  it("a forged row of a reserved or unregistered operation, or with a bad payload, is warned and counted as proof-invalid", async () => {
+    const h = createHarness();
+    const base = h.propose();
+    const reservedExecuting = rawRow(h, base, { operation: "vault.delete", decisionProof: null });
+    const absentApproved = rawRow(h, base, {
+      operation: "no.such.operation",
+      state: "approved",
+      attempts: 0,
+      claimFacts: null,
+      decisionProof: null,
+    });
+    const reservedApproved = rawRow(h, base, {
+      operation: "vault.delete",
+      state: "approved",
+      attempts: 0,
+      claimFacts: null,
+      decisionProof: null,
+    });
+    const badPayload = h.propose({ subject: "bad-payload", payload: { note: "one" } });
+    approveUnsigned(h, badPayload);
+    h.store.claim(badPayload, {}, h.clock.now());
+    h.store.tamperPayloadJson(badPayload, '{"note":"two"}');
+
+    const summary = await h.engine.recover();
+    await h.engine.settled();
+
+    for (const id of [reservedExecuting, badPayload]) {
+      expect(stateOf(h, id), id).toBe("unknown");
+      expect(h.store.get(id)?.outcomeCode).toBe("proof-invalid");
+    }
+    for (const id of [absentApproved, reservedApproved]) {
+      expect(stateOf(h, id), id).toBe("failed");
+      expect(h.store.get(id)?.outcomeCode).toBe("proof-invalid");
+    }
+    expect(summary.proofInvalid).toBe(4);
+    expect(summary.failed).toBe(0);
+    expect(
+      h.log.lines.filter((l) => l.fields.code === "approval-proof-invalid" && l.level === "warn"),
+    ).toHaveLength(4);
+  });
+});

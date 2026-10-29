@@ -16,9 +16,10 @@ import {
   PRESENCE_DENIED_COOLDOWN_MS,
   PRESENCE_ENGINE_TIMEOUT_MS,
 } from "./engine.js";
+import { verifyDecisionProof } from "./proof.js";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
-import { createHarness, type Harness } from "./test-support/harness.js";
+import { createHarness, type Harness, TEST_PROOF_KEY } from "./test-support/harness.js";
 import {
   createPresenceFake,
   deferredPresence,
@@ -144,6 +145,8 @@ describe("a port's answer is validated, and a stepped-back clock is handled (m2)
     expect(row.decidedVia).toBe("presence");
     expect(row.approvedAt).toBe(asked);
     expect((row.decidedAt ?? "") >= (row.approvedAt ?? "z")).toBe(true);
+    // The proof covers the instant the owner vouched for, not the clamped clock read (09-FIX8, M5).
+    expect(verifyDecisionProof(TEST_PROOF_KEY, row)).toBe("valid");
   });
 });
 
