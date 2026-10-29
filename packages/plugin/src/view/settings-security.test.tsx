@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ClaudeIntegrationStatus } from "@ccc/domain";
-import type { DiagnosticsHealthResponse } from "@ccc/domain/diagnostics.js";
+import {
+  APPROVAL_PRESENCE_REASONS,
+  type DiagnosticsHealthResponse,
+} from "@ccc/domain/diagnostics.js";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { ConnectionState } from "../connection-state.js";
@@ -13,7 +16,12 @@ import { claudeIntegration } from "../widgets/session-signals.js";
 import { createInertSettingsHost, type SettingsHost } from "./settings-host.js";
 import { resetPendingActions } from "./settings-pending.js";
 import { takeSettingsSectionRequest } from "./settings-sections.js";
-import { keychainChipFor, SecuritySection } from "./settings-security.js";
+import {
+  approvalPresenceChipFor,
+  approvalPresenceLineFor,
+  keychainChipFor,
+  SecuritySection,
+} from "./settings-security.js";
 
 /**
  * The Security section (plan 08-15 Task 2; 08-UI-SPEC S2 Security, R-F5, D-17, OD-4, APPR-05):
@@ -649,5 +657,195 @@ describe("08-18: the Transcript analysis switch is inert until the status is kno
     expect(
       screen.getByRole("switch", { name: "Transcript analysis" }).getAttribute("aria-disabled"),
     ).toBe("true");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-19 Task 2 (D-04): the Approval presence check row
+
+const PRESENCE_ROW = "Approval presence check";
+const PRESENCE_SENTENCE =
+  "Approvals for connectors need Touch ID or your password, and are refused while this check is unavailable.";
+
+function presenceResponse(
+  extra: Partial<DiagnosticsHealthResponse> = {},
+): DiagnosticsHealthResponse {
+  return { ...responseWith("present", "present"), ...extra };
+}
+
+describe("09-19 Task 2, Test 1: the Approval presence check row", () => {
+  it("sits straight after the research key and carries the fixed sentence in every state", async () => {
+    serve(presenceResponse({ approvalPresence: "available", approvalPresencePin: "0a1b2c3d" }));
+    const { container } = renderSecurity(fixture());
+    await flush();
+    const names = [...container.querySelectorAll("dt")].map((dt) => dt.textContent);
+    expect(names.indexOf(PRESENCE_ROW)).toBe(names.indexOf("Research key in keychain") + 1);
+    expect(row(PRESENCE_ROW).textContent).toContain(PRESENCE_SENTENCE);
+  });
+
+  it("available reads Available with the check glyph and shows the key fingerprint, with no reason", async () => {
+    serve(presenceResponse({ approvalPresence: "available", approvalPresencePin: "0a1b2c3d" }));
+    renderSecurity(fixture());
+    await flush();
+    const chip = chipOf(PRESENCE_ROW) as HTMLElement;
+    expect(chip.getAttribute("data-status")).toBe("ok");
+    expect(chip.querySelector(".ccc-badge-label")?.textContent).toBe("Available");
+    expect(chip.querySelector(".ccc-badge-glyph")?.textContent).toBe("✓");
+    expect(row(PRESENCE_ROW).textContent).toContain("0a1b2c3d");
+    expect(row(PRESENCE_ROW).textContent).not.toContain("refused until");
+  });
+
+  it("unavailable reads Unavailable with the cross glyph and its reason in words", async () => {
+    serve(
+      presenceResponse({ approvalPresence: "unavailable", approvalPresenceReason: "not-enrolled" }),
+    );
+    renderSecurity(fixture());
+    await flush();
+    const chip = chipOf(PRESENCE_ROW) as HTMLElement;
+    expect(chip.getAttribute("data-status")).toBe("failing");
+    expect(chip.querySelector(".ccc-badge-label")?.textContent).toBe("Unavailable");
+    expect(chip.querySelector(".ccc-badge-glyph")?.textContent).toBe("✕");
+    expect(row(PRESENCE_ROW).textContent).toContain(
+      approvalPresenceLineFor("unavailable", "not-enrolled"),
+    );
+  });
+
+  it("unknown reads Unknown, and so does a service that does not report the member (older service, Pitfall 17)", async () => {
+    serve(presenceResponse({ approvalPresence: "unknown" }));
+    const first = renderSecurity(fixture());
+    await flush();
+    expect(chipOf(PRESENCE_ROW)?.getAttribute("data-status")).toBe("unknown");
+    expect(chipOf(PRESENCE_ROW)?.textContent).toContain("Unknown");
+    first.unmount();
+    resetHealthState();
+    serve(presenceResponse());
+    renderSecurity(fixture());
+    await flush();
+    const chip = chipOf(PRESENCE_ROW) as HTMLElement;
+    expect(chip.getAttribute("data-status")).toBe("unknown");
+    expect(chip.textContent).toContain("Unknown");
+    expect(chip.textContent).not.toContain("Available");
+    expect(row(PRESENCE_ROW).textContent).toContain(
+      approvalPresenceLineFor("unknown", null, false),
+    );
+  });
+
+  it("every closed reason has its own line, none empty, none free-form, none echoing a fingerprint", () => {
+    const lines = APPROVAL_PRESENCE_REASONS.map((reason) =>
+      approvalPresenceLineFor("unavailable", reason),
+    );
+    expect(new Set(lines).size).toBe(APPROVAL_PRESENCE_REASONS.length);
+    for (const line of lines) {
+      expect(line.length).toBeGreaterThan(10);
+      expect(line).toMatch(/[.]$/);
+    }
+    expect(approvalPresenceLineFor("unavailable", "pin-changed")).toMatch(
+      /not the one|different|changed/i,
+    );
+    expect(approvalPresenceLineFor("unavailable", "not-enrolled")).not.toBe(
+      approvalPresenceLineFor("unavailable", "helper-missing"),
+    );
+  });
+
+  it("each reason reaches the row", async () => {
+    for (const reason of APPROVAL_PRESENCE_REASONS) {
+      resetHealthState();
+      serve(presenceResponse({ approvalPresence: "unavailable", approvalPresenceReason: reason }));
+      const view = renderSecurity(fixture());
+      await flush();
+      expect(row(PRESENCE_ROW).textContent, reason).toContain(
+        approvalPresenceLineFor("unavailable", reason),
+      );
+      view.unmount();
+    }
+  });
+
+  it("unavailable without a reason, and a reason that contradicts the state, never read Available", async () => {
+    serve(presenceResponse({ approvalPresence: "unavailable" }));
+    const a = renderSecurity(fixture());
+    await flush();
+    expect(chipOf(PRESENCE_ROW)?.textContent).toContain("Unavailable");
+    a.unmount();
+    resetHealthState();
+    serve(
+      presenceResponse({ approvalPresence: "available", approvalPresenceReason: "helper-missing" }),
+    );
+    renderSecurity(fixture());
+    await flush();
+    const chip = chipOf(PRESENCE_ROW) as HTMLElement;
+    expect(chip.textContent).not.toContain("Available");
+    expect(chip.getAttribute("data-status")).toBe("unknown");
+  });
+
+  it("the chip maps are total: the word is present in every state (never colour alone)", () => {
+    for (const state of ["available", "unavailable", "unknown", null] as const) {
+      const chip = approvalPresenceChipFor(state);
+      expect(chip.word.length).toBeGreaterThan(0);
+      expect(chip.glyph.length).toBeGreaterThan(0);
+    }
+    expect(approvalPresenceChipFor(null).word).toBe("Unknown");
+  });
+
+  it("with the service away it reads Unknown with the reason even if an Available answer is still held", async () => {
+    serve(presenceResponse({ approvalPresence: "available", approvalPresencePin: "0a1b2c3d" }));
+    const f = fixture();
+    const { rerender } = renderSecurity(f);
+    await flush();
+    rerender(
+      <SecuritySection
+        host={f.host}
+        connection={{ kind: "disconnected", reason: "x" }}
+        now={HEALTH_NOW}
+        notify={f.notify}
+      />,
+    );
+    expect(chipOf(PRESENCE_ROW)?.getAttribute("data-status")).toBe("unknown");
+    expect(row(PRESENCE_ROW).textContent).toContain(SERVICE_AWAY);
+    expect(row(PRESENCE_ROW).textContent).not.toContain("Available");
+    expect(row(PRESENCE_ROW).textContent).not.toContain("0a1b2c3d");
+  });
+
+  it("a failed check reads Unknown with the failure line; a pending first answer shows a skeleton and no claim", async () => {
+    serve(new Error("boom"));
+    const a = renderSecurity(fixture());
+    await flush();
+    expect(chipOf(PRESENCE_ROW)?.getAttribute("data-status")).toBe("unknown");
+    expect(row(PRESENCE_ROW).textContent).toContain(FAILED_TEXT);
+    a.unmount();
+    resetHealthState();
+    serve("never");
+    renderSecurity(fixture());
+    expect(chipOf(PRESENCE_ROW)).toBeNull();
+    expect(row(PRESENCE_ROW).textContent).not.toContain("Available");
+  });
+
+  it("an answer older than five minutes carries the Stale badge", async () => {
+    serve(presenceResponse({ approvalPresence: "available" }));
+    renderSecurity(fixture(), { now: HEALTH_NOW + 5 * 60_000 + 1000 });
+    await flush();
+    expect(row(PRESENCE_ROW).textContent).toContain("Stale");
+  });
+
+  it("Test 2: the row adds no control and no tab stop; it is reachable by reading order like its neighbours", async () => {
+    serve(
+      presenceResponse({
+        approvalPresence: "unavailable",
+        approvalPresenceReason: "pin-changed",
+        approvalPresencePin: "deadbeef",
+      }),
+    );
+    renderSecurity(fixture());
+    await flush();
+    const dd = row(PRESENCE_ROW);
+    expect(dd.querySelectorAll("button, input, select, a, [tabindex]").length).toBe(0);
+    expect(row(PRESENCE_ROW).textContent).toContain("deadbeef");
+  });
+
+  it("changes no credential: no new button and the always-allow wording stays absent", async () => {
+    serve(presenceResponse({ approvalPresence: "available" }));
+    renderSecurity(fixture());
+    await flush();
+    expect(row(PRESENCE_ROW).textContent).not.toMatch(/always.allow|remember|trust forever/i);
+    expect(screen.queryByRole("button", { name: /enrol|unenrol|reset|trust/i })).toBeNull();
   });
 });

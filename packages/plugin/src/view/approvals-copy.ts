@@ -172,7 +172,7 @@ export const APPROVAL_STATUS = {
     "Approving this needs your Touch ID or password, and it wasn't given. Nothing was changed.",
   /** The same approval where the check cannot run on this Mac right now. */
   presenceUnavailable:
-    "Approving this needs your Touch ID or password, and that check isn't available on this Mac right now. Nothing was changed. Check Diagnostics, or run the service install again to set it up.",
+    "Approving this needs your Touch ID or password, and that check isn't available on this Mac right now. Nothing was changed. Check Approval presence check under Security in Settings, or run the service install again to set it up.",
 } as const;
 
 export function approvedNotice(title: string): string {

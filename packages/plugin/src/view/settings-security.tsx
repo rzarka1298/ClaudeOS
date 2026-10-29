@@ -1,6 +1,8 @@
 import type { ClaudeIntegrationStatus } from "@ccc/domain";
 import { TOKEN_TTL_MS } from "@ccc/domain/auth.js";
 import {
+  type ApprovalPresenceReason,
+  type ApprovalPresenceState,
   type DiagnosticsHealthResponse,
   SUBSYSTEM_STATUS_DISPLAY,
   type SubsystemStatus,
@@ -56,6 +58,9 @@ export const APPROVALS_POINTER = "Approval notifications are in the approvals an
 export const GO_TO_APPROVALS_LABEL = "Go to the approvals and tasks section";
 export const KEYCHAIN_UNCHECKED_TEXT = "The keychain couldn't be checked.";
 export const COPY_KEY_SETUP_LABEL = "Copy key setup command";
+export const APPROVAL_PRESENCE_NAME = "Approval presence check";
+export const APPROVAL_PRESENCE_SENTENCE =
+  "Approvals for connectors need Touch ID or your password, and are refused while this check is unavailable.";
 
 const MS_PER_MINUTE = 60_000;
 const MINUTES_PER_HOUR = 60;
@@ -107,6 +112,65 @@ export function keychainChipFor(
     word: SUBSYSTEM_STATUS_DISPLAY.unknown.word,
     glyph: SUBSYSTEM_STATUS_DISPLAY.unknown.glyph,
   };
+}
+
+/**
+ * The Approval presence check chip over the closed state (09-19, D-04): `Available` needs the service's own
+ * `available`; `null` (no answer, an older service without the member) and `unknown` read `Unknown`. The word is
+ * always present beside the glyph, so no state is carried by colour alone.
+ */
+export function approvalPresenceChipFor(state: ApprovalPresenceState | null): KeychainChip {
+  if (state === "available") {
+    return { status: "ok", word: "Available", glyph: SUBSYSTEM_STATUS_DISPLAY.ok.glyph };
+  }
+  if (state === "unavailable") {
+    return {
+      status: "failing",
+      word: "Unavailable",
+      glyph: SUBSYSTEM_STATUS_DISPLAY.failing.glyph,
+    };
+  }
+  return {
+    status: "unknown",
+    word: SUBSYSTEM_STATUS_DISPLAY.unknown.word,
+    glyph: SUBSYSTEM_STATUS_DISPLAY.unknown.glyph,
+  };
+}
+
+/** The closed reason codes in the owner's words (no free text from the service ever reaches the row). */
+const APPROVAL_PRESENCE_REASON_LINES: Record<ApprovalPresenceReason, string> = {
+  "helper-missing": "The presence helper isn't built. Run the service install again.",
+  "not-enrolled": "The presence helper has no key yet. Run the service install again to set it up.",
+  "pin-stale":
+    "The presence helper was rebuilt after its key was set up. Run the service install again.",
+  "pin-changed":
+    "The stored key is not the one this service trusted. If you didn't reinstall, treat this as unexpected, and run the service install again to set it up.",
+  "cannot-evaluate": "This Mac can't ask for Touch ID or a password right now.",
+  "check-failed": "The check didn't give an answer. Reopen this section to try again.",
+  sandbox: "This is a test service, which never starts the presence helper.",
+};
+
+const APPROVAL_PRESENCE_UNKNOWN_LINE = "Not checked yet. Opening this section checks it.";
+const APPROVAL_PRESENCE_UNREPORTED_LINE = "This version of the service doesn't report it.";
+const APPROVAL_PRESENCE_UNAVAILABLE_LINE = "The check is unavailable.";
+
+/**
+ * The line under the chip. An `unavailable` answer names its reason; `unknown` says it has not been checked (or,
+ * from a service that does not send the member, that it is not reported). `reported` is whether the service sent
+ * the member at all.
+ */
+export function approvalPresenceLineFor(
+  state: ApprovalPresenceState | null,
+  reason: ApprovalPresenceReason | null,
+  reported = true,
+): string {
+  if (state === "unavailable") {
+    return reason === null
+      ? APPROVAL_PRESENCE_UNAVAILABLE_LINE
+      : APPROVAL_PRESENCE_REASON_LINES[reason];
+  }
+  if (state === "available") return "";
+  return reported ? APPROVAL_PRESENCE_UNKNOWN_LINE : APPROVAL_PRESENCE_UNREPORTED_LINE;
 }
 
 /** What one Keychain row can be showing. */
@@ -223,8 +287,54 @@ export function SecuritySection({ host, connection, now, notify }: SecuritySecti
     };
   }
 
+  function presenceView(): KeychainView {
+    if (!live) {
+      return {
+        kind: "shown",
+        chip: approvalPresenceChipFor(null),
+        reason: SERVICE_AWAY_REASON,
+        stale: false,
+      };
+    }
+    if (response === null) {
+      if (phase === "error") {
+        return {
+          kind: "shown",
+          chip: approvalPresenceChipFor(null),
+          reason: ERROR_HEADING,
+          stale: false,
+        };
+      }
+      return { kind: "loading" };
+    }
+    const stale =
+      shownFreshness({ checkedAt: response.generatedAt, freshness: "live" }, now) === "stale";
+    const reported = response.approvalPresence;
+    const reason = response.approvalPresenceReason ?? null;
+    // A reason belongs only to `unavailable`; an answer that says otherwise contradicts itself and is not trusted.
+    const contradictory = reason !== null && reported !== "unavailable";
+    const state: ApprovalPresenceState | null = contradictory ? null : (reported ?? null);
+    const line = approvalPresenceLineFor(
+      state,
+      state === "unavailable" ? reason : null,
+      reported !== undefined,
+    );
+    return {
+      kind: "shown",
+      chip: approvalPresenceChipFor(state),
+      reason: line === "" ? null : line,
+      stale,
+    };
+  }
+
   const installView = viewFor("installSecret");
   const researchView = viewFor("researchKey");
+  const presenceViewNow = presenceView();
+  // The key fingerprint is shown only for a live, held answer (never while away, failed or loading).
+  const pinFingerprint =
+    live && response !== null && presenceViewNow.kind === "shown"
+      ? (response.approvalPresencePin ?? null)
+      : null;
   const offerKeySetup = researchView.kind === "shown" && researchView.chip.status !== "ok";
 
   // --- the setup command (copy only) ---------------------------------------------------------
@@ -345,6 +455,18 @@ export function SecuritySection({ host, connection, now, notify }: SecuritySecti
               </button>
             </>
           ) : undefined}
+        </KeychainFact>
+        <KeychainFact
+          name={APPROVAL_PRESENCE_NAME}
+          sentence={APPROVAL_PRESENCE_SENTENCE}
+          view={presenceViewNow}
+        >
+          {pinFingerprint === null ? undefined : (
+            <p>
+              Key fingerprint <code className="ccc-mono">{pinFingerprint}</code>. An unexpected
+              change means the key was replaced.
+            </p>
+          )}
         </KeychainFact>
         <dt>Always allow</dt>
         <dd>No always-allow control exists. Every consequential action asks you each time.</dd>
