@@ -186,8 +186,9 @@ stays six and the row tuple is unchanged (D-41 kept).
 on every trigger, and nothing is started. Otherwise the member is `unknown` until an owner gesture; a gesture runs the
 helper's non-prompting `check` and one guarded, attribute-only pin read through a port the composition root builds (rule
 18 keeps `src/diagnostics/` free of processes), under the existing two-second gesture cache and a deadline. A reconnect
-never runs it: it repeats the last gesture's answer while younger than five minutes, then reads `unknown`, exactly like the
-research key. `available` needs both the helper's own check and a pin the service trusts; a pin the guard refused is
+never runs it and never repeats an earlier answer: it reads `unknown` (an absent helper still reads `unavailable` at once).
+Unlike the research key, nothing is remembered, because a remembered answer would be served under a new `generatedAt` and
+restart the plugin's Stale window, and would outlive a helper that was removed and put back (`09-FIX10A`). `available` needs both the helper's own check and a pin the service trusts; a pin the guard refused is
 `unavailable` with `pin-changed` whatever the helper says, and a failed, overdue or malformed check is `unavailable` with
 `check-failed`, never `available` and never a blank.
 

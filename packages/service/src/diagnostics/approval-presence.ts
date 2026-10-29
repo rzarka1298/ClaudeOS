@@ -4,7 +4,6 @@ import {
   ApprovalPresencePinSchema,
   type ApprovalPresenceReason,
   type ApprovalPresenceState,
-  HEALTH_STALE_AFTER_MS,
   type HealthTrigger,
 } from "@ccc/domain";
 
@@ -20,9 +19,10 @@ import {
  *   attached. A throw, an overdue answer or an answer outside the contract is `unavailable` (`check-failed`),
  *   never `available`, never a blank.
  * - An absent helper (or a sandbox) is `unavailable` at once, on every trigger, without calling the check.
- * - A reconnect never calls the check: it reads the last gesture's answer while younger than
- *   {@link HEALTH_STALE_AFTER_MS} on a monotonic clock, and `unknown` otherwise. The helper being absent is
- *   re-read first, so a remembered `available` never outlives the helper.
+ * - A reconnect never calls the check and never repeats an earlier answer: it reads `unknown` (09-FIX10A). A
+ *   remembered answer would be served under a NEW `generatedAt`, restarting the plugin's Stale window, and would
+ *   outlive a helper that was removed and put back. The helper being absent is re-read on every trigger, so that
+ *   case is still `unavailable` at once.
  */
 
 /** The deadline of one gesture-run check; the helper's own `check` has a 5 s kill, this ends the wait. */
@@ -90,13 +90,9 @@ export type ApprovalPresenceCheckFn = (trigger: HealthTrigger) => Promise<Approv
 
 export function createApprovalPresenceCheck(deps: {
   readonly port: ApprovalPresencePort;
-  /** Monotonic milliseconds; the default is `performance.now`. Injected by tests. */
-  readonly clock?: () => number;
   readonly deadlineMs?: number;
 }): ApprovalPresenceCheckFn {
-  const clock = deps.clock ?? (() => performance.now());
   const deadlineMs = deps.deadlineMs ?? APPROVAL_PRESENCE_DEADLINE_MS;
-  let lastGesture: { readonly answer: ApprovalPresenceAnswer; readonly atMs: number } | null = null;
 
   const precheck = (): ApprovalPresenceReason | null => {
     try {
@@ -130,14 +126,7 @@ export function createApprovalPresenceCheck(deps: {
   return async (trigger) => {
     const early = precheck();
     if (early !== null) return { state: "unavailable", reason: early };
-    if (trigger !== "gesture") {
-      if (lastGesture === null) return { state: "unknown" };
-      return clock() - lastGesture.atMs <= HEALTH_STALE_AFTER_MS
-        ? lastGesture.answer
-        : { state: "unknown" };
-    }
-    const answer = await runCheck();
-    lastGesture = { answer, atMs: clock() };
-    return answer;
+    if (trigger !== "gesture") return { state: "unknown" };
+    return runCheck();
   };
 }
