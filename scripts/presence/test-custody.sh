@@ -21,6 +21,8 @@ SERVICE="com.claude-command-center.uat-${SUFFIX}"
 ACCOUNT="ccc-uat-${SUFFIX}"
 FAIL=0
 WORK=$(mktemp -d)
+echo "service: ${SERVICE}"
+echo "account: ${ACCOUNT}"
 
 cleanup() {
   if [ -x "${WORK}/harness" ]; then "${WORK}/harness" unenrol >/dev/null 2>&1 || true; fi

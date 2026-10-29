@@ -6,6 +6,7 @@ import { REPO_ROOT } from "./repo-paths.js";
 import { specMapForPhase } from "./spec-map.js";
 import { SPEC_FILES_09, UAT_ITEM_PLAN_09, UAT_PHASE_PREFIX_09 } from "./spec-map-09.js";
 import { checkMapAgainstScript, extractSpecTitles } from "./tag-lint.js";
+import { classifyResult } from "./uat-audit.js";
 import { parseUatScript } from "./uat-tags.js";
 
 /**
@@ -19,6 +20,38 @@ const PHASES = join(REPO_ROOT, ".planning", "phases");
 const SPEC = "packages/e2e/specs/hardening.e2e.ts";
 const planned = existsSync(PLANNING_INDEX);
 const run = planned ? describe : describe.skip;
+
+/** `pass —`, `fail —` or `accepted —` then the measured values; `[pending]` until the owner or runner records. */
+const RESULT_FORM = /^(pass|fail|accepted) — \S/;
+
+/**
+ * The recording state of a script, valid at any point from untouched to fully recorded: each result
+ * is `[pending]` or a recognised verb in the house form, the Summary total equals the item count,
+ * and the front matter says `testing` exactly while something is pending (the audit's own rule).
+ */
+function recordingProblems(script: ReturnType<typeof parseUatScript>): string[] {
+  const problems: string[] = [];
+  let pending = 0;
+  for (const item of script.items) {
+    const value = item.resultValue ?? "";
+    if (item.resultLines !== 1)
+      problems.push(`item ${item.number} has ${item.resultLines} result lines`);
+    else if (value.startsWith("[pending]")) pending += 1;
+    else if (classifyResult(value) === "unrecognised" || !RESULT_FORM.test(value)) {
+      problems.push(
+        `item ${item.number} has a result in neither the pending nor the recorded form`,
+      );
+    }
+  }
+  if (script.summary.total !== String(script.items.length))
+    problems.push("the Summary total is wrong");
+  const status = script.frontMatter.status ?? "";
+  if (pending > 0 && status !== "testing")
+    problems.push("results are pending but status is not testing");
+  if (pending === 0 && status !== "complete")
+    problems.push("every result is recorded but status is not complete");
+  return problems;
+}
 
 function scriptPath(): string {
   const name = readdirSync(PHASES).find((entry) => entry.startsWith("09-"));
@@ -97,11 +130,8 @@ run("the Phase 9 plan matches 09-UAT.md (Tasks 1 to 3, Test 1)", () => {
     expect(formatFindings).toEqual([]);
   });
 
-  it("leaves every result [pending] and the Summary total equal to the item count", () => {
-    for (const item of parsed.items) {
-      expect(item.resultValue, `result ${item.number}`).toBe("[pending]");
-    }
-    expect(parsed.summary.total).toBe(String(parsed.items.length));
+  it("validates the current recording state, whatever has been recorded so far", () => {
+    expect(recordingProblems(parsed)).toEqual([]);
   });
 });
 
@@ -233,9 +263,102 @@ run("the Phase 9 owner items in 09-UAT.md (Task 3, Test 2)", () => {
     expect(block(19)).toContain("list-keychains");
   });
 
-  it("leaves every owner result [pending] and uses only the USERNAME placeholder for home paths", () => {
-    for (const item of parsed.items)
-      expect(item.resultValue, `result ${item.number}`).toBe("[pending]");
+  it("uses only the USERNAME placeholder for home paths and validates the recording state", () => {
+    expect(recordingProblems(parsed)).toEqual([]);
     expect(text).not.toMatch(/\/Users\/(?!USERNAME\b)[A-Za-z0-9._$<>-]/);
   });
 });
+
+run(
+  "the owner steps are safe to follow and honest about keys (FIX11, findings 3 and 5 to 11)",
+  () => {
+    const text = planned ? readFileSync(scriptPath(), "utf8") : "";
+    const block = (number: number): string => {
+      const start = text.indexOf(`### ${number}. `);
+      const next = text.indexOf("\n### ", start + 1);
+      const end = next === -1 ? text.indexOf("\n## ", start + 1) : next;
+      return text.slice(start, end === -1 ? undefined : end);
+    };
+    const section = (heading: string): string => {
+      const start = text.indexOf(`\n## ${heading}`);
+      const next = text.indexOf("\n## ", start + 1);
+      return text.slice(start, next === -1 ? undefined : next);
+    };
+    const SAVED = "/tmp/ccc-keychains-before.txt";
+
+    it("tells the owner how to word each result (Setup)", () => {
+      expect(section("Setup")).toMatch(/`pass —`, `fail —` or `accepted —`/);
+    });
+
+    it("never claims a key survives a re-install: every install creates a new key and fingerprint (finding 3)", () => {
+      for (const number of [9, 13, 15, 16, 19]) {
+        expect(block(number), `item ${number}`).not.toMatch(
+          /fingerprint is unchanged|unchanged unless/i,
+        );
+      }
+      expect(block(16)).toMatch(/new (Key )?fingerprint/i);
+      expect(block(16)).toMatch(/re-install[^\n]*(new|different)|(new|different)[^\n]*re-install/i);
+      expect(block(9)).not.toMatch(/for items 14 to 16/);
+      for (const number of [15, 19]) {
+        expect(block(number), `item ${number}`).toMatch(/immediately before/i);
+      }
+      expect(block(19)).toMatch(/no install in between|without an install/i);
+    });
+
+    it("guards every search-list change on a saved list that holds the login keychain (finding 5)", () => {
+      const lines = text.split("\n").filter((line) => /list-keychains -d user -s /.test(line));
+      expect(lines.length).toBeGreaterThanOrEqual(3);
+      for (const line of lines) {
+        expect(line, line).toContain(`[ -s ${SAVED} ]`);
+        expect(line, line).toContain(`grep -q login.keychain ${SAVED}`);
+        expect(line, line).toContain("STOP: saved list missing");
+        expect(line, line).not.toMatch(/\bexit\b/);
+      }
+    });
+
+    it("spells out the restore and delete commands in Teardown and keeps the saved list until it matches (finding 5)", () => {
+      const teardown = section("Teardown");
+      expect(teardown).toContain("security delete-keychain /tmp/ccc-shadow.keychain-db");
+      expect(teardown).toMatch(/list-keychains -d user -s/);
+      expect(teardown).toMatch(
+        new RegExp(
+          `if diff .*${SAVED.replace(/[./]/g, "\\$&")}.*; then rm -f ${SAVED.replace(/[./]/g, "\\$&")}`,
+        ),
+      );
+    });
+
+    it("checks the custody script's test item by the service it prints, without hiding errors (finding 6)", () => {
+      const item = block(12);
+      expect(item).toMatch(/service: com\.claude-command-center\.uat-/);
+      expect(item).toMatch(/security find-generic-password -a <account> -s <service>/);
+      expect(item).toMatch(/exits? (with )?44/);
+      expect(item).not.toContain("dump-keychain");
+      expect(item).not.toContain("2>/dev/null");
+      expect(item).toMatch(/left over|leftover/i);
+      const script = readFileSync(join(REPO_ROOT, "scripts/presence/test-custody.sh"), "utf8");
+      expect(script).toContain('echo "service: ${SERVICE}"');
+      expect(script).toContain('echo "account: ${ACCOUNT}"');
+    });
+
+    it("names the button to press on a Keychain sheet, the same in items 13 and 18 (finding 7)", () => {
+      for (const number of [13, 18]) {
+        expect(block(number), `item ${number}`).toMatch(/press Deny/);
+        expect(block(number), `item ${number}`).toMatch(/never (choose )?Always Allow/i);
+      }
+    });
+
+    it("reads a modification time as an exact instant, and counts log lines before a restart (findings 8 and 9)", () => {
+      expect(block(11)).toContain("stat -f '%Sm' -t '%FT%T'");
+      const fourteen = block(14);
+      expect(fourteen).toMatch(/wc -l </);
+      expect(fourteen).toMatch(/tail -n \+/);
+    });
+
+    it("lists every item that touches the installed setup in the preamble (finding 10)", () => {
+      const preamble = text.slice(0, text.indexOf("## Setup"));
+      expect(preamble).toMatch(/13 to 16/);
+      expect(preamble).toMatch(/16 \(step 5/);
+      expect(preamble).toMatch(/14 \(b\)/);
+    });
+  },
+);
