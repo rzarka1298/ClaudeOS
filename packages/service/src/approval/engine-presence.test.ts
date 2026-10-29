@@ -6,7 +6,12 @@ import { describe, expect, it } from "vitest";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
 import { createHarness, type Harness } from "./test-support/harness.js";
-import { createPresenceFake, PROVED, type PresenceFake } from "./test-support/presence-fake.js";
+import {
+  createPresenceFake,
+  deferredPresence,
+  PROVED,
+  type PresenceFake,
+} from "./test-support/presence-fake.js";
 
 const WRITE = "connector.fake-write";
 
@@ -148,5 +153,100 @@ describe("a port that misbehaves fails closed (Rule 2)", () => {
     const id = h.propose({ operation: WRITE, subject: "w" });
     expect(await approve(h, id)).toEqual({ outcome: "presence-unavailable" });
     expect(stored(h, id).state).toBe("pending");
+  });
+});
+
+describe("concurrency and budget (Task 2)", () => {
+  it("Test 4: two concurrent approves share one presence check and one outcome", async () => {
+    const port = createPresenceFake();
+    const slow = deferredPresence();
+    port.script(slow.script);
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const first = approve(h, id);
+    const second = approve(h, id);
+    await Promise.resolve();
+    slow.settle(PROVED);
+    const answers = await Promise.all([first, second]);
+    expect(port.requests).toHaveLength(1);
+    // One decision: the first caller is told it decided, the second that it was already decided.
+    expect(answers.map((a) => a.outcome).sort()).toEqual(["already-decided", "decided"]);
+    expect(h.store.calls.filter((c) => c === "decide")).toHaveLength(1);
+  });
+
+  it("Test 5: the 4th prompt within a minute is refused without a port call; a minute later one reaches the port", async () => {
+    const port = createPresenceFake({ kind: "denied" });
+    const h = presenceHarness(port);
+    const ids = [1, 2, 3, 4].map((n) => h.propose({ operation: WRITE, subject: `w${n}` }));
+    for (const id of ids.slice(0, 3)) await approve(h, id);
+    expect(port.requests).toHaveLength(3);
+    const fourth = ids[3] as ProposalId;
+    expect(await approve(h, fourth)).toEqual({ outcome: "presence-unavailable" });
+    expect(port.requests).toHaveLength(3);
+    expect(
+      h.log.lines.some((l) => l.level === "warn" && l.fields.code === "presence-rate-limited"),
+    ).toBe(true);
+    expect(auditDetails(h, fourth).at(-1)).toEqual(["presence-refused", "presence-unavailable"]);
+    h.clock.advance(60_000);
+    await approve(h, h.propose({ operation: WRITE, subject: "w5" }));
+    expect(port.requests).toHaveLength(4);
+  });
+
+  it("Test 6: a wrong hash and an already-expired request never reach the port", async () => {
+    const port = createPresenceFake();
+    const h = presenceHarness(port);
+    const wrong = h.propose({ operation: WRITE, subject: "wrong" });
+    expect(await approve(h, wrong, "a".repeat(64))).toEqual({ outcome: "hash-mismatch" });
+    const late = h.propose({ operation: WRITE, subject: "late" });
+    h.clock.advance(61_000);
+    expect(await approve(h, late)).toEqual({ outcome: "expired" });
+    expect(port.requests).toHaveLength(0);
+    expect(stored(h, late).state).toBe("expired");
+  });
+
+  it("a request that expires while the check is up is expired after the check, not approved", async () => {
+    const port = createPresenceFake(async () => {
+      h.clock.advance(61_000);
+      return PROVED;
+    });
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    expect(await approve(h, id)).toEqual({ outcome: "expired" });
+    expect(stored(h, id).state).toBe("expired");
+    expect(h.diagnostic.executeCalls).toHaveLength(0);
+  });
+
+  it("never lets a late proof decide a request that was denied meanwhile", async () => {
+    const port = createPresenceFake();
+    const slow = deferredPresence();
+    port.script(slow.script);
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const pending = approve(h, id);
+    await Promise.resolve();
+    await h.engine.decide({
+      proposalId: id,
+      decision: "deny",
+      payloadHash: hashOf(h, id),
+      channelHint: "plugin",
+    });
+    slow.settle(PROVED);
+    expect(await pending).toEqual({ outcome: "already-decided", state: "denied" });
+    expect(stored(h, id).state).toBe("denied");
+  });
+});
+
+describe("the store is not held across the prompt (D-01, T-09-28)", () => {
+  it("has made no decide call while the port is still deciding, and exactly one after it proves", async () => {
+    const callsDuringPrompt: string[] = [];
+    const port = createPresenceFake(async () => {
+      callsDuringPrompt.push(...h.store.calls);
+      return PROVED;
+    });
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    await approve(h, id);
+    expect(callsDuringPrompt).not.toContain("decide");
+    expect(h.store.calls.filter((call) => call === "decide")).toHaveLength(1);
   });
 });

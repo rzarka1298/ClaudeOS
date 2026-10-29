@@ -166,6 +166,10 @@ export const UNAVAILABLE_PRESENCE: PresencePort = {
 
 const DEFAULT_CLAIM_FACTS_TIMEOUT_MS = 5000;
 
+/** At most this many presence checks start per {@link PRESENCE_WINDOW_MS}, across all requests (T-09-26). */
+export const PRESENCE_PROMPTS_PER_MINUTE = 3;
+const PRESENCE_WINDOW_MS = 60_000;
+
 /** Rejects after `ms`; the timer is always cleared once the race settles. */
 async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -606,7 +610,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       }
       // Denial never asks for presence (R-03); a presence-required approve goes through the gate (D-01).
       if (input.decision === "approve" && presenceRequired(current.operation)) {
-        return decideWithPresence(current);
+        return decideWithPresence(current, input);
       }
     }
 
@@ -663,14 +667,74 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     return row?.class === "approval-required" && row.presence !== "none";
   }
 
+  /** One presence-required approve per proposal at a time: a second caller joins the first's outcome (D-01). */
+  const presenceFlights = new Map<string, Promise<DecideResponse>>();
+  /** When each of the recent presence checks started, in epoch ms, for the prompt budget. */
+  let presenceStarts: number[] = [];
+
   /**
-   * An approve of a presence-required request: the owner's presence is asked for BEFORE the store is
-   * asked to decide, never inside its transaction, so no database lock is held across a prompt
-   * (D-01). Only a `proved` answer reaches `store.decide`; a refusal stays on the record and leaves
-   * the request pending.
+   * An approve of a presence-required request. The cheap refusals come first and never start a check: a
+   * request already past its deadline goes straight to the store (which expires it), and a hash that is
+   * not the request's is refused. Then one check per proposal runs at a time, within a budget of
+   * {@link PRESENCE_PROMPTS_PER_MINUTE} starts per minute across all requests.
    */
-  async function decideWithPresence(current: StoredProposal): Promise<DecideResponse> {
+  function decideWithPresence(
+    current: StoredProposal,
+    input: EngineDecideInput,
+  ): Promise<DecideResponse> | DecideResponse {
     const proposalId = current.proposalId;
+    if (clock.now() >= current.expiresAt) {
+      // Past its deadline: the store expires it. It can never approve, so no check is wanted.
+      return settleDecision(
+        proposalId,
+        store.decide({
+          proposalId,
+          decision: "approve",
+          expectedHash: input.payloadHash,
+          now: clock.now(),
+          via: channelOf(input),
+        }),
+      );
+    }
+    if (input.payloadHash !== current.payloadHash) return { outcome: "hash-mismatch" };
+
+    const running = presenceFlights.get(proposalId);
+    if (running !== undefined) return joinFlight(proposalId, running);
+    const flight = runPresenceCheck(current).finally(() => {
+      if (presenceFlights.get(proposalId) === flight) presenceFlights.delete(proposalId);
+    });
+    presenceFlights.set(proposalId, flight);
+    return flight;
+  }
+
+  /** A second approve of a request already being checked: one decision, so it reads as already decided. */
+  async function joinFlight(
+    proposalId: ProposalId,
+    running: Promise<DecideResponse>,
+  ): Promise<DecideResponse> {
+    const shared = await running;
+    if (shared.outcome !== "decided") return shared;
+    const row = store.get(proposalId);
+    return row === null
+      ? { outcome: "not-found" }
+      : { outcome: "already-decided", state: row.state };
+  }
+
+  /**
+   * Asks the presence port BEFORE the store is asked to decide, never inside its transaction, so no
+   * database lock is held across a prompt (D-01). Only a `proved` answer reaches `store.decide`; a
+   * refusal stays on the record and leaves the request pending.
+   */
+  async function runPresenceCheck(current: StoredProposal): Promise<DecideResponse> {
+    const proposalId = current.proposalId;
+    const startedAt = Date.parse(clock.now());
+    presenceStarts = presenceStarts.filter((started) => startedAt - started < PRESENCE_WINDOW_MS);
+    if (presenceStarts.length >= PRESENCE_PROMPTS_PER_MINUTE) {
+      log.warn({ proposalId, code: "presence-rate-limited" });
+      return refuseApprove(current, "presence-unavailable");
+    }
+    presenceStarts.push(startedAt);
+
     const approvedAt = clock.now();
     let result: PresenceResult;
     try {
@@ -693,6 +757,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     }
     // Shutting down mid-prompt: the request stays pending for the next boot.
     if (stopping) return { outcome: "operation-reserved" };
+    // The store re-checks the deadline against this later instant, so a request that lapsed while the prompt was up is expired.
     return settleDecision(
       proposalId,
       store.decide({

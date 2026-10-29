@@ -512,7 +512,7 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     const changed = decideOne.run({
       proposalId: row.proposal_id,
       state: approve ? "approved" : "denied",
-      approvedAt: approve ? input.now : null,
+      approvedAt: approve ? (input.approvedAt ?? input.now) : null,
       now: input.now,
       via: input.via,
     });
@@ -682,6 +682,11 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
         throw new InvalidApprovalInputError("decision");
       }
       if (!isDecidedVia(input.via)) throw new InvalidApprovalInputError("via");
+      if (input.approvedAt !== undefined) {
+        assertIso(input.approvedAt, "approvedAt");
+        // The instant the owner vouched for cannot be after the instant it is recorded (D-01).
+        if (input.approvedAt > input.now) throw new InvalidApprovalInputError("approvedAt");
+      }
       return decideTx(input);
     },
     recordDecisionRefusal(input: DecisionRefusalInput): "recorded" | "not-pending" {

@@ -14,7 +14,11 @@ import {
 } from "@ccc/domain";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createApprovalStore, createDiagnosticEffects } from "./approval-store.js";
+import {
+  createApprovalStore,
+  createDiagnosticEffects,
+  InvalidApprovalInputError,
+} from "./approval-store.js";
 import { applyMigrations } from "./migrate.js";
 import {
   columnNames,
@@ -403,6 +407,49 @@ describe("recordDecisionRefusal (09-14, Test 1)", () => {
       store.recordDecisionRefusal({ ...base, at: "yesterday", detail: "presence-denied" }),
     ).toThrow();
     expect(auditEvents(proposal.proposalId)).toEqual(["requested"]);
+  });
+});
+
+describe("decide, the signed approval instant (09-14, Tests 2 and 3)", () => {
+  it("writes approved_at from approvedAt and decided_at from now when the owner took time over a prompt", () => {
+    const proposal = submitPending();
+    const result = store.decide(decideInput(proposal, { approvedAt: at(50_000), now: at(60_000) }));
+    expect(result.kind).toBe("approved");
+    if (result.kind !== "approved") return;
+    expect(result.proposal.approvedAt).toBe(at(50_000));
+    expect(result.proposal.decidedAt).toBe(at(60_000));
+    expect(auditRows(proposal.proposalId)[1]?.at).toBe(at(60_000));
+  });
+
+  it("refuses an approvedAt later than now and writes nothing", () => {
+    const proposal = submitPending();
+    const before = rowOf(proposal.proposalId);
+    expect(() =>
+      store.decide(decideInput(proposal, { approvedAt: at(61_000), now: at(60_000) })),
+    ).toThrow(InvalidApprovalInputError);
+    expect(rowOf(proposal.proposalId)).toEqual(before);
+    expect(auditEvents(proposal.proposalId)).toEqual(["requested"]);
+    expect(() => store.decide(decideInput(proposal, { approvedAt: "later" }))).toThrow(
+      InvalidApprovalInputError,
+    );
+  });
+
+  it("treats approvedAt equal to now, and no approvedAt, as Phase 6 did", () => {
+    const a = submitPending();
+    const b = submitPending();
+    const withEqual = store.decide(decideInput(a, { approvedAt: at(60_000) }));
+    const without = store.decide(decideInput(b));
+    expect(withEqual.kind === "approved" && withEqual.proposal.approvedAt).toBe(at(60_000));
+    expect(without.kind === "approved" && without.proposal.approvedAt).toBe(at(60_000));
+  });
+
+  it("expires a request whose deadline fell between approvedAt and now", () => {
+    const proposal = submitPending({ expiresAt: at(55_000) });
+    const result = store.decide(decideInput(proposal, { approvedAt: at(50_000), now: at(60_000) }));
+    expect(result.kind).toBe("expired");
+    expect(store.get(proposal.proposalId)?.state).toBe("expired");
+    expect(store.get(proposal.proposalId)?.approvedAt).toBeNull();
+    expect(auditEvents(proposal.proposalId)).toEqual(["requested", "expired"]);
   });
 });
 
