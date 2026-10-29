@@ -364,37 +364,81 @@ describe("the helper's signature is verified against the pin (09-18 Task 1)", ()
     );
   });
 
-  it("Test 3c: a missing pin (the reader answers null, or throws) is refused", async () => {
-    expectRefused(
-      await refusedWith(
-        (m) => ({ kind: "proved", scheme: "p256", signature: signMessage(m) }),
-        async () => null,
-      ),
-    );
-    expectRefused(
-      await refusedWith(
-        (m) => ({ kind: "proved", scheme: "p256", signature: signMessage(m) }),
-        async () => {
-          throw new Error("keychain down");
-        },
-      ),
-    );
+  it("Test 3c (09-FIX9): with no pin the owner is never asked: the port is not called and the budget is not spent", async () => {
+    for (const readPin of [
+      async () => null,
+      async (): Promise<string | null> => {
+        throw new Error("keychain down");
+      },
+    ]) {
+      const port = createPresenceFake();
+      const h = presenceHarness(port, readPin);
+      const id = h.propose({ operation: WRITE, subject: "w" });
+      const response = await approve(h, id);
+      expect(response).toEqual({ outcome: "presence-unavailable" });
+      expect(port.requests).toHaveLength(0);
+      expect(stored(h, id).state).toBe("pending");
+      expect(auditDetails(h, id).at(-1)).toEqual(["presence-refused", "presence-unavailable"]);
+      expect(h.store.calls).not.toContain("decide");
+      expect(
+        h.log.lines.some((l) => l.level === "warn" && l.fields.code === "presence-pin-unavailable"),
+      ).toBe(true);
+    }
+  });
+
+  it("Test 3c2 (09-FIX9): refusals for want of a pin spend no prompt budget, and a pin lost during the prompt is refused", async () => {
+    let pin: string | null = null;
+    const port = createPresenceFake();
+    const h = presenceHarness(port, async () => pin);
+    for (let i = 0; i < 5; i += 1) {
+      await approve(h, h.propose({ operation: WRITE, subject: `w${i}` }));
+    }
+    expect(port.requests).toHaveLength(0);
+    // The pin comes back: the next approve prompts at once (budget untouched) and is accepted.
+    pin = TEST_PIN;
+    const id = h.propose({ operation: WRITE, subject: "late" });
+    expect((await approve(h, id, hashOf(h, id), "other")).outcome).toBe("decided");
+    expect(port.requests).toHaveLength(1);
+    // A pin that is gone when the signature has to be checked (read once before the prompt, once after).
+    const lostPort = createPresenceFake();
+    let reads = 0;
+    const g = presenceHarness(lostPort, async () => {
+      reads += 1;
+      return reads === 1 ? TEST_PIN : null;
+    });
+    const lost = g.propose({ operation: WRITE, subject: "lost" });
+    expect(await approve(g, lost)).toEqual({ outcome: "presence-unavailable" });
+    expect(lostPort.requests).toHaveLength(1);
+    expect(stored(g, lost).state).toBe("pending");
+    expect(g.store.calls).not.toContain("decide");
   });
 
   it("Test 3d: scheme none under the recorded K-ATTR custody is refused", async () => {
     expectRefused(await refusedWith(() => ({ kind: "proved", scheme: "none", signature: null })));
   });
 
-  it("the pin is read only when a proved answer needs verifying, never for a denial or an ungated approve", async () => {
+  it("the pin is read for a presence-required approve (before the prompt, and again to verify), never for a denial or an ungated approve", async () => {
     let reads = 0;
     const read = async (): Promise<string | null> => {
       reads += 1;
       return TEST_PIN;
     };
-    const denied = presenceHarness(createPresenceFake({ kind: "denied" }), read);
-    await approve(denied, denied.propose({ operation: WRITE, subject: "w" }));
+    const denyHarness = presenceHarness(createPresenceFake({ kind: "denied" }), read);
+    const denyId = denyHarness.propose({ operation: WRITE, subject: "w" });
+    await denyHarness.engine.decide({
+      proposalId: denyId,
+      decision: "deny",
+      payloadHash: hashOf(denyHarness, denyId),
+      channelHint: "plugin",
+    });
     const plain = presenceHarness(createPresenceFake(), read);
     await approve(plain, plain.propose({ subject: "d" }));
     expect(reads).toBe(0);
+    const proved = presenceHarness(createPresenceFake(), read);
+    const provedId = proved.propose({ operation: WRITE, subject: "w" });
+    await approve(proved, provedId, undefined, "other");
+    await proved.engine.settled();
+    // Before the prompt, to verify the signature, at the claim and at the last gate before execute.
+    expect(reads).toBe(4);
   });
 });

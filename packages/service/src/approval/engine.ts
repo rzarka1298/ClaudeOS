@@ -888,17 +888,20 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   }
 
   /**
-   * The presence part to store for a `proved` answer, or null when the answer does not hold up: it carries no
-   * signature, the signature does not verify against the pin over this approval's message, or no pin can be read.
+   * The presence part to store for a `proved` answer: `ok` with the part, `no-pin` when no pin can be read now,
+   * or `bad` when the answer does not hold up (no signature, a scheme the recorded custody does not produce, or a
+   * signature that does not verify against the pin over this approval's message).
    */
   async function verifiedPresencePart(
     current: StoredProposal,
     approvedAt: string,
     result: Extract<PresenceResult, { kind: "proved" }>,
-  ): Promise<PresencePart | null> {
-    if (result.scheme !== "p256" || typeof result.signature !== "string") return null;
+  ): Promise<
+    { readonly kind: "ok"; readonly part: PresencePart } | { readonly kind: "bad" | "no-pin" }
+  > {
+    if (result.scheme !== "p256" || typeof result.signature !== "string") return { kind: "bad" };
     const pin = await pinOrNull();
-    if (pin === null) return null;
+    if (pin === null) return { kind: "no-pin" };
     const message = presenceMessage({
       proposalId: current.proposalId,
       operation: current.operation,
@@ -906,8 +909,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       approvedAt,
     });
     return verifyPresenceSignature(pin, message, result.signature)
-      ? { scheme: "p256", sig: result.signature }
-      : null;
+      ? { kind: "ok", part: { scheme: "p256", sig: result.signature } }
+      : { kind: "bad" };
   }
 
   /**
@@ -921,6 +924,13 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     askedAt: string,
   ): Promise<DecideResponse> {
     const proposalId = current.proposalId;
+    // The pin comes first (09-FIX9): with no pin the signature could never be checked, so the owner is not
+    // asked for a Touch ID that cannot count, the port is not called and no prompt budget is spent.
+    const pinBefore = await pinOrNull();
+    if (pinBefore === null) {
+      return refuseApprove(current, "presence-unavailable", undefined, "presence-pin-unavailable");
+    }
+    if (stopping) return { outcome: "operation-reserved" };
     const startedAt = Date.parse(askedAt);
     presenceStarts = presenceStarts.filter((started) => startedAt - started < PRESENCE_WINDOW_MS);
     if (presenceStarts.length >= PRESENCE_PROMPTS_PER_MINUTE) {
@@ -971,10 +981,16 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     // The helper's word is not enough (D-03, R-02): its signature must verify, against the pinned public key,
     // over the exact message of THIS approval. Nothing is decided on a signature that does not, a scheme the
     // recorded custody does not produce, or a pin that cannot be read.
-    const presencePart = await verifiedPresencePart(current, approvedAt, result);
-    if (presencePart === null) {
-      return refuseApprove(current, "presence-unavailable", undefined, true);
+    const checked = await verifiedPresencePart(current, approvedAt, result);
+    if (checked.kind !== "ok") {
+      return refuseApprove(
+        current,
+        "presence-unavailable",
+        undefined,
+        checked.kind === "no-pin" ? "presence-pin-unavailable" : "presence-proof-invalid",
+      );
     }
+    const presencePart = checked.part;
     if (stopping) return { outcome: "operation-reserved" };
     // The store re-checks the deadline against this later instant, so a request that lapsed while the
     // prompt was up is expired. A wall clock that stepped back during the prompt is clamped to the
@@ -1005,7 +1021,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     current: StoredProposal,
     outcome: "presence-denied" | "presence-unavailable",
     reason: "presence-cooldown" | "presence-budget" | undefined = undefined,
-    proofInvalid = false,
+    warnCode: "presence-proof-invalid" | "presence-pin-unavailable" | undefined = undefined,
   ): DecideResponse {
     const proposalId = current.proposalId;
     // The client is told the closed outcome; the record keeps the finer reason when there is one.
@@ -1019,7 +1035,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     if (recorded === "recorded") {
       if (reason === "presence-budget") log.warn({ proposalId, code: "presence-rate-limited" });
       if (reason === "presence-cooldown") log.warn({ proposalId, code: "presence-cooldown" });
-      if (proofInvalid) log.warn({ proposalId, code: "presence-proof-invalid" });
+      if (warnCode !== undefined) log.warn({ proposalId, code: warnCode });
       log.warn({ proposalId, code: "presence-refused", detail });
     }
     if (recorded === "not-pending") {

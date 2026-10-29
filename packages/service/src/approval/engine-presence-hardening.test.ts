@@ -442,7 +442,9 @@ describe("review follow-ups from Codex run 20261029T023514538Z", () => {
     port.script(slow.script);
     const id = h.propose({ operation: WRITE, subject: "last" });
     const pending = approveVia(engine, h, id);
-    await Promise.resolve();
+    // The pin is read before the port is asked (09-FIX9), so let the check reach the port.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(port.requests).toHaveLength(26);
     expect(engine.shutdownSubscriptions()).toBe(1);
     engine.beginShutdown();
     expect(await pending).toEqual({ outcome: "operation-reserved" });
