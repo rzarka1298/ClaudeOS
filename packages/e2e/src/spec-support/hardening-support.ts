@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { type DriverBrowser, pollUntil } from "../driver.js";
+import { type DriverBrowser, type PollOptions, pollUntil } from "../driver.js";
+import { QUIET_THRESHOLD_MS } from "../isolation-guards.js";
 import { APPROVALS_COPY } from "./approvals-copy.js";
 import { HEALTH_ATTRS, HEALTH_CLASSES } from "./health-copy.js";
 import { OVERVIEW_CLASSES, OVERVIEW_TEXT } from "./overview-copy.js";
@@ -357,6 +358,29 @@ export function buildSessionEventRecord(
 // ---------------------------------------------------------------------------
 // Reaching and reading the two views
 
+/**
+ * The plugin's clock (`startClock`, packages/plugin/src/widgets/clock.ts) ticks every 60 seconds and
+ * both session views derive quietness from it, so a session that crossed the service's threshold
+ * can still read Running until the next tick (FIX11). A drift test pins this to the plugin source.
+ */
+export const UI_CLOCK_TICK_MS = 60_000;
+
+/** Room beyond the threshold and one full tick for the event round trip and a slow machine. */
+export const QUIET_WAIT_SLACK_MS = 15_000;
+
+/**
+ * How long a quiet item must keep polling before it may fail: the service threshold, one whole UI
+ * clock tick and slack. Lowering the service threshold does not speed the UI clock, so waiting
+ * less than a tick would fail a correct product.
+ */
+export function quietWaitBudgetMs(
+  thresholdMs: number = QUIET_THRESHOLD_MS,
+  tickMs: number = UI_CLOCK_TICK_MS,
+  slackMs: number = QUIET_WAIT_SLACK_MS,
+): number {
+  return thresholdMs + tickMs + slackMs;
+}
+
 export interface QuietBrowser extends DriverBrowser {
   execute<T, A extends unknown[]>(fn: (...args: A) => T, ...args: A): Promise<T>;
 }
@@ -404,7 +428,11 @@ export async function waitForQuiet(
   browser: QuietBrowser,
   check: (read: QuietRead) => string[],
   describe: string,
-  options: { timeoutMs: number; intervalMs: number } = { timeoutMs: 45_000, intervalMs: 250 },
+  options: { timeoutMs: number; intervalMs: number } = {
+    timeoutMs: quietWaitBudgetMs(),
+    intervalMs: 250,
+  },
+  clock: Pick<PollOptions, "now" | "sleep"> = {},
 ): Promise<QuietRead> {
   let last: string[] = ["the view was never read"];
   try {
@@ -414,7 +442,7 @@ export async function waitForQuiet(
         last = check(read);
         return last.length === 0 ? read : null;
       },
-      { ...options, describe },
+      { ...options, ...clock, describe },
     );
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);

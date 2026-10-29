@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
+import { buildServiceEnv, QUIET_THRESHOLD_MS } from "../isolation-guards.js";
 import { REPO_ROOT } from "../repo-paths.js";
 import {
   BANNER_CONFIG,
@@ -30,7 +31,12 @@ import {
   QUIET_DOM_CONFIG,
   QUIET_TEXT,
   QUIET_TEXT_OWNERS,
+  QUIET_WAIT_SLACK_MS,
+  type QuietBrowser,
   type QuietRead,
+  quietWaitBudgetMs,
+  UI_CLOCK_TICK_MS,
+  waitForQuiet,
   withWindowHeight,
 } from "./hardening-support.js";
 
@@ -659,5 +665,66 @@ describe("checkOneReport (Task 2, item 8)", () => {
     expect(checkOneReport({ ok: true, rows: [row(), row()] }).join(" ")).toMatch(/2 readable/);
     expect(checkOneReport({ ok: true, rows: [row(false)] }).join(" ")).toMatch(/0 readable/);
     expect(checkOneReport({ ok: true, rows: [row(true, 0)] }).join(" ")).toMatch(/no sources/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FIX11 (1): the quiet wait spans a full UI clock tick
+
+describe("the quiet wait budget (FIX11 finding 1)", () => {
+  it("mirrors the plugin's 60 second clock tick, which drives every quiet presentation", () => {
+    const clock = readFileSync(join(REPO_ROOT, "packages/plugin/src/widgets/clock.ts"), "utf8");
+    expect(clock).toContain(`everyMs = ${UI_CLOCK_TICK_MS.toLocaleString("en").replace(",", "_")}`);
+    const readers = readFileSync(
+      join(REPO_ROOT, "packages/plugin/src/widgets/session-signals.ts"),
+      "utf8",
+    );
+    expect(readers).toContain("nowTick.value");
+  });
+
+  it("takes the quiet threshold from the one constant the quiet service kind uses", () => {
+    const env = buildServiceEnv(
+      {
+        root: "/tmp/ccc-uat.abc123",
+        runtimeDir: "/tmp/ccc-uat.abc123/rt",
+        socketPath: "/tmp/ccc-uat.abc123/rt/svc.sock",
+        claudeConfigDir: "/tmp/ccc-uat.abc123/claude",
+        codexHome: "/tmp/ccc-uat.abc123/codex",
+        codexCandidatesDir: "/tmp/ccc-uat.abc123/codex-candidates",
+        codexBridgeHome: "/tmp/ccc-uat.abc123/codex-bridge",
+      } as never,
+      "ccc-uat-0123abcd",
+      "quiet",
+    );
+    expect(env.CCC_QUIET_THRESHOLD_MS).toBe(String(QUIET_THRESHOLD_MS));
+  });
+
+  it("is at least the threshold plus one whole UI tick plus slack, so a stale clock cannot fail a correct product", () => {
+    expect(quietWaitBudgetMs()).toBe(QUIET_THRESHOLD_MS + UI_CLOCK_TICK_MS + QUIET_WAIT_SLACK_MS);
+    expect(quietWaitBudgetMs()).toBeGreaterThanOrEqual(UI_CLOCK_TICK_MS + QUIET_THRESHOLD_MS);
+    expect(quietWaitBudgetMs()).toBeGreaterThanOrEqual(75_000);
+    expect(quietWaitBudgetMs(5_000, 30_000, 1_000)).toBe(36_000);
+  });
+
+  it("waitForQuiet keeps polling for a full tick of (fake) time before it gives up", async () => {
+    let now = 0;
+    const slept: number[] = [];
+    const browser = {
+      execute: async () => ({
+        agentRuns: { mounted: true, summary: "", rows: [] },
+        card: { found: false, numeral: "", caption: "", rows: [] },
+      }),
+    } as unknown as QuietBrowser;
+    await expect(
+      waitForQuiet(browser, () => ["not yet"], "a never-quiet session", undefined, {
+        now: () => now,
+        sleep: async (ms) => {
+          slept.push(ms);
+          now += ms;
+        },
+      }),
+    ).rejects.toThrow(/not yet/);
+    expect(now).toBeGreaterThanOrEqual(UI_CLOCK_TICK_MS + QUIET_THRESHOLD_MS);
+    expect(slept.length).toBeGreaterThan(UI_CLOCK_TICK_MS / 1_000);
   });
 });

@@ -60,7 +60,7 @@ export function noKeyAccountFor(account: string): string {
 const EXPIRY_TTL_MS = "15000";
 const EXPIRY_SWEEP_MS = "500";
 /** The quiet kind's threshold: short enough to wait out in a spec, long enough that a poll sees Running. */
-const QUIET_THRESHOLD_MS = "5000";
+export const QUIET_THRESHOLD_MS = 5000;
 /** The service variable that carries the quiet threshold (D-07; the production default is 30 minutes). */
 const QUIET_THRESHOLD_ENV = "CCC_QUIET_THRESHOLD_MS";
 
@@ -266,7 +266,7 @@ export function buildServiceEnv(
   }
   // The quiet kind adds the threshold and nothing else (T-09-46): the presence port stays
   // fail-closed through CCC_INSTALL_SECRET_ACCOUNT above, and no run root holds the helper.
-  if (kind === "quiet") env[QUIET_THRESHOLD_ENV] = QUIET_THRESHOLD_MS;
+  if (kind === "quiet") env[QUIET_THRESHOLD_ENV] = String(QUIET_THRESHOLD_MS);
   return env;
 }
 
