@@ -34,6 +34,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type GateRepo, gateRepo, REPO_ROOT } from "./gate-repo.js";
 
 const INSTALL = "scripts/launchagent/install.sh";
+const UNINSTALL = "scripts/launchagent/uninstall.sh";
+const PRESENCE_BUILD = "scripts/presence/build.sh";
 const TEMPLATE = "scripts/launchagent/com.claude-command-center.service.plist.template";
 const LABEL = "com.claude-command-center.service";
 
@@ -130,9 +132,10 @@ function resolveTool(name: string): string {
   throw new Error(`${name} not found on PATH`);
 }
 
-function fixture(): Fixture {
-  const repo = gateRepo([INSTALL, TEMPLATE], {
+function fixture(extraFiles: Readonly<Record<string, string>> = {}): Fixture {
+  const repo = gateRepo([INSTALL, UNINSTALL, TEMPLATE], {
     "packages/service/dist/main.js": "// fake service entry point\n",
+    ...extraFiles,
   });
   const scratch = mkdtempSync(join(tmpdir(), "ccc-launchagent-"));
   const home = join(scratch, "home");
@@ -175,6 +178,10 @@ function assertContained(fx: Fixture, ...paths: string[]): void {
 }
 
 interface Knobs {
+  /** The presence-helper stub subcommand that exits 1 (`enrol`, `unenrol`); every other one exits 0. */
+  presenceFails?: string;
+  /** Sets CCC_KEEP_PRESENCE=1, as `pnpm run dev:service` does. */
+  keepPresence?: boolean;
   clearsAfter?: number;
   bootstrapExits?: string;
   pollLimit?: number;
@@ -192,7 +199,9 @@ function scriptEnv(fx: Fixture, knobs: Knobs = {}, production = false): NodeJS.P
     STUB_DIR: fx.stubDir,
     STUB_CLEARS_AFTER: String(knobs.clearsAfter ?? 0),
     STUB_BOOTSTRAP_EXITS: knobs.bootstrapExits ?? "",
+    STUB_PRESENCE_FAILS: knobs.presenceFails ?? "",
   };
+  if (knobs.keepPresence === true) env.CCC_KEEP_PRESENCE = "1";
   if (!production) {
     env.CCC_INSTALL_POLL_INTERVAL = "0";
     env.CCC_INSTALL_RETRY_DELAY = "0";
@@ -414,4 +423,180 @@ describe("FIX2B I2: the production wait defaults are pinned", () => {
     expect(launchctlVerbs(fx)).not.toContain("bootstrap");
     // ~200 stub processes: allow for a loaded machine.
   }, 60_000);
+});
+
+// Plan 09-15 Task 2: install builds and enrols the presence helper; uninstall unenrols and removes it. The
+// helper here is a STUB script that only logs its argv (T-09-33): the real helper, the real Keychain and the
+// real launchd are never reached. The stub build.sh does not compile anything either.
+const PRESENCE_HELPER_STUB = `#!/bin/sh
+echo "presence-stub: $*" >> "\${STUB_LOG:?STUB_LOG must be set}"
+[ "$1" = "\${STUB_PRESENCE_FAILS:-}" ] && exit 1
+exit 0
+`;
+
+const BUILD_STUB_OK = `#!/bin/sh
+echo "presence-build-stub: \${CCC_RUNTIME_DIR:-unset}" >> "\${STUB_LOG:?STUB_LOG must be set}"
+exit 0
+`;
+
+// Places the stub helper the way the real build does (into <runtime dir>/bin), with node: the closed PATH has no chmod.
+const BUILD_STUB_PLACES = `#!/bin/sh
+echo "presence-build-stub: \${CCC_RUNTIME_DIR:-unset}" >> "\${STUB_LOG:?STUB_LOG must be set}"
+mkdir -p "\${CCC_RUNTIME_DIR}/bin"
+node -e 'const fs = require("node:fs"); const p = process.argv[1] + "/bin/ccc-presence"; fs.writeFileSync(p, "#!/bin/sh\\necho \\"presence-stub: $*\\" >> \\"$STUB_LOG\\"\\nexit 0\\n"); fs.chmodSync(p, 0o755);' "\${CCC_RUNTIME_DIR}"
+exit 0
+`;
+
+const BUILD_STUB_FAILS = `#!/bin/sh
+echo "presence-build-stub: failing" >> "\${STUB_LOG:?STUB_LOG must be set}"
+echo "ERROR: helper-build-failed: compile" >&2
+exit 1
+`;
+
+const BUILD_WARNING =
+  "WARNING: the presence helper was not built; connector-class approvals will be refused until it is (Diagnostics shows it).";
+
+function helperPath(fx: Fixture): string {
+  return join(fx.runtimeDir, "bin", "ccc-presence");
+}
+
+function placeHelper(fx: Fixture): void {
+  mkdirSync(join(fx.runtimeDir, "bin"), { recursive: true });
+  writeFileSync(helperPath(fx), PRESENCE_HELPER_STUB);
+  chmodSync(helperPath(fx), 0o755);
+}
+
+function presenceCalls(fx: Fixture): string[] {
+  return calls(fx).filter((line) => /^presence(-build)?-stub: /.test(line));
+}
+
+describe("09-15 Task 2: install builds and enrols the presence helper, and only warns when it cannot", () => {
+  it("without scripts/presence/build.sh the install prints the WARNING and still exits 0", () => {
+    const fx = fixture();
+    const result = run(fx);
+    expect(result.status, result.out).toBe(0);
+    expect(result.out).toContain(BUILD_WARNING);
+    expect(launchctlVerbs(fx)).toContain("bootstrap");
+    expect(presenceCalls(fx)).toEqual([]);
+  });
+
+  it("a failing build prints the WARNING (and the compiler's error), still exits 0 and enrols nothing", () => {
+    const fx = fixture({ [PRESENCE_BUILD]: BUILD_STUB_FAILS });
+    const result = run(fx);
+    expect(result.status, result.out).toBe(0);
+    expect(result.out).toContain(BUILD_WARNING);
+    expect(result.out).toContain("helper-build-failed: compile");
+    expect(presenceCalls(fx)).toEqual(["presence-build-stub: failing"]);
+    expect(launchctlVerbs(fx)).toContain("bootstrap");
+  });
+
+  it("a first install builds into the runtime dir and enrols the new binary (no old helper to unenrol)", () => {
+    const fx = fixture({ [PRESENCE_BUILD]: BUILD_STUB_PLACES });
+    const result = run(fx);
+    expect(result.status, result.out).toBe(0);
+    expect(result.out).not.toContain("WARNING");
+    expect(presenceCalls(fx)).toEqual([
+      `presence-build-stub: ${fx.runtimeDir}`,
+      "presence-stub: enrol",
+    ]);
+  });
+
+  it("a re-install unenrols the OLD binary first, rebuilds, then enrols, in that order, by absolute path", () => {
+    const fx = fixture({ [PRESENCE_BUILD]: BUILD_STUB_OK });
+    placeHelper(fx);
+    assertContained(fx, helperPath(fx));
+    const result = run(fx);
+    expect(result.status, result.out).toBe(0);
+    expect(result.out).not.toContain("WARNING");
+    expect(presenceCalls(fx)).toEqual([
+      "presence-stub: unenrol",
+      `presence-build-stub: ${fx.runtimeDir}`,
+      "presence-stub: enrol",
+    ]);
+    // Before the service is bootstrapped: the helper is ready when the service starts.
+    expect(launchctlVerbs(fx)).toContain("bootstrap");
+  });
+
+  it("a helper that cannot enrol is a WARNING, not an install failure", () => {
+    const fx = fixture({ [PRESENCE_BUILD]: BUILD_STUB_OK });
+    placeHelper(fx);
+    const result = run(fx, { presenceFails: "enrol" });
+    expect(result.status, result.out).toBe(0);
+    expect(result.out).toContain("could not enrol its signing key");
+    expect(launchctlVerbs(fx)).toContain("bootstrap");
+  });
+
+  it("a failed unenrol of the old helper does not stop the install", () => {
+    const fx = fixture({ [PRESENCE_BUILD]: BUILD_STUB_OK });
+    placeHelper(fx);
+    const result = run(fx, { presenceFails: "unenrol" });
+    expect(result.status, result.out).toBe(0);
+    expect(presenceCalls(fx)).toEqual([
+      "presence-stub: unenrol",
+      `presence-build-stub: ${fx.runtimeDir}`,
+      "presence-stub: enrol",
+    ]);
+  });
+
+  it("install.sh builds with scripts/presence/build.sh, enrols with the helper's enrol, and names no real Keychain tool", () => {
+    const source = readFileSync(join(REPO_ROOT, INSTALL), "utf8");
+    expect(source).toContain("presence/build.sh");
+    expect(source).toContain('"${PRESENCE_HELPER}" enrol');
+    expect(source).not.toMatch(/\/usr\/bin\/security|\bsecurity\s+(add|delete|find)-/);
+  });
+});
+
+describe("09-15 Task 2: uninstall unenrols the helper and removes it", () => {
+  /** uninstall.sh also needs `rm`; the closed PATH gains exactly that. */
+  function uninstallFixture(extraFiles: Readonly<Record<string, string>> = {}): Fixture {
+    const fx = fixture(extraFiles);
+    symlinkSync(resolveTool("rm"), join(fx.binDir, "rm"));
+    return fx;
+  }
+
+  function runUninstall(fx: Fixture, knobs: Knobs = {}): { status: number | null; out: string } {
+    assertContained(fx, fx.home, fx.runtimeDir, fx.binDir, fx.stubDir, fx.log);
+    const result = fx.repo.run(UNINSTALL, [], scriptEnv(fx, knobs));
+    return { status: result.status, out: result.out };
+  }
+
+  it("unenrols with the installed binary, then deletes it", () => {
+    const fx = uninstallFixture();
+    placeHelper(fx);
+    const result = runUninstall(fx);
+    expect(result.status, result.out).toBe(0);
+    expect(presenceCalls(fx)).toEqual(["presence-stub: unenrol"]);
+    expect(existsSync(helperPath(fx))).toBe(false);
+    expect(result.out).toContain("Removed com.claude-command-center.service");
+  });
+
+  it("keeps the binary and warns when the Keychain item could not be removed", () => {
+    const fx = uninstallFixture();
+    placeHelper(fx);
+    const result = runUninstall(fx, { presenceFails: "unenrol" });
+    expect(result.status, result.out).toBe(0);
+    expect(result.out).toContain("could not remove its Keychain item");
+    expect(existsSync(helperPath(fx))).toBe(true);
+  });
+
+  it("CCC_KEEP_PRESENCE=1 (the dev:service loop) leaves the helper and its key alone", () => {
+    const fx = uninstallFixture();
+    placeHelper(fx);
+    const result = runUninstall(fx, { keepPresence: true });
+    expect(result.status, result.out).toBe(0);
+    expect(presenceCalls(fx)).toEqual([]);
+    expect(existsSync(helperPath(fx))).toBe(true);
+    const manifest = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(manifest.scripts["dev:service"]).toContain("CCC_KEEP_PRESENCE=1");
+    expect(manifest.scripts["presence:build"]).toBe("sh scripts/presence/build.sh");
+  });
+
+  it("with no helper installed there is nothing to unenrol and it still succeeds", () => {
+    const fx = uninstallFixture();
+    const result = runUninstall(fx);
+    expect(result.status, result.out).toBe(0);
+    expect(presenceCalls(fx)).toEqual([]);
+  });
 });

@@ -45,6 +45,34 @@ sed \
   -e "s#__RUNTIME_DIR__#${RUNTIME_DIR}#g" \
   "${PLIST_TEMPLATE}" > "${PLIST_DEST}"
 
+# The owner-presence helper (APPR-11, D-01, R-01, R-02; 09-PRESENCE-SPIKE.md: custody K-ATTR).
+# Build it from source with the Command Line Tools clang and enrol its signing key. An
+# ad-hoc signature changes on every rebuild and the key's Keychain item trusts only the
+# binary that created it, so an earlier helper (still the old binary at this point)
+# unenrols FIRST, then the new binary enrols. A failed build or enrolment is a WARNING,
+# never an install failure: the service starts and connector-class approvals are refused
+# until the helper works (Diagnostics shows its state). No test or sandbox reaches here
+# with a real helper: the install test points HOME and CCC_RUNTIME_DIR at temp directories.
+PRESENCE_BUILD="${REPO_ROOT}/scripts/presence/build.sh"
+PRESENCE_HELPER="${RUNTIME_DIR}/bin/ccc-presence"
+PRESENCE_WARNING="WARNING: the presence helper was not built; connector-class approvals will be refused until it is (Diagnostics shows it)."
+
+if [ -x "${PRESENCE_HELPER}" ]; then
+  "${PRESENCE_HELPER}" unenrol >/dev/null 2>&1 || true
+fi
+if [ -f "${PRESENCE_BUILD}" ]; then
+  if ! CCC_RUNTIME_DIR="${RUNTIME_DIR}" sh "${PRESENCE_BUILD}"; then
+    echo "${PRESENCE_WARNING}" >&2
+  fi
+else
+  echo "${PRESENCE_WARNING}" >&2
+fi
+if [ -x "${PRESENCE_HELPER}" ]; then
+  if ! "${PRESENCE_HELPER}" enrol >/dev/null 2>&1; then
+    echo "WARNING: the presence helper could not enrol its signing key; connector-class approvals will be refused until it does (Diagnostics shows it)." >&2
+  fi
+fi
+
 # Idempotent registration: bootout first, tolerating "not currently
 # bootstrapped" (exit code from an absent job), then bootstrap fresh --
 # re-running install.sh after the plist changed (a rebuilt SERVICE_MAIN
