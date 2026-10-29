@@ -16,7 +16,13 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { main } from "./cli.js";
 import { REPO_ROOT } from "./repo-paths.js";
-import { type AuditResult, type AuditTestHooks, auditPhases, classifyResult } from "./uat-audit.js";
+import {
+  type AuditResult,
+  type AuditTestHooks,
+  auditPhases,
+  classifyResult,
+  PHASE_EVIDENCE,
+} from "./uat-audit.js";
 import { parseUatScript } from "./uat-tags.js";
 
 /**
@@ -54,7 +60,7 @@ function put(phases: string, folder: string, file: string, text: string): void {
 }
 
 /** The item counts of the miniature fixtures (the real counts come from the spec maps). */
-const FIXTURE_COUNTS = { "06": 3, "07": 2, "08": 2 } as const;
+const FIXTURE_COUNTS = { "06": 3, "07": 2, "08": 2, "09": 2 } as const;
 
 /**
  * Runs the audit through the real `main`. A `--only a,b` pair in `args` is lifted out into the
@@ -949,6 +955,13 @@ real("the real tree (Test 4, private checkouts only)", () => {
       "07": "24/24",
       "08": "39/39",
     };
+    // Phase 9 joined the table in plan 09-21. Its row is valid at every stage of the sitting: still
+    // pending, or recorded (with the exceptions the owner accepted), never missing or unreadable.
+    const nine = text.match(/^\| 09 \|[^|]*\| (\d+)\/(\d+) \| ([a-z-]+) \|/m);
+    expect(nine, "a row for phase 09").not.toBeNull();
+    expect(["pending-live-uat", "recorded", "recorded-with-exceptions"]).toContain(nine?.[3]);
+    expect(nine?.[2]).toBe("19");
+    if (nine?.[3] !== "pending-live-uat") expect(nine?.[1]).toBe("19");
     for (const [phase, count] of Object.entries(counts)) {
       expect(text, phase).toMatch(
         new RegExp(`^\\| ${phase.replace(".", "\\.")} \\|[^|]*\\| ${count} \\|`, "m"),
@@ -982,7 +995,10 @@ real("the real tree (Test 4, private checkouts only)", () => {
         ),
       );
     }
-    expect(text).not.toMatch(/pending-live-uat \|/);
+    // Only Phase 9 may still be pending (its owner items are walked at the phase-end sitting).
+    expect((text.match(/pending-live-uat \|/g) ?? []).length).toBe(
+      nine?.[3] === "pending-live-uat" ? 1 : 0,
+    );
     // Console output is counts and statuses only: no item title and no result text.
     const phasesDir = join(REPO_ROOT, ".planning", "phases");
     const folder = readdirSync(phasesDir).find((name) => name.startsWith("07-")) ?? "";
@@ -998,5 +1014,162 @@ real("the real tree (Test 4, private checkouts only)", () => {
         /^(Phase \d{2}(?:\.\d)?: [a-z-]+ \(\d+\/\d+ items recorded\)|Exceptions listed: \d+\.|Record written: [A-Za-z0-9.-]+\.)$/,
       );
     }
+  });
+});
+
+describe("Phase 9 in the audit table (plan 09-21, D-17)", () => {
+  const NINE = [
+    "---",
+    "status: testing",
+    "phase: 09-theta",
+    "---",
+    "",
+    "## Tests",
+    "",
+    "### 1. Auto item",
+    "run: auto",
+    "via: dom",
+    "result: [pending]",
+    "",
+    "### 2. Owner item",
+    "run: owner",
+    "owner-why: real-session",
+    "result: [pending]",
+    "",
+    "## Summary",
+    "",
+    "total: 2",
+    "",
+  ].join("\n");
+
+  it("registers 09 as a script phase with pending allowed", () => {
+    expect(PHASE_EVIDENCE.find((entry) => entry.phase === "09")).toEqual({
+      phase: "09",
+      entries: [{ kind: "uat-script", files: ["09-UAT.md"] }],
+      pendingAllowed: true,
+    });
+  });
+
+  it("reads a testing script with pending results as pending-live-uat without a testing-status defect", () => {
+    const phases = phasesWith();
+    put(phases, "09-theta", "09-UAT.md", NINE);
+    const row = rowOf(auditTree(phases, ["09"]), "09");
+    expect(row.status).toBe("pending-live-uat");
+    expect(row.recorded).toBe(0);
+    expect(row.total).toBe(2);
+    expect(row.defects.join(" ")).not.toMatch(/status: testing/);
+  });
+
+  it("exits 0 for a pending Phase 9 next to a recorded phase, and 1 for a pending phase 03", async () => {
+    const phases = phasesWith("02-beta");
+    put(phases, "09-theta", "09-UAT.md", NINE);
+    const out = join(scratch, "AUDIT.md");
+    expect((await audit(["--phases-dir", phases, "--out", out, "--only", "02,09"])).code).toBe(0);
+    expect(readFileSync(out, "utf8")).toMatch(/^\| 09 \|.*\| 0\/2 \| pending-live-uat \|/m);
+    put(phases, "03-gamma", "03-UAT.md", NINE.replace("09-theta", "03-gamma"));
+    expect((await audit(["--phases-dir", phases, "--out", out, "--only", "02,03"])).code).toBe(1);
+  });
+
+  it("still flags a testing status on a phase that is not 07, 08 or 09", () => {
+    const phases = phasesWith();
+    put(phases, "03-gamma", "03-UAT.md", NINE.replace("09-theta", "03-gamma"));
+    const result = auditPhases({
+      phasesDir: phases,
+      readText: (path) => (existsSync(path) ? readFileSync(path, "utf8") : null),
+      listDir: (dir) => (existsSync(dir) ? readdirSync(dir) : []),
+      only: ["03"],
+      expectedItems: { "03": 2 },
+    });
+    expect(rowOf(result, "03").defects.join(" ")).toMatch(/status: testing/);
+  });
+
+  it("compares phase 09 with the spec map item count by default", () => {
+    const phases = phasesWith();
+    put(phases, "09-theta", "09-UAT.md", NINE);
+    const result = auditPhases({
+      phasesDir: phases,
+      readText: (path) => (existsSync(path) ? readFileSync(path, "utf8") : null),
+      listDir: (dir) => (existsSync(dir) ? readdirSync(dir) : []),
+      only: ["09"],
+    });
+    expect(rowOf(result, "09").defects.join(" ")).toMatch(/spec map/);
+  });
+});
+
+describe("an owner item recorded as not walked (FIX11 finding 4)", () => {
+  const script = (result: string) =>
+    [
+      "---",
+      "status: testing",
+      "phase: 09-theta",
+      "---",
+      "",
+      "## Tests",
+      "",
+      "### 1. Walked",
+      "run: owner",
+      "owner-why: real-session",
+      "result: pass — owner 2026-10-30: done",
+      "",
+      "### 2. Not walkable yet",
+      "run: owner",
+      "owner-why: real-session",
+      `result: ${result}`,
+      "",
+      "## Summary",
+      "",
+      "total: 2",
+      "",
+    ].join("\n");
+  const rowFor = (result: string) => {
+    const phases = phasesWith();
+    put(phases, "09-theta", "09-UAT.md", script(result));
+    return rowOf(auditTree(phases, ["09"]), "09");
+  };
+
+  it("counts the item as recorded but lists an exception that needs the owner's dated acceptance", () => {
+    const row = rowFor(
+      "accepted — not walked: no presence-required class is enabled in this build",
+    );
+    expect(row.recorded).toBe(2);
+    expect(row.status).toBe("recorded-with-exceptions");
+    expect(row.exceptions.map((entry) => entry.id)).toEqual(["09-uat-2"]);
+    expect(row.exceptions[0]?.summary).toMatch(/not walked/);
+  });
+
+  it("matches the words case-insensitively and for any phase", () => {
+    expect(rowFor("pass — Not Walked here").exceptions.map((entry) => entry.id)).toEqual([
+      "09-uat-2",
+    ]);
+  });
+
+  it("raises no exception for a walked result", () => {
+    const row = rowFor("pass — owner 2026-10-30: verified");
+    expect(row.exceptions).toEqual([]);
+    expect(row.status).toBe("recorded");
+  });
+
+  it("fails a strict run until the exception carries a dated acceptance", async () => {
+    const phases = phasesWith("02-beta");
+    put(
+      phases,
+      "09-theta",
+      "09-UAT.md",
+      script("accepted — not walked: no presence-required class is enabled in this build").replace(
+        "status: testing",
+        "status: complete",
+      ),
+    );
+    const out = join(scratch, "AUDIT.md");
+    const run = (extra: string[]) =>
+      audit(["--phases-dir", phases, "--out", out, "--only", "02,09", ...extra]);
+    expect((await run([])).code).toBe(0);
+    expect((await run(["--strict"])).code).toBe(1);
+    expect(readFileSync(out, "utf8")).toMatch(/^\| 09-uat-2 \|.*\| pending \|$/m);
+    writeFileSync(
+      out,
+      readFileSync(out, "utf8").replace(/^(\| 09-uat-2 \|.*\| )pending \|$/m, "$12000-05-06 |"),
+    );
+    expect((await run(["--strict"])).code).toBe(0);
   });
 });

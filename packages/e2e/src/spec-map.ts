@@ -2,6 +2,7 @@ import { UsageError } from "./cli-args.js";
 import type { UatProfile } from "./profile.js";
 import { SPEC_FILES_07, UAT_ITEM_PLAN_07, UAT_PHASE_PREFIX_07 } from "./spec-map-07.js";
 import { SPEC_FILES_08, UAT_ITEM_PLAN_08, UAT_PHASE_PREFIX_08 } from "./spec-map-08.js";
+import { SPEC_FILES_09, UAT_ITEM_PLAN_09, UAT_PHASE_PREFIX_09 } from "./spec-map-09.js";
 import type { OwnerWhy, RunClass, ViaToken } from "./uat-tags.js";
 
 /**
@@ -159,6 +160,7 @@ const PHASE_SPEC_MAPS: readonly PhaseSpecMap[] = [
   { prefix: UAT_PHASE_PREFIX, itemPlan: UAT_ITEM_PLAN, specFiles: SPEC_FILES },
   { prefix: UAT_PHASE_PREFIX_07, itemPlan: UAT_ITEM_PLAN_07, specFiles: SPEC_FILES_07 },
   { prefix: UAT_PHASE_PREFIX_08, itemPlan: UAT_ITEM_PLAN_08, specFiles: SPEC_FILES_08 },
+  { prefix: UAT_PHASE_PREFIX_09, itemPlan: UAT_ITEM_PLAN_09, specFiles: SPEC_FILES_09 },
 ];
 
 /** The map of the phase whose number prefixes a script's `phase:` line, or null when unknown. */
