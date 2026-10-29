@@ -25,6 +25,9 @@ import { requestJsonOverSocket, requestOverSocket } from "./service-harness.js";
 const KEYCHAIN_SERVICE_NAME = "com.claude-command-center";
 const ITEM_NOT_FOUND_EXIT_CODE = 44;
 
+/** The exact shape `setUpServiceEnvironment` gives its throwaway account: the prefix and 12 hex digits. The owner's own `install-secret` can never match. */
+const THROWAWAY_ACCOUNT = /^install-secret-test-[0-9a-f]{12}$/;
+
 /** Sets the throwaway install-secret account and the short timers; returns the account name. */
 export function setUpServiceEnvironment(extra: Record<string, string> = {}): string {
   const account = `install-secret-test-${randomBytes(6).toString("hex")}`;
@@ -231,7 +234,7 @@ export function sessionOf(event: ServiceEvent): SessionView | null {
  * only: it reads an account this run created, never the owner's own `install-secret` item.
  */
 export function readThrowawayInstallSecret(account: string): Buffer {
-  if (!account.startsWith("install-secret-test-")) {
+  if (!THROWAWAY_ACCOUNT.test(account)) {
     throw new Error("readThrowawayInstallSecret: only a throwaway test account may be read");
   }
   const out = execFileSync(
