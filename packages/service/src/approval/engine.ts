@@ -916,6 +916,42 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   }
 
   /**
+   * The answer to give instead of prompting, when the request is no longer one the owner should be asked about
+   * after the pin lookup: shutting down, no longer pending (denied, withdrawn, expired, decided), past its
+   * deadline on a clock read that is never earlier than the instant of the ask, a payload that is not the one
+   * the caller saw, or a denial cooldown. Null when the prompt may go ahead.
+   */
+  function refusalAfterLookup(
+    current: StoredProposal,
+    callerHash: string,
+    askedAt: string,
+  ): DecideResponse | null {
+    if (stopping) return { outcome: "operation-reserved" };
+    const proposalId = current.proposalId;
+    const row = store.get(proposalId);
+    if (row === null) return { outcome: "not-found" };
+    const settledAs = (state: StoredProposal["state"]): DecideResponse =>
+      state === "expired" ? { outcome: "expired" } : { outcome: "already-decided", state };
+    if (row.state !== "pending") return settledAs(row.state);
+    // A clock that stepped back is clamped to the ask: the test can only be stricter than before.
+    const later = clock.now();
+    const strict = later > askedAt ? later : askedAt;
+    if (strict >= row.expiresAt) {
+      expireDueRows(strict);
+      const after = store.get(proposalId);
+      return after === null ? { outcome: "not-found" } : settledAs(after.state);
+    }
+    if (row.payloadHash !== callerHash || row.payloadHash !== current.payloadHash) {
+      return { outcome: "hash-mismatch" };
+    }
+    const cooledUntil = deniedUntil.get(proposalId);
+    if (cooledUntil !== undefined && Date.parse(strict) < cooledUntil) {
+      return refuseApprove(current, "presence-denied", "presence-cooldown");
+    }
+    return null;
+  }
+
+  /**
    * Asks the presence port BEFORE the store is asked to decide, never inside its transaction, so no
    * database lock is held across a prompt (D-01). Only a `proved` answer reaches `store.decide`; a
    * refusal stays on the record and leaves the request pending.
@@ -926,19 +962,40 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     askedAt: string,
   ): Promise<DecideResponse> {
     const proposalId = current.proposalId;
-    // The pin comes first (09-FIX9): with no pin the signature could never be checked, so the owner is not
-    // asked for a Touch ID that cannot count, the port is not called and no prompt budget is spent.
-    const pinBefore = await pinOrNull();
-    if (pinBefore === null) {
-      return refuseApprove(current, "presence-unavailable", undefined, "presence-pin-unavailable");
-    }
-    if (stopping) return { outcome: "operation-reserved" };
     const startedAt = Date.parse(askedAt);
+    // The budget is looked at BEFORE the pin is (09-FIX9): a spent budget costs no `security` spawn. A slot is
+    // reserved here, synchronously, so ten concurrent approves cannot all start a lookup; it is handed back
+    // below whenever the check ends without a prompt (no pin, or the request changed during the lookup), so a
+    // refusal that never asked the owner spends nothing.
     presenceStarts = presenceStarts.filter((started) => startedAt - started < PRESENCE_WINDOW_MS);
     if (presenceStarts.length >= PRESENCE_PROMPTS_PER_MINUTE) {
       return refuseApprove(current, "presence-unavailable", "presence-budget");
     }
     presenceStarts.push(startedAt);
+    let prompting = false;
+    try {
+      // The pin comes before the prompt: with no pin the signature could never be checked, so the owner is not
+      // asked for a Touch ID that cannot count and the port is not called.
+      const pinBefore = await pinOrNull();
+      if (pinBefore === null) {
+        return refuseApprove(
+          current,
+          "presence-unavailable",
+          undefined,
+          "presence-pin-unavailable",
+        );
+      }
+      // The lookup took time. The request may have been denied, withdrawn or expired meanwhile, and the
+      // owner must not be asked about one that is no longer open (Codex, FIX9).
+      const changed = refusalAfterLookup(current, callerHash, askedAt);
+      if (changed !== null) return changed;
+      prompting = true;
+    } finally {
+      if (!prompting) {
+        const slot = presenceStarts.lastIndexOf(startedAt);
+        if (slot >= 0) presenceStarts.splice(slot, 1);
+      }
+    }
 
     const approvedAt = askedAt;
     let answer: unknown;

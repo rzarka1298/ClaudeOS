@@ -477,3 +477,132 @@ describe("a pin that cannot be read after the owner approved (09-FIX9)", () => {
     expect(stored(h, id).outcomeCode).not.toBe("proof-invalid");
   });
 });
+
+describe("the proposal is re-checked after the pre-prompt pin lookup (09-FIX9, Codex)", () => {
+  const tick = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+  function gatedPin() {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return {
+      release: () => release(),
+      read: async (): Promise<string | null> => {
+        await gate;
+        return TEST_PIN;
+      },
+    };
+  }
+
+  const denyOf = (h: Harness, id: ProposalId) =>
+    h.engine.decide({
+      proposalId: id,
+      decision: "deny",
+      payloadHash: hashOf(h, id),
+      channelHint: "plugin",
+    });
+
+  it("a deny that lands during the pin lookup means no prompt: zero port calls", async () => {
+    const pin = gatedPin();
+    const port = createPresenceFake();
+    const h = presenceHarness(port, pin.read);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const pending = approve(h, id, hashOf(h, id), "other");
+    await tick();
+    expect((await denyOf(h, id)).outcome).toBe("decided");
+    pin.release();
+    expect(await pending).toEqual({ outcome: "already-decided", state: "denied" });
+    expect(port.requests).toHaveLength(0);
+    expect(stored(h, id).state).toBe("denied");
+  });
+
+  it("a withdrawal during the pin lookup means no prompt either", async () => {
+    const pin = gatedPin();
+    const port = createPresenceFake();
+    const h = presenceHarness(port, pin.read);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const pending = approve(h, id, hashOf(h, id), "other");
+    await tick();
+    expect(h.engine.withdraw(id)).toEqual({ kind: "withdrawn" });
+    pin.release();
+    const response = await pending;
+    expect(response.outcome).toBe("already-decided");
+    expect(port.requests).toHaveLength(0);
+  });
+
+  it("a request that expires during the pin lookup is expired, not prompted for", async () => {
+    const pin = gatedPin();
+    const port = createPresenceFake();
+    const h = presenceHarness(port, pin.read);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const pending = approve(h, id, hashOf(h, id), "other");
+    await tick();
+    h.clock.advance(61_000);
+    pin.release();
+    expect(await pending).toEqual({ outcome: "expired" });
+    expect(port.requests).toHaveLength(0);
+    expect(stored(h, id).state).toBe("expired");
+  });
+
+  it("a prompt is still asked for when nothing changed during the lookup", async () => {
+    const pin = gatedPin();
+    const port = createPresenceFake();
+    const h = presenceHarness(port, pin.read);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const pending = approve(h, id, hashOf(h, id), "other");
+    await tick();
+    pin.release();
+    expect((await pending).outcome).toBe("decided");
+    expect(port.requests).toHaveLength(1);
+  });
+});
+
+describe("a spent prompt budget is checked before any pin lookup (09-FIX9, Codex)", () => {
+  function counted() {
+    let reads = 0;
+    return {
+      reads: () => reads,
+      read: async (): Promise<string | null> => {
+        reads += 1;
+        return TEST_PIN;
+      },
+    };
+  }
+
+  it("ten sequential approves on ten requests: three prompts, and no more pin reads than port calls", async () => {
+    const pin = counted();
+    const port = createPresenceFake({ kind: "unavailable" });
+    const h = presenceHarness(port, pin.read);
+    for (let i = 0; i < 10; i += 1) {
+      await approve(h, h.propose({ operation: WRITE, subject: `w${i}` }));
+    }
+    expect(port.requests).toHaveLength(3);
+    expect(pin.reads()).toBeLessThanOrEqual(port.requests.length);
+    expect(pin.reads()).toBe(3);
+  });
+
+  it("ten concurrent approves: the budget is reserved before the lookup, so at most three lookups and three prompts", async () => {
+    const pin = counted();
+    const port = createPresenceFake({ kind: "unavailable" });
+    const h = presenceHarness(port, pin.read);
+    const ids = Array.from({ length: 10 }, (_, i) =>
+      h.propose({ operation: WRITE, subject: `c${i}` }),
+    );
+    await Promise.all(ids.map((id) => approve(h, id)));
+    expect(port.requests).toHaveLength(3);
+    expect(pin.reads()).toBe(3);
+  });
+
+  it("a request in its denial cooldown is refused before any pin lookup", async () => {
+    const pin = counted();
+    const port = createPresenceFake({ kind: "denied" });
+    const h = presenceHarness(port, pin.read);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    await approve(h, id);
+    expect(pin.reads()).toBe(1);
+    await approve(h, id);
+    expect(port.requests).toHaveLength(1);
+    expect(pin.reads()).toBe(1);
+  });
+});
