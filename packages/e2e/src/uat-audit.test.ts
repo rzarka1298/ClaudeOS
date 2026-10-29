@@ -955,10 +955,13 @@ real("the real tree (Test 4, private checkouts only)", () => {
       "07": "24/24",
       "08": "39/39",
     };
-    // Phase 9 joined the table in plan 09-21 with its owner items pending until the sitting.
+    // Phase 9 joined the table in plan 09-21. Its row is valid at every stage of the sitting: still
+    // pending, or recorded (with the exceptions the owner accepted), never missing or unreadable.
     const nine = text.match(/^\| 09 \|[^|]*\| (\d+)\/(\d+) \| ([a-z-]+) \|/m);
     expect(nine, "a row for phase 09").not.toBeNull();
-    expect(nine?.[3]).toBe("pending-live-uat");
+    expect(["pending-live-uat", "recorded", "recorded-with-exceptions"]).toContain(nine?.[3]);
+    expect(nine?.[2]).toBe("19");
+    if (nine?.[3] !== "pending-live-uat") expect(nine?.[1]).toBe("19");
     for (const [phase, count] of Object.entries(counts)) {
       expect(text, phase).toMatch(
         new RegExp(`^\\| ${phase.replace(".", "\\.")} \\|[^|]*\\| ${count} \\|`, "m"),
@@ -992,8 +995,10 @@ real("the real tree (Test 4, private checkouts only)", () => {
         ),
       );
     }
-    // Only Phase 9 is still pending (its owner items are walked at the phase-end sitting).
-    expect((text.match(/pending-live-uat \|/g) ?? []).length).toBe(1);
+    // Only Phase 9 may still be pending (its owner items are walked at the phase-end sitting).
+    expect((text.match(/pending-live-uat \|/g) ?? []).length).toBe(
+      nine?.[3] === "pending-live-uat" ? 1 : 0,
+    );
     // Console output is counts and statuses only: no item title and no result text.
     const phasesDir = join(REPO_ROOT, ".planning", "phases");
     const folder = readdirSync(phasesDir).find((name) => name.startsWith("07-")) ?? "";

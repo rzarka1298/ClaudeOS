@@ -362,3 +362,50 @@ run(
     });
   },
 );
+
+describe("recordingProblems accepts every stage of the sitting (FIX11 finding 2)", () => {
+  const script = (status: string, results: string[]) =>
+    parseUatScript(
+      [
+        "---",
+        `status: ${status}`,
+        "phase: 09-x",
+        "---",
+        "",
+        "## Tests",
+        "",
+        ...results.flatMap((result, index) => [
+          `### ${index + 1}. Item`,
+          "run: owner",
+          "owner-why: real-session",
+          `result: ${result}`,
+          "",
+        ]),
+        "## Summary",
+        "",
+        `total: ${results.length}`,
+        "",
+      ].join("\n"),
+    );
+
+  it("accepts untouched, partly recorded and fully recorded scripts with the matching status", () => {
+    expect(recordingProblems(script("testing", ["[pending]", "[pending]"]))).toEqual([]);
+    expect(recordingProblems(script("testing", ["pass — owner: ok", "[pending]"]))).toEqual([]);
+    expect(
+      recordingProblems(script("complete", ["pass — owner: ok", "accepted — not walked: none"])),
+    ).toEqual([]);
+  });
+
+  it("rejects an unrecognised verb, a bare verb, and a status that disagrees with the results", () => {
+    expect(recordingProblems(script("testing", ["done", "[pending]"])).join(" ")).toMatch(
+      /neither/,
+    );
+    expect(recordingProblems(script("testing", ["pass", "[pending]"])).join(" ")).toMatch(
+      /neither/,
+    );
+    expect(recordingProblems(script("complete", ["pass — ok", "[pending]"])).join(" ")).toMatch(
+      /not testing|status/,
+    );
+    expect(recordingProblems(script("testing", ["pass — ok"])).join(" ")).toMatch(/not complete/);
+  });
+});
