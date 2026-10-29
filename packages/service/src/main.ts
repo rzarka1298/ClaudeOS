@@ -13,6 +13,7 @@ import {
   openStore,
   readSchemaVersion,
 } from "@ccc/operational-store";
+import { approvalProofKey } from "./approval/index.js";
 import { createProposeForceTerminate } from "./approval-wiring/proposer.js";
 import { createProcessNamer, createRunInspector } from "./approval-wiring/run-inspector.js";
 import { createServiceApprovalLog, startApprovalServices } from "./approval-wiring/services.js";
@@ -209,6 +210,10 @@ async function main(): Promise<void> {
 
   const secretStore = createSecurityCliSecretStore();
   const installSecret = await getInstallSecret(secretStore);
+  // The approval decision-proof key (09-17, D-03): derived once, handed to the approval services alone,
+  // never logged, stored or returned by a route. A secret under 32 bytes throws a RangeError here, which
+  // the fatal-startup handler reports: the service does not start with a guessable proof key.
+  const approvalDecisionProofKey = approvalProofKey(installSecret);
 
   const heartbeatIntervalMs = Number(
     process.env.CCC_HEARTBEAT_INTERVAL_MS ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
@@ -370,6 +375,7 @@ async function main(): Promise<void> {
     getVaultRoot: readVaultRoot,
     log: approvalLog,
     env: process.env,
+    proofKey: approvalDecisionProofKey,
     projectName: (projectId) => getProject(store.db, projectId as ProjectId)?.displayName ?? null,
   });
   const recovered = await approvals.recover();

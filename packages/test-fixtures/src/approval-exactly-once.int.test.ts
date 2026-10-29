@@ -328,9 +328,12 @@ describe("Test 6: the ./approval export subpath", () => {
       [
         "DEFAULT_SWEEP_INTERVAL_MS",
         "PAYLOAD_RETENTION_MS",
+        // 09-17: the proof key derivation and check; signing stays inside the engine.
+        "approvalProofKey",
         "buildOperationRegistry",
         "createApprovalEngine",
         "createExpirySweeper",
+        "verifyDecisionProof",
       ].sort(),
     );
     expect(Object.keys(approvalEntry).some((name) => /mint|token|ledger/i.test(name))).toBe(false);

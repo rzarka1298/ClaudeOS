@@ -28,5 +28,8 @@ export {
   type SweeperTimerHandle,
   type SweeperTimers,
 } from "./expiry.js";
+// The proof key derivation (main.ts) and the check (the composition and integration tests). Signing is
+// the engine's alone: it is not exported.
+export { approvalProofKey, verifyDecisionProof } from "./proof.js";
 export { PAYLOAD_RETENTION_MS, type RecoverySummary } from "./recovery.js";
 export { buildOperationRegistry } from "./registry.js";

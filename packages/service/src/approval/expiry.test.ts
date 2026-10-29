@@ -366,6 +366,7 @@ describe("no notification path (Task 1, Test 7)", () => {
       "publisher",
       "mirror",
       "log",
+      "proofKey",
       "ids",
       "projectName",
       "claimFactsTimeoutMs",

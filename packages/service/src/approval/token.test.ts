@@ -98,13 +98,15 @@ describe("token confinement (Test 4)", () => {
   it("the public entry exports no minter, ledger or dispatch symbol", async () => {
     const entry = await import("./index.js");
     const keys = Object.keys(entry);
-    // Test 10 (public entry): the engine factory, the registry builder and (06-12) the expiry sweeper and the retention constant, nothing else at run time.
+    // Test 10 (public entry): the engine factory, the registry builder and (06-12) the expiry sweeper and the retention constant, and (09-17) the proof key derivation and check (signing stays inside the engine), nothing else at run time.
     expect([...keys].sort()).toEqual([
       "DEFAULT_SWEEP_INTERVAL_MS",
       "PAYLOAD_RETENTION_MS",
+      "approvalProofKey",
       "buildOperationRegistry",
       "createApprovalEngine",
       "createExpirySweeper",
+      "verifyDecisionProof",
     ]);
     for (const key of keys) expect(key).not.toMatch(/mint|token|ledger|dispatch|execute/i);
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");

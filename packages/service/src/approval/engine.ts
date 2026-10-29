@@ -52,6 +52,7 @@ import {
   resolveOutcome,
   unknownDecision,
 } from "./outcome.js";
+import { decisionMacFields, signDecisionProof } from "./proof.js";
 import { createRecovery, type RecoverySummary, tokenExpiryMs } from "./recovery.js";
 import {
   assembleSnapshot,
@@ -139,6 +140,12 @@ export interface ApprovalEngineDeps {
   readonly publisher: ApprovalPublisher;
   readonly mirror: MirrorPort;
   readonly log: ApprovalLog;
+  /**
+   * The key the engine signs every approval with and checks before an approved or executing row is
+   * carried out (09-17, D-03, APPR-12): `approvalProofKey(installSecret)`. REQUIRED, so no construction
+   * site can skip the proof. It is held here and nowhere else; it is never logged, stored or returned.
+   */
+  readonly proofKey: Buffer;
   /** Mints proposal ids and mirror note ids. Defaults to the domain minters. */
   readonly ids?: { proposalId(): ProposalId; noteId(): NoteId };
   /** The display name of a registered project, or null. Display only; never a path. */
@@ -364,7 +371,7 @@ function isoAfter(now: string, ms: number): string {
 // The engine
 
 export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine & EngineProbe {
-  const { store, registry, clock, publisher, mirror, log } = deps;
+  const { store, registry, clock, publisher, mirror, log, proofKey } = deps;
   const presence = deps.presence ?? UNAVAILABLE_PRESENCE;
   const ids = deps.ids ?? { proposalId: newProposalId, noteId: newNoteId };
   const ledger = createTokenLedger();
@@ -649,16 +656,40 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       }
     }
 
+    // ONE clock read: the instant the store records as `approvedAt` is the instant the proof covers.
+    const now = clock.now();
+    const via = channelOf(input);
+    const proof =
+      input.decision === "approve" && current?.state === "pending"
+        ? signApproval(current, now, via)
+        : undefined;
     return settleDecision(
       proposalId,
       store.decide({
         proposalId,
         decision: input.decision,
         expectedHash: input.payloadHash,
-        now: clock.now(),
-        via: channelOf(input),
+        now,
+        via,
+        ...(proof === undefined ? {} : { approvedAt: now, decisionProof: proof }),
       }),
     );
+  }
+
+  /**
+   * The proof text for approving `row` at `approvedAt` through `via` (D-03). The MAC binds the row's id,
+   * operation, payload hash, the approval instant and the channel, so it cannot be moved to another row.
+   */
+  function signApproval(row: StoredProposal, approvedAt: string, via: DecidedVia): string {
+    const fields = decisionMacFields({
+      proposalId: row.proposalId,
+      operation: row.operation,
+      payloadHash: row.payloadHash,
+      approvedAt,
+      decidedVia: via,
+    });
+    if (fields === null) throw new Error("approval proof: no covered fields");
+    return signDecisionProof(proofKey, fields, null);
   }
 
   /** The recorded channel of an ungated decision: the hint, with `presence` unreachable from outside (D-03). */
@@ -868,6 +899,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
         now: decidedAt,
         approvedAt,
         via: "presence",
+        decisionProof: signApproval(current, approvedAt, "presence"),
       }),
     );
   }
