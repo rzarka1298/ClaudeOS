@@ -9,8 +9,8 @@
 # Both copies point the pin at a unique test service and account (com.claude-command-center.uat-<random>,
 # ccc-uat-<random>), so the owner's approval-presence-pin item is never read, written or deleted. The
 # item is created and deleted by the same ad-hoc-signed binary that the access list trusts, which is the
-# silent path (spike: acl_item, attr_read_silent); the script never deletes it with `security`, which
-# would raise a Keychain sheet. A trap removes the test item on any exit. NOT run by CI or the agents'
+# silent path (spike: acl_item, attr_read_silent); the script never deletes it with `security`, which could
+# raise a Keychain sheet (a foreign delete is unmeasured). A trap removes the test item on any exit. NOT run by CI or the agents'
 # default gates: it writes one temporary Keychain item. Run it from a Terminal.
 set -u
 
