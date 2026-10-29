@@ -211,3 +211,35 @@ export interface ApprovalLog {
 export interface ApprovalPublisher {
   publish(event: "approval.upserted", payload: ApprovalUpsertedPayload): void;
 }
+
+// ---------------------------------------------------------------------------
+// Presence (D-01, D-02, R-02): the owner's verified presence at an approval
+
+/** What the presence check is asked to vouch for: one proposal, one operation, one payload, one approval instant. */
+export interface PresenceRequest {
+  readonly proposalId: ProposalId;
+  readonly operation: string;
+  /** The payload hash the owner approved, lowercase hex. */
+  readonly payloadHash: string;
+  /** When the approval was given, ISO 8601 UTC. */
+  readonly approvedAt: string;
+}
+
+/**
+ * The closed answer of a presence check. `proved` carries the proof scheme and its signature (null
+ * under the `none` scheme); `denied` means the owner did not give the gesture; `unavailable` means
+ * the check cannot run on this machine right now. Nothing here is a standing choice.
+ */
+export type PresenceResult =
+  | { readonly kind: "proved"; readonly scheme: "p256" | "none"; readonly signature: string | null }
+  | { readonly kind: "denied" }
+  | { readonly kind: "unavailable" };
+
+/** Whether the presence check could run at all, without asking the owner for anything. */
+export type PresenceAvailability = "available" | "unavailable";
+
+/** The port the engine asks to verify the owner's presence. Types only; the helper adapter lives in the service. */
+export interface PresencePort {
+  prove(request: PresenceRequest): Promise<PresenceResult>;
+  availability(): Promise<PresenceAvailability>;
+}

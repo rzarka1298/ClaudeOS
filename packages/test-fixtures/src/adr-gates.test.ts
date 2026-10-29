@@ -171,8 +171,9 @@ describe("Task 1 Test 2: the classification table matches the domain table", () 
           row.maxApprovalAgeMs,
         );
         expect(cells[5], `${operation} retry`).toBe(row.retry);
+        expect(cells[6], `${operation} presence`).toBe(row.presence);
       } else {
-        for (const index of [2, 3, 4, 5]) {
+        for (const index of [2, 3, 4, 5, 6]) {
           expect(cells[index], `${operation} column ${index}`).toBe("-");
         }
       }

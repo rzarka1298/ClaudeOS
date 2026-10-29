@@ -42,53 +42,60 @@ The table below is machine-checked against the domain table by a doc gate: it mu
 with the same class, status, lifetime, maximum approval age and retry policy.
 
 <!-- classification:begin -->
-| Operation | Class | Status | Lifetime | Maximum approval age | Retry |
-|---|---|---|---|---|---|
-| `session.force-terminate` | approval-required | enabled | 15 minutes | 5 minutes | idempotent |
-| `diagnostic.test` | approval-required | enabled | 24 hours | 5 minutes | idempotent |
-| `vault.delete` | approval-required | reserved | 24 hours | 5 minutes | never |
-| `vault.cross-scope-move` | approval-required | reserved | 24 hours | 5 minutes | never |
-| `hooks.install` | approval-required | reserved | 24 hours | 5 minutes | never |
-| `automation.git-write` | approval-required | reserved | 24 hours | 5 minutes | never |
-| `publish` | approval-required | reserved | 24 hours | 5 minutes | never |
-| `skill.run` | approval-required | reserved | 24 hours | 5 minutes | never |
-| `codex.hooks.install` | approval-required | reserved | 24 hours | 5 minutes | never |
-| `launch.antigravity` | direct-gesture | - | - | - | - |
-| `launch.claude-code` | direct-gesture | - | - | - | - |
-| `launch.finder` | direct-gesture | - | - | - | - |
-| `launch.github` | direct-gesture | - | - | - | - |
-| `launch.claude-desktop` | direct-gesture | - | - | - | - |
-| `launch.codex` | direct-gesture | - | - | - | - |
-| `launch.claude-codex-pair` | direct-gesture | - | - | - | - |
-| `codex.open-transcript` | direct-gesture | - | - | - | - |
-| `codex.follow-log` | direct-gesture | - | - | - | - |
-| `project.registry` | direct-gesture | - | - | - | - |
-| `switcher.open` | direct-gesture | - | - | - | - |
-| `session.focus` | direct-gesture | - | - | - | - |
-| `session.resume` | direct-gesture | - | - | - | - |
-| `session.branch` | direct-gesture | - | - | - | - |
-| `session.open-transcript` | direct-gesture | - | - | - | - |
-| `session.associate` | direct-gesture | - | - | - | - |
-| `session.interrupt` | direct-gesture | - | - | - | - |
-| `usage.transcript-analysis-toggle` | direct-gesture | - | - | - | - |
-| `usage.delete-analytics` | direct-gesture | - | - | - | - |
-| `connect.navigate` | direct-gesture | - | - | - | - |
-| `research.run-now` | direct-gesture | - | - | - | - |
-| `diagnostics.export-bundle` | direct-gesture | - | - | - | - |
-| `vault.write-note` | no-approval | - | - | - | - |
-| `vault.initialize` | no-approval | - | - | - | - |
-| `vault.repair-index` | no-approval | - | - | - | - |
-| `task.write` | no-approval | - | - | - | - |
-| `approval.mirror-note` | no-approval | - | - | - | - |
-| `store.write` | no-approval | - | - | - | - |
-| `notify.local` | no-approval | - | - | - | - |
-| `data.refresh` | no-approval | - | - | - | - |
-| `note.capture` | no-approval | - | - | - | - |
-| `research.fetch-sources` | no-approval | - | - | - | - |
-| `research.summarise` | no-approval | - | - | - | - |
-| `research.write-notes` | no-approval | - | - | - | - |
-| `automation-run.record` | no-approval | - | - | - | - |
+| Operation | Class | Status | Lifetime | Maximum approval age | Retry | Presence |
+|---|---|---|---|---|---|---|
+| `session.force-terminate` | approval-required | enabled | 15 minutes | 5 minutes | idempotent | none |
+| `diagnostic.test` | approval-required | enabled | 24 hours | 5 minutes | idempotent | none |
+| `vault.delete` | approval-required | reserved | 24 hours | 5 minutes | never | none |
+| `vault.cross-scope-move` | approval-required | reserved | 24 hours | 5 minutes | never | none |
+| `hooks.install` | approval-required | reserved | 24 hours | 5 minutes | never | none |
+| `automation.git-write` | approval-required | reserved | 24 hours | 5 minutes | never | required |
+| `publish` | approval-required | reserved | 24 hours | 5 minutes | never | required |
+| `skill.run` | approval-required | reserved | 24 hours | 5 minutes | never | none |
+| `codex.hooks.install` | approval-required | reserved | 24 hours | 5 minutes | never | none |
+| `launch.antigravity` | direct-gesture | - | - | - | - | - |
+| `launch.claude-code` | direct-gesture | - | - | - | - | - |
+| `launch.finder` | direct-gesture | - | - | - | - | - |
+| `launch.github` | direct-gesture | - | - | - | - | - |
+| `launch.claude-desktop` | direct-gesture | - | - | - | - | - |
+| `launch.codex` | direct-gesture | - | - | - | - | - |
+| `launch.claude-codex-pair` | direct-gesture | - | - | - | - | - |
+| `codex.open-transcript` | direct-gesture | - | - | - | - | - |
+| `codex.follow-log` | direct-gesture | - | - | - | - | - |
+| `project.registry` | direct-gesture | - | - | - | - | - |
+| `switcher.open` | direct-gesture | - | - | - | - | - |
+| `session.focus` | direct-gesture | - | - | - | - | - |
+| `session.resume` | direct-gesture | - | - | - | - | - |
+| `session.branch` | direct-gesture | - | - | - | - | - |
+| `session.open-transcript` | direct-gesture | - | - | - | - | - |
+| `session.associate` | direct-gesture | - | - | - | - | - |
+| `session.interrupt` | direct-gesture | - | - | - | - | - |
+| `usage.transcript-analysis-toggle` | direct-gesture | - | - | - | - | - |
+| `usage.delete-analytics` | direct-gesture | - | - | - | - | - |
+| `connect.navigate` | direct-gesture | - | - | - | - | - |
+| `research.run-now` | direct-gesture | - | - | - | - | - |
+| `diagnostics.export-bundle` | direct-gesture | - | - | - | - | - |
+| `vault.write-note` | no-approval | - | - | - | - | - |
+| `vault.initialize` | no-approval | - | - | - | - | - |
+| `vault.repair-index` | no-approval | - | - | - | - | - |
+| `task.write` | no-approval | - | - | - | - | - |
+| `approval.mirror-note` | no-approval | - | - | - | - | - |
+| `store.write` | no-approval | - | - | - | - | - |
+| `notify.local` | no-approval | - | - | - | - | - |
+| `data.refresh` | no-approval | - | - | - | - | - |
+| `note.capture` | no-approval | - | - | - | - | - |
+| `research.fetch-sources` | no-approval | - | - | - | - | - |
+| `research.summarise` | no-approval | - | - | - | - | - |
+| `research.write-notes` | no-approval | - | - | - | - | - |
+| `automation-run.record` | no-approval | - | - | - | - | - |
 <!-- classification:end -->
+
+The `Presence` column (Phase 9, D-02) is the same gate's check of each approval-required row's `presence` property, `-` for the
+other classes. `required` means approving the request needs the owner's verified presence (Touch ID or password); `none` means it
+does not. Connector-class external writes (`publish`, `automation.git-write`) are `required`; reads, managed-vault writes and
+in-app actions are `none`, and `session.force-terminate` keeps its Phase 6 behaviour (`none`). Denying never needs presence. No
+enabled production row is `required`: the connector-class operation that exercises it lives only in injected test tables. The
+property is required on the row type, so a new row cannot leave it out.
 
 Enabling an operation in a later phase takes an operation definition and one row of this table. The persistent store
 classifies through the production table rather than an injected one, so no engine change is needed and a connector defined

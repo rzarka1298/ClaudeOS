@@ -293,6 +293,8 @@ export const FAKE_CONNECTOR_ROW: ClassificationRow = {
   maxApprovalAgeMs: 5 * 60_000,
   retry: "never",
   modifiable: false,
+  // Models a later connector row (D-02); nothing decides it, so the requirement is only stated.
+  presence: "required",
   summary: "send a fake message",
 };
 
