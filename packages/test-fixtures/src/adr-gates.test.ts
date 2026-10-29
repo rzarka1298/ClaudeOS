@@ -885,6 +885,38 @@ function presenceAdr(): Adr {
   return adrByTitle(PRESENCE_ADR_TITLE_FRAGMENT);
 }
 
+/**
+ * The constants the presence record states, read from the code that owns them (FIX10B). The service does not export
+ * them across its package boundary, so the source file is read and the literal evaluated; a rename or a changed
+ * value fails here rather than leaving the record stating a number the code no longer uses.
+ */
+function sourceNumber(relativePath: string, name: string): number {
+  const source = readFileSync(join(REPO_ROOT, relativePath), "utf8");
+  const match = new RegExp(`export const ${name} = ([0-9_ *]+);`).exec(source);
+  if (!match) throw new Error(`${name} is not a plain numeric literal in ${relativePath}`);
+  return (match[1] as string)
+    .split("*")
+    .map((factor) => Number(factor.trim().replaceAll("_", "")))
+    .reduce((product, factor) => product * factor, 1);
+}
+
+const NUMBER_WORDS: Readonly<Record<number, string>> = {
+  1: "one",
+  2: "two",
+  3: "three",
+  5: "five",
+  10: "ten",
+  15: "fifteen",
+  30: "thirty",
+};
+
+function minutesWord(ms: number): string {
+  const minutes = ms / 60_000;
+  const word = NUMBER_WORDS[minutes];
+  if (word === undefined) throw new Error(`no number word for ${minutes} minutes`);
+  return word;
+}
+
 describe("09-20 Task 1: the presence decision record", () => {
   const decision = (): string => flat(section(presenceAdr(), "## Decision"));
   const residual = (): string => flat(section(presenceAdr(), "## Residual risk"));
@@ -925,7 +957,13 @@ describe("09-20 Task 1: the presence decision record", () => {
         "force-terminate is unchanged",
         /force-terminate[^.]*unchanged|unchanged[^.]*force-terminate/i,
       ],
-      ["Diagnostics availability", /Diagnostics[^.]*`unavailable`/],
+      ["the availability row lives in Settings, under Security", /Settings[^.]*Security/],
+      [
+        "availability is a gesture-only check; a reconnect reads unknown",
+        /reconnect[^.]*`unknown`/,
+      ],
+      ["available needs a trusted pin", /`available` needs[^.]*trusted pin/i],
+      ["the pin fingerprint", /first eight lowercase hex characters of the SHA-256/],
       ["five-minute replay bound", /replay[^.]*five minutes|five minutes[^.]*replay/i],
       ["the header no longer authorises", /header[^.]*(no longer|never)[^.]*authoris/i],
       ["the prompt budget", /3 (prompts )?per minute|three prompts per minute/i],
@@ -935,6 +973,66 @@ describe("09-20 Task 1: the presence decision record", () => {
         expect(decision()).toMatch(pattern);
       });
     }
+
+    it("Decision 7 names the seven reason codes and no longer claims the pane shares their vocabulary", () => {
+      const seven = section(presenceAdr(), "## Decision").split("### 7.")[1] ?? "";
+      expect(seven).not.toBe("");
+      for (const code of [
+        "helper-missing",
+        "not-enrolled",
+        "pin-stale",
+        "pin-changed",
+        "cannot-evaluate",
+        "check-failed",
+        "sandbox",
+      ]) {
+        expect(seven, code).toContain(`\`${code}\``);
+      }
+      expect(flat(seven)).toMatch(/only two client outcomes/i);
+      expect(flat(seven)).not.toMatch(/same closed vocabulary/i);
+    });
+
+    describe("the constants the record states are the constants the code uses", () => {
+      const perMinute = sourceNumber(
+        "packages/service/src/approval/engine.ts",
+        "PRESENCE_PROMPTS_PER_MINUTE",
+      );
+      const cooldownMs = sourceNumber(
+        "packages/service/src/approval/engine.ts",
+        "PRESENCE_DENIED_COOLDOWN_MS",
+      );
+      const markerMs = sourceNumber(
+        "packages/service/src/approval-wiring/presence.ts",
+        "PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS",
+      );
+
+      it("prompts per minute", () => {
+        expect(decision()).toContain(`At most ${perMinute} prompts per minute`);
+        expect(residual()).toContain(`${perMinute} per minute`);
+      });
+
+      it("the denied-prompt cooldown", () => {
+        expect(decision()).toContain(`${cooldownMs / 1000}-second cooldown`);
+      });
+
+      it("the install-marker window", () => {
+        expect(decision()).toContain(`modified within the last ${minutesWord(markerMs)} minutes`);
+        expect(residual()).toContain(`within ${minutesWord(markerMs)} minutes`);
+      });
+
+      it("the replay bound is the maximum approval age of the presence-gated rows", () => {
+        const ages = Object.values(CLASSIFICATION)
+          .filter((row) => "presence" in row && row.presence === "required")
+          .map((row) => ("maxApprovalAgeMs" in row ? row.maxApprovalAgeMs : undefined));
+        expect(ages.length).toBeGreaterThan(0);
+        for (const age of ages) {
+          expect(typeof age).toBe("number");
+          const words = minutesWord(age as number);
+          expect(decision()).toContain(`bounded to ${words} minutes`);
+          expect(decision()).toContain(`\`maxApprovalAgeMs\`, ${words} minutes)`);
+        }
+      });
+    });
 
     it.skipIf(!hasPresenceSpike)(
       "names the custody, pin and channel the spike record computed",
@@ -990,7 +1088,9 @@ describe("09-20 Task 1: the presence decision record", () => {
     }
 
     it("never claims a same-user process cannot forge a decision", () => {
-      expect(presenceAdr().text).not.toMatch(/cannot forge|unforgeable|cannot be bypassed/i);
+      expect(presenceAdr().text).not.toMatch(
+        /cannot forge|cannot be forged|can't forge|unforgeable|tamper[- ]proof|unbypassable|cannot be bypassed/i,
+      );
       expect(residual()).not.toMatch(/cannot forge/i);
     });
 

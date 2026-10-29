@@ -132,11 +132,37 @@ runtime directory and restarts the service, and the boot read adopts the new pin
 warn level. A marker counts only if it is a plain file (no link, directory or pipe) modified within the last ten minutes;
 any other marker is deleted and ignored with the closed warning `presence-pin-marker-ignored`.
 
-### 7. Diagnostics tells the truth about availability (D-04)
+A pin read made for an owner's check in Settings (decision 7) goes through the same guard and has the same
+trust-on-first-use and marker semantics as any other guarded read; the service's start remains the intended
+trust-on-first-use point.
 
-Diagnostics reports the presence mechanism as available, or as `unavailable` with a reason, never as working when it is
-absent and never as zero (ADR 0031; delivered by plan 09-19). The decision pane words a refusal in the same closed
-vocabulary, leaves the request pending and gives the owner a next step.
+### 7. The owner can see whether presence can be checked (D-04)
+
+The owner needs to see that the mechanism is unavailable before wondering why an approval failed, and it must never read
+as working when it is absent and never as zero (ADR 0031, section 8; delivered by plans 09-19 and `09-FIX10A`). The row is
+called "Approval presence check" and lives in the plugin under Settings, in the Security group, not in the Diagnostics
+section.
+
+- **Three states.** `available`, `unavailable` or `unknown`. An older service that sends nothing reads `unknown`, never
+  `available`.
+- **Owner gesture only.** The check runs when the owner asks for it. A reconnect never runs it and never repeats an earlier
+  answer: the row reads `unknown` with no memory of the last gesture. The two exceptions need no check: an absent helper
+  is `unavailable` at once and nothing is started, and a sandbox service is `unavailable` with the reason `sandbox`.
+- **`available` needs a trusted pin.** A gesture runs the helper's non-prompting check and one guarded, attribute-only pin
+  read, under a two-second cache and a six-second deadline. `available` needs the helper's own check to pass and a pin the
+  guard trusts, either unchanged or adopted by an install (decision 6). A pin the guard refused is `unavailable` with
+  `pin-changed` whatever the helper says, and it outranks `not-enrolled` and `pin-stale`. An enrolled helper whose pin
+  cannot be read is `unavailable` with `check-failed`.
+- **Seven reason codes, only with `unavailable`.** `helper-missing`, `not-enrolled`, `pin-stale`, `pin-changed`,
+  `cannot-evaluate`, `check-failed` and `sandbox`. A reason beside any other state contradicts itself and the plugin reads
+  it as `unknown`.
+- **A fingerprint of the pin.** With `available` or `unavailable` the row shows the first eight lowercase hex characters
+  of the SHA-256 of the public pin, so the owner can compare it across installs and notice a swapped key. It is a short
+  hash prefix of a public key, not a secret.
+- **The bundle allowlist is unchanged.** None of the three health members is copied into the bug-report bundle.
+- **The decision pane is smaller than the row.** The approvals pane distinguishes only two client outcomes,
+  `presence-denied` and `presence-unavailable`. The `presence-unavailable` text points at the Settings row and mentions that
+  a temporary prompt limit can cause it; the row carries the seven reasons.
 
 ## Findings that shaped this decision
 
@@ -194,7 +220,9 @@ What a process running as the owner can still do:
 - **Delete and recreate the pin item.** The spike measured a foreign modify of the helper-only item (a sheet, refused), not a
   foreign delete. If the access list does not gate delete, a same-user process can silently delete the item, add one under
   the same service and account with a key and public key of its own, and sign with that key whenever it likes; the service
-  would accept those signatures under the new pin. Until the measurement below is taken, treat delete as ungated.
+  would accept those signatures under the new pin only if the install-marker window is abused as well (a fresh marker
+  written by the same process before the next pin read, decision 6); without that, the changed pin is refused and logged.
+  Until the measurement below is taken, treat delete as ungated.
 - **Replace the keychain file, or attach a debugger or inject code into Obsidian or the service.** A debugger or code
   injection into Obsidian or the service, or replacing the login keychain file itself, is out of scope for the whole phase
   (D-03).
