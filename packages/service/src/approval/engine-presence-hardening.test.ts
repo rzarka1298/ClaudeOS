@@ -298,3 +298,85 @@ describe("an attacker cannot starve the owner's budget, and a budget refusal is 
     ]);
   });
 });
+
+describe("paths inside the flight that were never exercised (m5)", () => {
+  it("releases a joiner of a refused flight with the same refusal, one port call and one record", async () => {
+    const port = createPresenceFake();
+    const slow = deferredPresence();
+    port.script(slow.script);
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const first = approve(h, id);
+    const joiner = approve(h, id);
+    await Promise.resolve();
+    slow.settle({ kind: "denied" });
+    expect(await first).toEqual({ outcome: "presence-denied" });
+    expect(await joiner).toEqual({ outcome: "presence-denied" });
+    expect(port.requests).toHaveLength(1);
+    expect(h.store.calls.filter((call) => call === "recordDecisionRefusal")).toHaveLength(1);
+  });
+
+  for (const failing of ["decide", "recordDecisionRefusal"] as const) {
+    it(`a store.${failing} that throws inside the flight rejects the caller and the joiner, clears the flight, and a retry asks afresh`, async () => {
+      const port = createPresenceFake(failing === "decide" ? PROVED : { kind: "unavailable" });
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const h = presenceHarness(port);
+      let broken = true;
+      const engine = createApprovalEngine({
+        ...h.deps,
+        store: {
+          ...h.store,
+          [failing]: (...args: unknown[]) => {
+            if (broken) throw new Error("store down");
+            return (h.store[failing] as (...a: unknown[]) => unknown)(...args);
+          },
+        } as typeof h.store,
+      });
+      const id = h.propose({ operation: WRITE, subject: "w" });
+      port.script(async () => {
+        await gate;
+        return failing === "decide" ? PROVED : { kind: "unavailable" };
+      });
+
+      const first = approveVia(engine, h, id);
+      const joiner = approveVia(engine, h, id);
+      const settled = Promise.allSettled([first, joiner]);
+      await Promise.resolve();
+      release();
+      const results = await settled;
+      expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+      expect(stored(h, id).state).toBe("pending");
+      expect(port.requests).toHaveLength(1);
+
+      // The flight map was cleaned: with the store healthy again a retry runs a second check.
+      broken = false;
+      port.script(PROVED);
+      const retry = await approveVia(engine, h, id);
+      expect(port.requests).toHaveLength(2);
+      expect(retry.outcome).toBe("decided");
+    });
+  }
+
+  it("hands the store the caller's payload hash, not a copy of the stored one", async () => {
+    const port = createPresenceFake();
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const seen: string[] = [];
+    const engine = createApprovalEngine({
+      ...h.deps,
+      store: {
+        ...h.store,
+        decide: (input: Parameters<typeof h.store.decide>[0]) => {
+          seen.push(input.expectedHash);
+          return h.store.decide(input);
+        },
+      } as typeof h.store,
+    });
+    const hash = hashOf(h, id);
+    expect((await approveVia(engine, h, id, hash)).outcome).toBe("decided");
+    expect(seen).toEqual([hash]);
+  });
+});
