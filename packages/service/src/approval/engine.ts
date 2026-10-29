@@ -183,6 +183,17 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   }
 }
 
+/** The answer of a presence port narrowed to the closed set; anything else proved nothing (fail closed, m2). */
+function presenceResultOf(answer: unknown): PresenceResult {
+  if (typeof answer === "object" && answer !== null) {
+    const kind = (answer as { readonly kind?: unknown }).kind;
+    if (kind === "proved" || kind === "denied" || kind === "unavailable") {
+      return answer as PresenceResult;
+    }
+  }
+  return { kind: "unavailable" };
+}
+
 export interface SubmitInput {
   readonly operation: string;
   readonly subject: string;
@@ -683,24 +694,24 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     input: EngineDecideInput,
   ): Promise<DecideResponse> | DecideResponse {
     const proposalId = current.proposalId;
-    if (clock.now() >= current.expiresAt) {
-      // Past its deadline: the store expires it. It can never approve, so no check is wanted.
-      return settleDecision(
-        proposalId,
-        store.decide({
-          proposalId,
-          decision: "approve",
-          expectedHash: input.payloadHash,
-          now: clock.now(),
-          via: channelOf(input),
-        }),
-      );
+    // ONE clock read decides everything before the prompt (C1): the deadline test, the budget window
+    // and the instant the owner is asked to vouch for. A second read could step backwards and let a
+    // request that the first read saw expired reach an approve with no presence call.
+    const now = clock.now();
+    if (now >= current.expiresAt) {
+      // Past its deadline: only an expiry is possible, so use the store call that can only expire (never approve).
+      expireDueRows(now);
+      const row = store.get(proposalId);
+      if (row === null) return { outcome: "not-found" };
+      return row.state === "expired"
+        ? { outcome: "expired" }
+        : { outcome: "already-decided", state: row.state };
     }
     if (input.payloadHash !== current.payloadHash) return { outcome: "hash-mismatch" };
 
     const running = presenceFlights.get(proposalId);
     if (running !== undefined) return joinFlight(proposalId, running);
-    const flight = runPresenceCheck(current).finally(() => {
+    const flight = runPresenceCheck(current, input.payloadHash, now).finally(() => {
       if (presenceFlights.get(proposalId) === flight) presenceFlights.delete(proposalId);
     });
     presenceFlights.set(proposalId, flight);
@@ -725,9 +736,13 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
    * database lock is held across a prompt (D-01). Only a `proved` answer reaches `store.decide`; a
    * refusal stays on the record and leaves the request pending.
    */
-  async function runPresenceCheck(current: StoredProposal): Promise<DecideResponse> {
+  async function runPresenceCheck(
+    current: StoredProposal,
+    callerHash: string,
+    askedAt: string,
+  ): Promise<DecideResponse> {
     const proposalId = current.proposalId;
-    const startedAt = Date.parse(clock.now());
+    const startedAt = Date.parse(askedAt);
     presenceStarts = presenceStarts.filter((started) => startedAt - started < PRESENCE_WINDOW_MS);
     if (presenceStarts.length >= PRESENCE_PROMPTS_PER_MINUTE) {
       log.warn({ proposalId, code: "presence-rate-limited" });
@@ -735,10 +750,10 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     }
     presenceStarts.push(startedAt);
 
-    const approvedAt = clock.now();
-    let result: PresenceResult;
+    const approvedAt = askedAt;
+    let answer: unknown;
     try {
-      result = await presence.prove({
+      answer = await presence.prove({
         proposalId,
         operation: current.operation,
         payloadHash: current.payloadHash,
@@ -747,8 +762,9 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     } catch {
       // A port that fails is a port that proved nothing; never log the error text.
       log.warn({ proposalId, code: "presence-check-failed" });
-      result = { kind: "unavailable" };
+      answer = undefined;
     }
+    const result = presenceResultOf(answer);
     if (result.kind !== "proved") {
       return refuseApprove(
         current,
@@ -757,14 +773,19 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     }
     // Shutting down mid-prompt: the request stays pending for the next boot.
     if (stopping) return { outcome: "operation-reserved" };
-    // The store re-checks the deadline against this later instant, so a request that lapsed while the prompt was up is expired.
+    // The store re-checks the deadline against this later instant, so a request that lapsed while the
+    // prompt was up is expired. A wall clock that stepped back during the prompt is clamped to the
+    // instant the owner vouched for: the deadline test is only ever MORE conservative, and the store
+    // is never handed an approvedAt after its now (m2).
+    const read = clock.now();
+    const decidedAt = read < approvedAt ? approvedAt : read;
     return settleDecision(
       proposalId,
       store.decide({
         proposalId,
         decision: "approve",
-        expectedHash: current.payloadHash,
-        now: clock.now(),
+        expectedHash: callerHash,
+        now: decidedAt,
         approvedAt,
         via: "presence",
       }),
