@@ -113,19 +113,21 @@ const CODEX_CELLS: readonly string[] = [
 
 /**
  * The cells the merged tree has outside the Codex, Research, Settings and contrast specs: 9 widgets x 8
- * presentations + 5 motion + 4 Agent runs + 21 approvals + 19 tasks = 121, less the two permission-required
- * cells Phase 8 made unreachable (`today-permission-required` in 08-21, `tech-intel-permission-required` in
- * FIX5B), and the Codex spec's final count (UI-SPEC "Visual regression").
+ * presentations + 5 motion + 5 Agent runs + 21 approvals + 19 tasks + 1 quiet Active sessions card = 123, less
+ * the two permission-required cells Phase 8 made unreachable (`today-permission-required` in 08-21,
+ * `tech-intel-permission-required` in FIX5B), and the Codex spec's final count (UI-SPEC "Visual regression").
+ * Plan 09-22 added the quiet Agent runs cell and the quiet Active sessions card.
  */
-const MERGED_TREE_CELLS = 119;
+const MERGED_TREE_CELLS = 121;
 const CODEX_SPEC_CELLS = 47;
 /** The Research spec's cells (plan 07-16): one baseline each, in its own spec file. */
 const RESEARCH_SPEC_CELLS = 17;
 /**
- * The contrast guard's tests (`contrast.spec.ts`): 9 Phase 7 pages and 21 Phase 8 pages (08-21) under a light
- * and a dark host, plus 2 blank-page non-vacuity tests; no image.
+ * The contrast guard's tests (`contrast.spec.ts`): 9 Phase 7 pages, 21 Phase 8 pages (08-21) and 2 Phase 9
+ * pages (09-22, the quiet session on Agent runs and on the Active sessions card) under a light and a dark
+ * host, plus 2 blank-page non-vacuity tests; no image.
  */
-const CONTRAST_GUARD_TESTS = 62;
+const CONTRAST_GUARD_TESTS = 66;
 /** The Settings spec's pixel cells (plan 08-21): the nine sections, narrow layouts, Diagnostics, bundle and Overview states. */
 const SETTINGS_SPEC_CELLS = 32;
 
@@ -138,7 +140,7 @@ function titlesOf(listing: string, specFile: string): string[] {
 }
 
 describe("visual matrix (audit)", () => {
-  it("lists the merged-tree 119 cells (121 less the two unreachable permission-required cells) plus the Codex, Research, Settings and contrast specs", () => {
+  it("lists the merged-tree 121 cells (123 less the two unreachable permission-required cells) plus the Codex, Research, Settings and contrast specs", () => {
     const out = listTests({ CCC_VISUAL_ALLOW_LOCAL: "1" });
     expect(out).toContain(
       `Total: ${MERGED_TREE_CELLS + CODEX_SPEC_CELLS + RESEARCH_SPEC_CELLS + SETTINGS_SPEC_CELLS + CONTRAST_GUARD_TESTS} tests in 8 files`,
@@ -169,6 +171,8 @@ describe("visual matrix (audit)", () => {
       "agent-runs — selected-stale",
       "agent-runs — narrow-detail",
       "agent-runs — disconnected",
+      "agent-runs — quiet-idle",
+      "active-sessions — quiet",
       "project-shortcuts — ready — reduced",
     ]) {
       expect(out).toContain(cell);

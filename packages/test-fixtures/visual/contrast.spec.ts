@@ -108,6 +108,18 @@ const PAGES: readonly PageSpec[] = [
     params: { view: "agent-runs", case: "approvals-pending-destructive", width: "full" },
     mustSample: [],
   },
+  // Phase 9 (plan 09-22): a quiet idle session on the Agent runs destination and on the Active
+  // sessions card. The quiet label is words beside a glyph, and it must read in both host themes.
+  {
+    name: "agent runs quiet session",
+    params: { view: "agent-runs", case: "quiet-idle", width: "full" },
+    mustSample: ["Idle — last event 41 min ago", "Last signal"],
+  },
+  {
+    name: "active sessions card quiet session",
+    params: { widget: "active-sessions", state: "quiet" },
+    mustSample: ["Idle — last event 41 min ago", "1 quiet"],
+  },
   {
     name: "tab strip with count",
     params: { view: "agent-runs", case: "shell-nav-count", width: "full" },

@@ -588,6 +588,59 @@ function readyFrom(
   };
 }
 
+/**
+ * The Active sessions card with one quiet idle session (Phase 9, 09-22; D-05, R-04). Not a card
+ * presentation, so it is not in {@link PRESENTATIONS}: it is a ready card whose data has a running
+ * session with no event for 41 minutes beside a fresh running one and one waiting for approval, so
+ * the hero counts two active and the caption adds `1 quiet`. Built from synthetic rows only, with
+ * times relative to the frozen `NOW`.
+ */
+const QUIET_STATE = "quiet";
+
+function quietActiveSessionsInputs(): CellInputs {
+  const ago = (minutes: number): string => new Date(NOW - minutes * 60_000).toISOString();
+  const rows: readonly Fields[] = [
+    {
+      project: "Lantern",
+      name: "refactor-ingest",
+      model: "Opus",
+      state: "running",
+      startedAt: ago(70),
+      lastActivityAt: ago(41),
+      claudeSessionId: "fixture-lantern-session",
+    },
+    {
+      project: "Tidewater",
+      name: "tidewater-migration",
+      model: "Opus",
+      state: "running",
+      startedAt: ago(6),
+      lastActivityAt: ago(0.03),
+      claudeSessionId: "fixture-tidewater-session",
+    },
+    {
+      project: "Quarry",
+      name: "quarry-index-rebuild",
+      model: "Sonnet",
+      state: "waiting-for-approval",
+      startedAt: ago(42),
+      lastActivityAt: ago(0.5),
+      claudeSessionId: "fixture-quarry-session",
+    },
+  ];
+  return {
+    state: {
+      kind: "ready",
+      data: adaptActiveSessions({ rows }),
+      observedAt: ago(2),
+      freshness: "live",
+      partiality: { partial: false },
+      isEmpty: false,
+    },
+    connection: LIVE,
+  };
+}
+
 function cellFor(id: WidgetId, panel: FixturePanel, presentation: Presentation): CellInputs {
   const { states } = panel;
   switch (presentation) {
@@ -690,6 +743,9 @@ const AGENT_RUNS_CASES = [
   "selected-stale",
   "narrow-detail",
   "disconnected",
+  // Phase 9 (09-22; D-05, R-04): a running session whose last event is 41 minutes old reads as
+  // quiet, and the heading and caption count it apart from the active ones.
+  "quiet-idle",
 ] as const;
 type AgentRunsCase = (typeof AGENT_RUNS_CASES)[number];
 
@@ -811,10 +867,22 @@ function seedAgentRunsCase(agentRunsCase: AgentRunsCase): ConnectionState {
     state: "running",
   });
 
+  // A running session with no event for 41 minutes: still `running` in the store, never plain
+  // Running on screen (D-05). Present in every case's list only for `quiet-idle`, so the four
+  // earlier cells keep the rows they have always had.
+  const quiet = syntheticSession({
+    runId: "0mfk1a2b3c4d5e6f7a8b9c0d4" as SessionView["runId"],
+    name: "Index the changelog",
+    state: "running",
+    activity: "idle",
+    lastActivityAt: new Date(NOW - 41 * 60_000).toISOString(),
+  });
+
   const sessions = new Map<string, SessionView>([
     [waiting.runId, waiting],
     [stale.runId, stale],
     [running.runId, running],
+    ...(agentRunsCase === "quiet-idle" ? [[quiet.runId, quiet] as const] : []),
   ]);
   sessionsById.value = sessions;
   usageSummary.value = SYNTHETIC_USAGE_SUMMARY;
@@ -832,11 +900,25 @@ function seedAgentRunsCase(agentRunsCase: AgentRunsCase): ConnectionState {
     case "disconnected":
       selectedRunId.value = running.runId;
       return { kind: "disconnected", reason: "connect ECONNREFUSED" };
+    case "quiet-idle":
+      selectedRunId.value = quiet.runId;
+      return { kind: "live" };
   }
+}
+
+/**
+ * Marks the document ready one beat after the first paint. The four earlier Agent runs cells never
+ * needed a marker (their spec screenshots without waiting); the contrast guard waits for it, so the
+ * quiet cells set it. Plain timer, no hook: this module may import only preact, `@ccc/plugin` and
+ * its fixtures (harness-purity).
+ */
+function markReadySoon(): void {
+  setTimeout(() => document.documentElement.setAttribute("data-harness-ready", "true"), 60);
 }
 
 function AgentRunsCell({ agentRunsCase }: { readonly agentRunsCase: AgentRunsCase }) {
   connectionState.value = seedAgentRunsCase(agentRunsCase);
+  markReadySoon();
 
   const body = (
     <div className="ccc-content">
@@ -1787,7 +1869,8 @@ function HarnessCell() {
   if (!isWidgetId(widget)) {
     return <HarnessError message={`Unknown widget "${widget}".`} />;
   }
-  if (!isPresentation(state)) {
+  const quietActiveSessions = widget === "active-sessions" && state === QUIET_STATE;
+  if (!quietActiveSessions && !isPresentation(state)) {
     return <HarnessError message={`Unknown state "${state}".`} />;
   }
   const panel = FIXTURES.panels.find((candidate) => candidate.id === widget);
@@ -1796,7 +1879,9 @@ function HarnessCell() {
   }
 
   const definition: AnyWidgetDefinition = WIDGETS[widget];
-  const cell = cellFor(widget, panel, state);
+  // The only non-presentation state that gets here is the quiet Active sessions one (checked above).
+  const cell = isPresentation(state) ? cellFor(widget, panel, state) : quietActiveSessionsInputs();
+  if (quietActiveSessions) markReadySoon();
   connectionState.value = cell.connection;
 
   // The cell IS a production `.ccc-overview-grid`, so the card is sized by

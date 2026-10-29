@@ -94,6 +94,19 @@ for (const widgetId of WIDGET_IDS) {
   }
 }
 
+// The quiet Active sessions card (Phase 9, plan 09-22; D-05, R-04). A running session with no event
+// for 41 minutes is still `running` in the store but reads `Idle — last event 41 min ago`, is not
+// counted in the hero and adds `1 quiet` to the caption. It is a ready card, not a presentation, so
+// it sits beside the matrix. The words are asserted before the shot: a pixel baseline alone could
+// bless a plain `Running`.
+cell("active-sessions — quiet", "active-sessions-quiet.png", async (page, snapshot) => {
+  await page.goto(harnessUrl({ widget: "active-sessions", state: "quiet", motion: "full" }));
+  const card = page.locator(".ccc-card");
+  await expect(card).toContainText("Idle — last event 41 min ago");
+  await expect(card).toContainText("1 quiet");
+  await expect(card).toHaveScreenshot(snapshot);
+});
+
 // The four motion cells (A11Y-03, D-19). Reduced motion is one `data-motion`
 // attribute on the root that zeroes the motion tokens and switches the twinkle
 // field off; these cells guard that single switch — for the atmosphere (the
