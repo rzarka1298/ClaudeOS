@@ -45,7 +45,10 @@ if ! xcrun clang -fobjc-arc -O2 \
   exit 1
 fi
 
-if ! codesign -f -s - -i "${CODE_IDENTIFIER}" "${TMP_OUT}" >"${DIAG}" 2>&1; then
+# `-o runtime` is the hardened runtime: without it a same-user process can run THIS binary (the one the
+# Keychain item trusts) with DYLD_INSERT_LIBRARIES and execute its own code inside the trusted identity.
+# test-build.sh pins both the flag and the refusal of an inserted library.
+if ! codesign -f -s - -o runtime -i "${CODE_IDENTIFIER}" "${TMP_OUT}" >"${DIAG}" 2>&1; then
   echo "ERROR: helper-build-failed: codesign" >&2
   cat "${DIAG}" >&2
   exit 1
