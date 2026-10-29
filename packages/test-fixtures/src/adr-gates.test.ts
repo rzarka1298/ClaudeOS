@@ -866,3 +866,296 @@ describe("09-07 Task 2: the glossary defines job run and Probe", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 09-20 Task 1 (APPR-11, APPR-12): the record of the presence decision
+
+const PRESENCE_ADR_TITLE_FRAGMENT = "need the owner's presence";
+const PRESENCE_SPIKE = join(
+  REPO_ROOT,
+  ".planning",
+  "phases",
+  "09-hardening-honest-session-state-and-trustworthy-approvals",
+  "09-PRESENCE-SPIKE.md",
+);
+const hasPresenceSpike = existsSync(PRESENCE_SPIKE);
+
+/** The ADR that records the Phase 9 presence mechanism (found by title, never by number). */
+function presenceAdr(): Adr {
+  return adrByTitle(PRESENCE_ADR_TITLE_FRAGMENT);
+}
+
+describe("09-20 Task 1: the presence decision record", () => {
+  const decision = (): string => flat(section(presenceAdr(), "## Decision"));
+  const residual = (): string => flat(section(presenceAdr(), "## Residual risk"));
+
+  it("Test 1: is accepted, satisfies APPR-11 and APPR-12 and its title states the decision", () => {
+    const adr = presenceAdr();
+    expect(adr.frontMatter.status).toBe("accepted");
+    expect(adr.frontMatter.satisfies ?? "").toMatch(/\bAPPR-11\b/);
+    expect(adr.frontMatter.satisfies ?? "").toMatch(/\bAPPR-12\b/);
+    expect(adr.title).toMatch(/^Connector-class approvals need the owner's presence/);
+    expect(adr.title.length).toBeGreaterThan(60);
+    for (const heading of [
+      "## Context",
+      "## Decision",
+      "## Findings that shaped this decision",
+      "## Residual risk",
+      "## Considered Options",
+      "## Consequences",
+    ]) {
+      expect(adr.text, heading).toContain(`\n${heading}`);
+    }
+  });
+
+  describe("Test 2: the Decision section records what shipped", () => {
+    const checks: ReadonlyArray<readonly [string, RegExp]> = [
+      ["LocalAuthentication", /LocalAuthentication/],
+      ["Objective-C", /Objective-C/],
+      ["compiled locally with clang", /xcrun clang/],
+      ["the custody that shipped", /\bK-ATTR\b/],
+      ["the pin lives in a helper-only Keychain item attribute", /helper-acl-attribute/],
+      ["the proof column", /`decision_proof`/],
+      ["the key derivation", /HKDF-SHA256/],
+      ["the MAC is detection only", /MAC[^.]*detection/i],
+      ["the signature scheme", /P-256/],
+      ["connector-class writes only", /connector-class[^.]*writes? only|only[^.]*connector-class/i],
+      ["denial needs no gesture", /deny[^.]*(needs|without)[^.]*(gesture|presence)/i],
+      [
+        "force-terminate is unchanged",
+        /force-terminate[^.]*unchanged|unchanged[^.]*force-terminate/i,
+      ],
+      ["Diagnostics availability", /Diagnostics[^.]*`unavailable`/],
+      ["five-minute replay bound", /replay[^.]*five minutes|five minutes[^.]*replay/i],
+      ["the header no longer authorises", /header[^.]*(no longer|never)[^.]*authoris/i],
+      ["the prompt budget", /3 (prompts )?per minute|three prompts per minute/i],
+    ];
+    for (const [label, pattern] of checks) {
+      it(label, () => {
+        expect(decision()).toMatch(pattern);
+      });
+    }
+
+    it.skipIf(!hasPresenceSpike)(
+      "names the custody, pin and channel the spike record computed",
+      () => {
+        const spike = readFileSync(PRESENCE_SPIKE, "utf8");
+        const custody = /^custody: (K-[A-Z]+)$/m.exec(spike)?.[1];
+        const pin = /^pin: (\S+)$/m.exec(spike)?.[1];
+        const channel = /^channel: (\S+)$/m.exec(spike)?.[1];
+        expect(custody).toBeDefined();
+        expect(decision()).toContain(custody as string);
+        expect(decision()).toContain(pin as string);
+        expect(decision()).toMatch(new RegExp(`channel[^.]*\\b${channel as string}\\b`, "i"));
+      },
+    );
+  });
+
+  describe("Test 3: the Residual risk section says what a same-user process can still do", () => {
+    const checks: ReadonlyArray<readonly [string, RegExp]> = [
+      ["can cause a prompt but cannot answer it", /cause[^.]*prompt[^.]*cannot answer/i],
+      ["can replace the helper", /replace[^.]*helper/i],
+      [
+        "can read the install secret and compute the MAC: detection",
+        /install secret[^.]*MAC[^.]*detection/i,
+      ],
+      ["a debugger or code injection", /debugger|code injection/i],
+      ["out of scope", /out of scope/i],
+      ["delete and recreate", /delete[^.]*recreate/i],
+      [
+        "a marker write plus a pin replacement suffices",
+        /same-user marker write within the window plus a pin replacement suffices/i,
+      ],
+      ["detection, not prevention", /detection, not prevention/i],
+      [
+        "the prompt budget can be spent",
+        /3 per minute[^.]*pending requests|pending requests[^.]*3 per minute/i,
+      ],
+      ["the audit reason names the budget", /`presence-budget`/],
+      [
+        "the MAC does not cover the presence part",
+        /MAC[^.]*(does not|deliberately)[^.]*cover[^.]*presence part/i,
+      ],
+      ["the pending measurement", /`attr_delete_prompts`/],
+      ["mitigations: hardened runtime", /hardened runtime/i],
+      ["mitigations: login keychain", /login keychain/i],
+      ["mitigations: code-directory hash", /code-directory hash|cdhash/i],
+      ["detection: trust on first use", /trust on first use/i],
+      ["detection: the closed warnings", /`presence-pin-changed`/],
+    ];
+    for (const [label, pattern] of checks) {
+      it(label, () => {
+        expect(residual()).toMatch(pattern);
+      });
+    }
+
+    it("never claims a same-user process cannot forge a decision", () => {
+      expect(presenceAdr().text).not.toMatch(/cannot forge|unforgeable|cannot be bypassed/i);
+      expect(residual()).not.toMatch(/cannot forge/i);
+    });
+
+    it.skipIf(!hasPresenceSpike)(
+      "carries the spike record's applicable reporting sentence word for word",
+      () => {
+        const spike = readFileSync(PRESENCE_SPIKE, "utf8");
+        const applies = /^applies: (\S+)$/m.exec(spike)?.[1];
+        expect(applies).toBeDefined();
+        const sentence = new RegExp(`^${applies as string}: (.+)$`, "m").exec(spike)?.[1];
+        expect(sentence).toBeDefined();
+        expect(flat(presenceAdr().text)).toContain(flat(sentence as string));
+      },
+    );
+
+    it.skipIf(!hasPresenceSpike)(
+      "carries the spike record's stated residual paragraph word for word",
+      () => {
+        const spike = flat(readFileSync(PRESENCE_SPIKE, "utf8"));
+        const start = spike.indexOf(
+          "A same-user process that replaces the pin item and then writes",
+        );
+        const end = spike.indexOf("is detection, not prevention.", start);
+        expect(start).toBeGreaterThan(0);
+        expect(end).toBeGreaterThan(start);
+        const paragraph = spike.slice(start, end);
+        expect(flat(presenceAdr().text)).toContain(paragraph);
+      },
+    );
+  });
+
+  describe("Test 4: the exception to the no-native-compilation stance and criterion 2", () => {
+    it("states the exception to the stack's no-native-compilation stance and why", () => {
+      const text = flat(presenceAdr().text);
+      expect(text).toMatch(/no native compilation/i);
+      expect(text).toMatch(/exception/i);
+      expect(text).toMatch(/Command Line Tools[^.]*(already|prerequisite)/i);
+      expect(text).toMatch(/no node-gyp/i);
+      expect(text).toMatch(
+        /no (prebuilt )?binary[^.]*(in Git|committed)|binary[^.]*not (committed|in Git)/i,
+      );
+    });
+
+    it("reports roadmap success criterion 2 as partially met, with the reason", () => {
+      const text = flat(presenceAdr().text);
+      expect(text).toMatch(/success criterion 2 is partially met/i);
+      expect(text).toMatch(/not a proof against every same-user process/i);
+      expect(text).not.toMatch(/success criterion 2 is met\b/i);
+    });
+
+    it("records the rejected and the unchosen alternatives with their reasons", () => {
+      const options = flat(section(presenceAdr(), "## Considered Options"));
+      const checks: ReadonlyArray<readonly [string, RegExp]> = [
+        ["Swift via swiftc", /Swift compiled with swiftc\.\*\* Rejected/],
+        ["peer-process identification", /Peer-process identification on the socket\.\*\* Rejected/],
+        ["a separate decide credential", /A separate decide credential\.\*\* Rejected/],
+        ["K-SE", /K-SE[\s\S]{0,400}-34018/],
+        ["K-ATTR chosen", /K-ATTR[^\n]*\*\* Chosen/],
+        ["K-SVC", /K-SVC[\s\S]{0,400}install secret[\s\S]{0,200}detection/],
+        ["node-gyp or a prebuilt binary", /node-gyp\) or a prebuilt binary in Git\.\*\* Rejected/],
+      ];
+      for (const [label, pattern] of checks) expect(options, label).toMatch(pattern);
+    });
+
+    it("uses placeholders only and every ADR number it mentions exists", () => {
+      const adr = presenceAdr();
+      expect(adr.text).not.toMatch(HOME_PATH);
+      const existing = new Set(allAdrs().map((a) => a.file.slice(0, 4)));
+      for (const match of adr.text.matchAll(/ADR[- ](\d{4})\b/g)) {
+        expect(existing.has(match[1] as string), `ADR ${match[1]}`).toBe(true);
+      }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 09-20 Task 2: the Phase 6 records point at the hardening
+
+describe("09-20 Task 2: the Phase 6 records point at the hardening", () => {
+  const phase9 = (): string => flat(section(approvalAdr(), "## Phase 9 hardening"));
+  const HANDSHAKE_NOTE = "## Note: the approval engine and the same-user limitation";
+
+  it("Test 1: ADR 0026 has a Phase 9 hardening section after the Milestone 2 gate", () => {
+    const text = approvalAdr().text;
+    expect(text.indexOf("\n## Milestone 2 gate")).toBeGreaterThan(0);
+    expect(text.indexOf("\n## Phase 9 hardening")).toBeGreaterThan(
+      text.indexOf("\n## Milestone 2 gate"),
+    );
+    const body = phase9();
+    expect(body).toContain(presenceAdr().title);
+    expect(body).toMatch(/connector-class[^.]*approvals?[^.]*need[^.]*verified presence proof/i);
+    expect(body).toMatch(/approved rows? carr(y|ies)[^.]*proof[^.]*recovery and (the )?claim/i);
+    expect(body).toMatch(/cause[^.]*prompt[^.]*cannot answer/i);
+    expect(body).toMatch(/replace[^.]*helper/i);
+    expect(body).toMatch(/install secret[^.]*MAC[^.]*detection/i);
+    expect(body).toMatch(/debugger|code injection/i);
+    expect(body).toMatch(/out of scope/i);
+    expect(body).toMatch(/delete[^.]*recreate/i);
+    expect(body).toMatch(/3 per minute[^.]*pending requests/i);
+    expect(body).toMatch(/`presence-budget`/);
+    expect(body).toMatch(/`attr_delete_prompts`/);
+    expect(body).toMatch(/detection, not prevention/i);
+    expect(body).toMatch(/force-terminate[^.]*(unchanged|stands)/i);
+    expect(body).not.toMatch(/cannot forge|unforgeable|cannot be bypassed/i);
+  });
+
+  it("Test 1b: the section reports criterion 2 as partially met in the same words as the decision record", () => {
+    const sentence =
+      /(Roadmap success criterion 2 is partially met: .*?not a proof against every same-user process\.)/.exec(
+        flat(presenceAdr().text),
+      )?.[1];
+    expect(sentence).toBeDefined();
+    expect(phase9()).toContain((sentence as string).trim());
+  });
+
+  it("Test 1c: the Milestone 2 gate and the residual-risk sections point forward without losing a word", () => {
+    const gate = flat(section(approvalAdr(), "## Milestone 2 gate"));
+    expect(gate).toMatch(/Phase 9[^.]*Phase 9 hardening/i);
+    const risk = flat(section(approvalAdr(), "## Residual risk: same-user self-approval"));
+    expect(risk).toMatch(/Phase 9[^.]*Phase 9 hardening/i);
+  });
+
+  it("Test 2: the handshake record's note ends with a sentence naming the presence record, original text unchanged", () => {
+    const file = adrFileContaining(HANDSHAKE_LAST_LINE);
+    const text = parseAdr(file).text;
+    const note = flat(text.split(HANDSHAKE_NOTE)[1] ?? "");
+    expect(note).toContain(
+      "This token layer is not that decision and must not be cited as closing it.",
+    );
+    const last =
+      note
+        .trim()
+        .split(/(?<=\.)\s+/)
+        .pop() ?? "";
+    expect(last).toContain(presenceAdr().title);
+    expect(last).toMatch(/Phase 9/);
+    expect(note).toContain(
+      "A same-user process able to write the SQLite file could also insert an approved row that recovery would run after a restart;",
+    );
+  });
+
+  it.skipIf(!existsSync(join(REPO_ROOT, ".planning", "deferred-items.md")))(
+    "Test 3: the deferred-items row keeps its milestone 1 wording and records the Phase 9 resolution",
+    () => {
+      const row = flat(
+        readFileSync(join(REPO_ROOT, ".planning", "deferred-items.md"), "utf8")
+          .split("\n")
+          .filter((line) => /self-approval/i.test(line) && line.startsWith("|"))
+          .join(" "),
+      );
+      expect(row).toMatch(/accepted for milestone 1/i);
+      expect(row).toMatch(
+        /hardening decision[^.|]*required[^.|]*before[^.|]*Gmail and Calendar connectors/i,
+      );
+      expect(row).toContain(approvalAdr().title);
+      expect(row).toMatch(/resolved in Phase 9/i);
+      expect(row).toContain(presenceAdr().title);
+      expect(row).toMatch(/partially met/i);
+      expect(row).not.toMatch(/cannot forge|unforgeable/i);
+    },
+  );
+
+  it("Test 4: the three edited Phase 6 records use placeholders only", () => {
+    expect(approvalAdr().text).not.toMatch(HOME_PATH);
+    expect(parseAdr(adrFileContaining(HANDSHAKE_LAST_LINE)).text).not.toMatch(HOME_PATH);
+    expect(presenceAdr().text).not.toMatch(HOME_PATH);
+  });
+});
