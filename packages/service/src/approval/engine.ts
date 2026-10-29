@@ -55,6 +55,7 @@ import {
 import {
   decisionMacFields,
   type PresencePart,
+  type ProofVerdict,
   presenceMessage,
   signDecisionProof,
   verifyDecisionProof,
@@ -748,15 +749,16 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   }
 
   /**
-   * True when `row` carries a proof that verifies under this engine's key (R-05) and, for an operation whose
-   * classification needs presence, a presence signature that verifies against the pin (09-18). The pin is read
-   * only for a presence-required row. Nothing here throws; the verdict is about the row it is given, so a caller
-   * that awaits this and then runs that same row has verified what it runs.
+   * The verdict on `row`'s proof under this engine's key (R-05) and, for an operation whose classification needs
+   * presence, on its presence signature against the pin (09-18). The pin is read only for a presence-required
+   * row. `pin-unavailable` (09-FIX9) means the row is sound but the pin could not be read: the caller leaves it
+   * for a later try. Nothing here throws; the verdict is about the row it is given, so a caller that awaits this
+   * and then runs that same row has verified what it runs.
    */
-  async function proofVerifies(row: StoredProposal): Promise<boolean> {
+  async function proofVerifies(row: StoredProposal): Promise<ProofVerdict> {
     const required = presenceRequiredFor(row.operation);
     const pin = required ? await pinOrNull() : null;
-    return verifyDecisionProof(proofKey, row, { presenceRequired: required, pin }) === "valid";
+    return verifyDecisionProof(proofKey, row, { presenceRequired: required, pin });
   }
 
   /** The recorded channel of an ungated decision: the hint, with `presence` unreachable from outside (D-03). */
@@ -1073,8 +1075,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     if (stopping) return null;
     // A row whose proof is missing, malformed or not its own is never started (R-05): claimed so it
     // can be finished, and failed, never silently repaired.
-    if (!(await proofVerifies(approved))) {
+    const verdict = await proofVerifies(approved);
+    if (verdict === "invalid") {
       refuseUnproved(approved);
+      return null;
+    }
+    if (verdict === "pin-unavailable") {
+      // Sound, but the pin could not be read now (09-FIX9): the owner's approval stands. The row stays approved
+      // and the next recovery tries again; it lapses in time like any approval nobody carried out.
+      log.warn({ proposalId: approved.proposalId, code: "approval-proof-pin-unavailable" });
       return null;
     }
     // The pin read above took time; a shutdown that began meanwhile leaves the row approved for the next boot.
@@ -1213,7 +1222,14 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     // `beginRetry`, so it is the row that is about to run. A check made on an earlier snapshot is not
     // enough, because the row can change while the engine awaits claim facts or a reconcile answer.
     // First attempt: nothing ran, `failed`; a retry: an earlier attempt may have run, `unknown`.
-    if (!(await proofVerifies(proposal))) {
+    const verdict = await proofVerifies(proposal);
+    if (verdict === "pin-unavailable") {
+      // Nothing has run and nothing is finished (09-FIX9): the row stays `executing` and the next recovery
+      // checks it again, reconciling before any retry, exactly as for any row a restart finds executing.
+      log.warn({ proposalId: proposal.proposalId, code: "approval-proof-pin-unavailable" });
+      return;
+    }
+    if (verdict !== "valid") {
       log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
       failBeforeExecute(proposal, "proof-invalid");
       return;
@@ -1331,7 +1347,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     announce,
     isActive: (proposalId) => active.has(proposalId),
     verifiedPayload,
-    verifyProof: async (proposal) => ((await proofVerifies(proposal)) ? "valid" : "invalid"),
+    verifyProof: (proposal) => proofVerifies(proposal),
     refuseUnproved,
     finish: finishWith,
     startAttempt,

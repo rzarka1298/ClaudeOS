@@ -8,6 +8,7 @@ import type {
 } from "@ccc/domain";
 import type { OperationRegistry, RegisteredDefinition } from "./engine.js";
 import { consultReconcile, type FinishDecision, unknownDecision } from "./outcome.js";
+import type { ProofVerdict } from "./proof.js";
 
 /**
  * Startup recovery (APPR-10, D-17, D-19, A-3, research Pattern 4). After a
@@ -92,9 +93,10 @@ export interface RecoveryHost {
   ): { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly code: string };
   /**
    * Whether the row's decision proof verifies under the engine's key and, when its operation needs the owner's
-   * presence, whether its presence signature verifies against the pinned key (R-05, 09-18). Never throws.
+   * presence, whether its presence signature verifies against the pinned key (R-05, 09-18). `pin-unavailable`
+   * (09-FIX9) means the row is sound but the pin could not be read: leave it for the next recovery. Never throws.
    */
-  verifyProof(proposal: StoredProposal): Promise<"valid" | "invalid">;
+  verifyProof(proposal: StoredProposal): Promise<ProofVerdict>;
   /** Claims an approved request that has no valid proof and finishes it `failed` / `proof-invalid` (warns); true when written. */
   refuseUnproved(approved: StoredProposal): boolean;
   /** Records an executing request's outcome and publishes it. */
@@ -161,7 +163,14 @@ export function createRecovery(host: RecoveryHost): Recovery {
     // R-05: checked FIRST, before the registry and payload checks, so a forged row for a reserved or
     // unregistered operation, or with a bad payload, is still counted and warned. An executing row rides
     // the idempotent retry path, so nothing is asked of the operation; an effect may have happened: `unknown`.
-    if ((await host.verifyProof(proposal)) !== "valid") {
+    const verdict = await host.verifyProof(proposal);
+    if (verdict === "pin-unavailable") {
+      // Not a forgery (09-FIX9): the pin could not be read, so the row stays `executing` untouched and the next
+      // recovery looks at it again. Nothing is reconciled, retried or finished meanwhile.
+      log.warn({ proposalId: proposal.proposalId, code: "approval-proof-pin-unavailable" });
+      return;
+    }
+    if (verdict !== "valid") {
       log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
       if (host.finish(proposal, unknownDecision("proof-invalid", null)) !== null) {
         counts.proofInvalid += 1;
@@ -239,7 +248,12 @@ export function createRecovery(host: RecoveryHost): Recovery {
       if (enabledApprovalRow(registry.table, approved.operation) === undefined) {
         await guarded(approved, async () => {
           // The proof comes first here too, so a forged row of a reserved operation is warned and counted.
-          if ((await host.verifyProof(approved)) !== "valid") {
+          const verdict = await host.verifyProof(approved);
+          if (verdict === "pin-unavailable") {
+            log.warn({ proposalId: approved.proposalId, code: "approval-proof-pin-unavailable" });
+            return;
+          }
+          if (verdict !== "valid") {
             if (host.refuseUnproved(approved)) counts.proofInvalid += 1;
             return;
           }
@@ -254,7 +268,12 @@ export function createRecovery(host: RecoveryHost): Recovery {
       if (definition === undefined) continue;
       await guarded(approved, async () => {
         // R-05: checked here and again inside the engine's claim, so neither entry point can skip it.
-        if ((await host.verifyProof(approved)) !== "valid") {
+        const verdict = await host.verifyProof(approved);
+        if (verdict === "pin-unavailable") {
+          log.warn({ proposalId: approved.proposalId, code: "approval-proof-pin-unavailable" });
+          return;
+        }
+        if (verdict !== "valid") {
           if (host.refuseUnproved(approved)) counts.proofInvalid += 1;
           return;
         }

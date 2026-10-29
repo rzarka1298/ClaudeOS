@@ -483,14 +483,39 @@ describe("verifyDecisionProof with a presence part (09-18 Task 1)", () => {
       "invalid",
     );
     expect(
-      verifyDecisionProof(KEY, rowWith(FIELDS, good), { presenceRequired: true, pin: null }),
-    ).toBe("invalid");
-    expect(
       verifyDecisionProof(KEY, rowWith(FIELDS, good), {
         presenceRequired: true,
         pin: keyPair().pin,
       }),
     ).toBe("invalid");
+  });
+
+  it("09-FIX9: a row that is otherwise sound but cannot be checked for want of a pin is pin-unavailable, never invalid", () => {
+    const row = rowWith(FIELDS, good);
+    expect(verifyDecisionProof(KEY, row, { presenceRequired: true, pin: null })).toBe(
+      "pin-unavailable",
+    );
+    // Anything wrong that the pin is not needed to see stays invalid, with or without a pin.
+    const badMac = rowWith(
+      FIELDS,
+      signDecisionProof(Buffer.alloc(32, 1), FIELDS, { scheme: "p256", sig: pair.sign(msg) }),
+    );
+    expect(verifyDecisionProof(KEY, badMac, { presenceRequired: true, pin: null })).toBe("invalid");
+    const bare = rowWith(FIELDS, signDecisionProof(KEY, FIELDS, null));
+    expect(verifyDecisionProof(KEY, bare, { presenceRequired: true, pin: null })).toBe("invalid");
+    const plugin = { ...FIELDS, decidedVia: "plugin" as const };
+    const wrongChannel = rowWith(
+      plugin,
+      signDecisionProof(KEY, plugin, { scheme: "p256", sig: pair.sign(msg) }),
+    );
+    expect(verifyDecisionProof(KEY, wrongChannel, { presenceRequired: true, pin: null })).toBe(
+      "invalid",
+    );
+    expect(
+      verifyDecisionProof(KEY, rowWith(FIELDS, undefined), { presenceRequired: true, pin: null }),
+    ).toBe("invalid");
+    // A row that needs no presence never asks for a pin.
+    expect(verifyDecisionProof(KEY, bare, { presenceRequired: false, pin: null })).toBe("valid");
   });
 
   it("refuses a presence-required row whose channel is not presence", () => {

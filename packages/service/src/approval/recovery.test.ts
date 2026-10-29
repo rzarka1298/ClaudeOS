@@ -1178,19 +1178,76 @@ describe("presence-required rows at recovery and the claim (09-18 Task 2)", () =
     expect(summary.proofInvalid).toBe(1);
   });
 
-  it("Test 2b: a signature made with a key that is not the pin, and a missing pin, are proof-invalid", async () => {
+  it("Test 2b: a signature made with a key that is not the pin is proof-invalid", async () => {
     const foreign = writeHarness();
     const a = foreign.h.propose({ operation: WRITE, subject: "a" });
     approveWrite(foreign.h, a, (row, now) => presenceProof(row, now, row, generatePresenceKeys()));
     expect((await foreign.h.engine.recover()).proofInvalid).toBe(1);
     expect(foreign.write.executeCalls).toHaveLength(0);
+  });
 
-    const noPin = writeHarness(async () => null);
-    const b = noPin.h.propose({ operation: WRITE, subject: "b" });
-    approveWrite(noPin.h, b, (row, now) => presenceProof(row, now));
-    expect((await noPin.h.engine.recover()).proofInvalid).toBe(1);
-    expect(stateOf(noPin.h, b)).toBe("failed");
-    expect(noPin.write.executeCalls).toHaveLength(0);
+  it("Test 2c (09-FIX9): a presence-required row whose pin cannot be read stays approved, is warned about, and runs at the next recovery once the pin is back", async () => {
+    let pin: string | null = null;
+    const { h, write } = writeHarness(async () => pin);
+    const id = h.propose({ operation: WRITE, subject: "b" });
+    approveWrite(h, id, (row, now) => presenceProof(row, now));
+
+    const first = await h.engine.recover();
+    await h.engine.settled();
+    expect(stateOf(h, id)).toBe("approved");
+    expect(write.executeCalls).toHaveLength(0);
+    expect(first.proofInvalid).toBe(0);
+    expect(first.claimed).toBe(0);
+    expect(
+      h.log.lines.filter((l) => l.fields.code === "approval-proof-pin-unavailable"),
+    ).toHaveLength(1);
+    expect(h.log.lines.some((l) => l.fields.code === "approval-proof-invalid")).toBe(false);
+
+    pin = TEST_PIN;
+    const second = await h.engine.recover();
+    await h.engine.settled();
+    expect(second.claimed).toBe(1);
+    expect(write.executeCalls).toHaveLength(1);
+    expect(stateOf(h, id)).toBe("executed");
+  });
+
+  it("Test 2d (09-FIX9): a bad MAC is proof-invalid whether or not the pin can be read", async () => {
+    const { h, write } = writeHarness(async () => null);
+    const id = h.propose({ operation: WRITE, subject: "m" });
+    approveWrite(h, id, (row, now) => {
+      const fields = decisionMacFields({ ...row, approvedAt: now, decidedVia: "presence" });
+      if (fields === null) throw new Error("fixture");
+      const sig = signMessage(presenceMessage({ ...row, approvedAt: now }));
+      return signDecisionProof(Buffer.alloc(32, 9), fields, { scheme: "p256", sig });
+    });
+    expect((await h.engine.recover()).proofInvalid).toBe(1);
+    expect(stateOf(h, id)).toBe("failed");
+    expect(write.executeCalls).toHaveLength(0);
+  });
+
+  it("Test 3b (09-FIX9): an executing write row whose pin cannot be read stays executing (no reconcile, no finish) and is dealt with once the pin is back", async () => {
+    let pin: string | null = null;
+    const { h, write } = writeHarness(async () => pin);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    approveWrite(h, id, (row, now) => presenceProof(row, now));
+    expect(h.store.claim(id, { pid: 1 }, h.clock.now()).kind).toBe("claimed");
+
+    await h.engine.recover();
+    await h.engine.settled();
+    expect(stateOf(h, id)).toBe("executing");
+    expect(write.reconcileCalls).toHaveLength(0);
+    expect(write.executeCalls).toHaveLength(0);
+    expect(
+      h.log.lines.filter((l) => l.fields.code === "approval-proof-pin-unavailable"),
+    ).toHaveLength(1);
+
+    pin = TEST_PIN;
+    write.verdicts.push({ kind: "effect-absent" });
+    await h.engine.recover();
+    await h.engine.settled();
+    expect(write.reconcileCalls).toHaveLength(1);
+    expect(stateOf(h, id)).toBe("unknown");
+    expect(h.store.get(id)?.outcomeCode).not.toBe("proof-invalid");
   });
 
   it("Test 3: an executing write row with a bad presence part is finished unknown / proof-invalid before reconcile", async () => {

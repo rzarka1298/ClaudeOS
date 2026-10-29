@@ -210,6 +210,14 @@ export function signDecisionProof(
   return canonicalJson(proof);
 }
 
+/**
+ * The three answers of a row check (09-FIX9): `valid`; `invalid` (a missing, malformed, copied or forged proof,
+ * which is never repaired); and `pin-unavailable` (the row is sound in every way the pin is not needed to see, but
+ * the pin could not be read, so the presence signature could not be checked). A caller leaves a
+ * `pin-unavailable` row where it is and tries again later; it never treats it as a forgery.
+ */
+export type ProofVerdict = "valid" | "invalid" | "pin-unavailable";
+
 /** What the check needs to know about the row's operation and the pin the presence part is verified against. */
 export interface ProofCheckOptions {
   /** True when the row's classification says `presence: "required"`. */
@@ -224,7 +232,8 @@ export interface ProofCheckOptions {
  * `invalid`: nothing here throws and nothing is guessed. The comparison is constant-time.
  *
  * For a presence-required row the MAC alone is never enough (R-05): the row must be decided via `presence`,
- * and its presence part must verify, against `pin`, over the presence message of THIS row. A row that needs no
+ * and its presence part must verify, against `pin`, over the presence message of THIS row. With no `pin` a row that
+ * is otherwise sound is `pin-unavailable`, not `invalid`. A row that needs no
  * presence must carry a null presence part. `options` is required, so no caller can forget the question.
  */
 export function verifyDecisionProof(
@@ -234,7 +243,7 @@ export function verifyDecisionProof(
     "proposalId" | "operation" | "payloadHash" | "approvedAt" | "decidedVia" | "decisionProof"
   >,
   options: ProofCheckOptions,
-): "valid" | "invalid" {
+): ProofVerdict {
   const text = row.decisionProof;
   if (text === undefined || text === null) return "invalid";
   const fields = decisionMacFields(row);
@@ -248,7 +257,9 @@ export function verifyDecisionProof(
     if (!timingSafeEqual(claimed, expected)) return "invalid";
     const part = parsed.data.presence;
     if (!options.presenceRequired) return part === null ? "valid" : "invalid";
-    if (part === null || options.pin === null || fields.decidedVia !== "presence") return "invalid";
+    if (part === null || fields.decidedVia !== "presence") return "invalid";
+    // Everything the pin is not needed to see is sound: the row is neither good nor bad until a pin can be read.
+    if (options.pin === null) return "pin-unavailable";
     return verifyPresenceSignature(options.pin, presenceMessage(fields), part.sig)
       ? "valid"
       : "invalid";
