@@ -397,7 +397,29 @@ describe("recordDecisionRefusal (09-14, Test 1)", () => {
     ).toBe("not-pending");
   });
 
-  it("refuses a detail outside the closed pair and a malformed time", () => {
+  it("records the cooldown and budget reasons the engine distinguishes (09-FIX6A, m3)", () => {
+    const proposal = submitPending();
+    for (const [offset, detail] of [
+      [1_000, "presence-cooldown"],
+      [2_000, "presence-budget"],
+    ] as const) {
+      expect(
+        store.recordDecisionRefusal({
+          proposalId: proposal.proposalId,
+          at: at(offset),
+          payloadHash: proposal.payloadHash,
+          detail,
+        }),
+      ).toBe("recorded");
+    }
+    expect(auditRows(proposal.proposalId).map((row) => row.detail)).toEqual([
+      null,
+      "presence-cooldown",
+      "presence-budget",
+    ]);
+  });
+
+  it("refuses a detail outside the closed set and a malformed time", () => {
     const proposal = submitPending();
     const base = {
       proposalId: proposal.proposalId,

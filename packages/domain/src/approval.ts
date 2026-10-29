@@ -491,6 +491,21 @@ export function fitApprovalsSnapshotToBudget(
 export const PRESENCE_PROMPT_TIMEOUT_MS = 60_000;
 
 /**
+ * Why a presence-required approve was refused without deciding the request (D-01), as the audit
+ * trail records it. The first two are also what the client is told (`presence-denied`,
+ * `presence-unavailable`); the other two are internal reasons that keep their client outcome (a
+ * cooldown after a denial reads `presence-denied`, an exhausted prompt budget reads
+ * `presence-unavailable`) but stay distinguishable on the record (09-FIX6A, m3).
+ */
+export const PRESENCE_REFUSAL_DETAILS = [
+  "presence-denied",
+  "presence-unavailable",
+  "presence-cooldown",
+  "presence-budget",
+] as const;
+export type PresenceRefusalDetail = (typeof PRESENCE_REFUSAL_DETAILS)[number];
+
+/**
  * How a presence refusal reaches the append-only audit trail without becoming a way to flood it
  * (09-FIX6A, M1): at most one row per proposal per reason per window, and at most a fixed number of
  * refusal rows per proposal whatever the spacing. A suppressed refusal still gets its answer; it just

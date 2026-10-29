@@ -22,6 +22,7 @@ import {
   type NoteId,
   PAYLOAD_HASH_PATTERN,
   type PendingCaps,
+  PRESENCE_REFUSAL_DETAILS,
   PROPOSAL_ID_PATTERN,
   PROPOSAL_STATES,
   type ProposalId,
@@ -723,7 +724,7 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
       assertProposalId(input.proposalId, "proposalId");
       assertIso(input.at, "at");
       if (typeof input.payloadHash !== "string") throw new InvalidApprovalInputError("payloadHash");
-      if (input.detail !== "presence-denied" && input.detail !== "presence-unavailable") {
+      if (!(PRESENCE_REFUSAL_DETAILS as readonly string[]).includes(input.detail)) {
         throw new InvalidApprovalInputError("detail");
       }
       return refusalTx(input);

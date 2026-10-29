@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   ApprovalUpsertedPayload,
   DecidedVia,
+  PresenceRefusalDetail,
   ProposalId,
   ProposalState,
   Requester,
@@ -98,9 +99,6 @@ export interface DecideInput {
    */
   readonly approvedAt?: string;
 }
-
-/** Why a presence-required approve was refused without deciding the request (D-01). */
-export type PresenceRefusalDetail = "presence-denied" | "presence-unavailable";
 
 /** What the engine hands the store to put a presence refusal on the record. */
 export interface DecisionRefusalInput {

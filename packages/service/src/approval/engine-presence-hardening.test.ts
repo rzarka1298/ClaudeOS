@@ -11,7 +11,11 @@ import {
   type StoredProposal,
 } from "@ccc/domain";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createApprovalEngine, PRESENCE_ENGINE_TIMEOUT_MS } from "./engine.js";
+import {
+  createApprovalEngine,
+  PRESENCE_DENIED_COOLDOWN_MS,
+  PRESENCE_ENGINE_TIMEOUT_MS,
+} from "./engine.js";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
 import { createHarness, type Harness } from "./test-support/harness.js";
@@ -144,7 +148,7 @@ describe("a port's answer is validated, and a stepped-back clock is handled (m2)
 });
 
 describe("a token-holder looping on a pending request cannot flood the record or the log (M1)", () => {
-  it("writes one refusal row and one warning for fifty refusals at the same instant, and the owner still sees `requested`", async () => {
+  it("writes one row per reason (unavailable, then budget) and a handful of warnings for fifty refusals at the same instant, and the owner still sees `requested`", async () => {
     const port = createPresenceFake({ kind: "unavailable" });
     const h = presenceHarness(port);
     const id = h.propose({ operation: WRITE, subject: "w" });
@@ -152,10 +156,10 @@ describe("a token-holder looping on a pending request cannot flood the record or
       expect(await approve(h, id)).toEqual({ outcome: "presence-unavailable" });
     }
     const refusals = h.store.auditFor(id).filter((row) => row.event === "presence-refused");
-    expect(refusals).toHaveLength(1);
+    expect(refusals.map((row) => row.code)).toEqual(["presence-unavailable", "presence-budget"]);
     expect(h.store.auditFor(id)[0]?.event).toBe("requested");
     const warnings = h.log.lines.filter((line) => line.level === "warn");
-    expect(warnings.length).toBeLessThanOrEqual(2);
+    expect(warnings.length).toBeLessThanOrEqual(3);
   });
 
   it("holds the row count and the warnings at the cap when the refusals are spaced past the window", async () => {
@@ -233,5 +237,64 @@ describe("a hung port cannot wedge the proposal or shutdown (m1)", () => {
     await Promise.resolve();
     expect(h.store.calls).not.toContain("decide");
     expect(h.store.calls).not.toContain("recordDecisionRefusal");
+  });
+});
+
+describe("an attacker cannot starve the owner's budget, and a budget refusal is told apart (m3)", () => {
+  it("answers a repeat approve of a just-denied proposal from a cooldown: no prompt, no budget spent, a distinct audit reason", async () => {
+    const port = createPresenceFake({ kind: "denied" });
+    const h = presenceHarness(port);
+    const attacked = h.propose({ operation: WRITE, subject: "attacked" });
+    for (let i = 0; i < 20; i += 1) {
+      expect(await approve(h, attacked)).toEqual({ outcome: "presence-denied" });
+    }
+    // One real prompt; the other nineteen were cooled down without touching the port or the budget.
+    expect(port.requests).toHaveLength(1);
+    expect(
+      auditDetails(h, attacked).filter(
+        ([event, code]) => event === "presence-refused" && code === "presence-cooldown",
+      ),
+    ).toHaveLength(1);
+
+    // The attacker spent exactly one prompt of the three-a-minute budget, not all of it: the owner's real
+    // approvals of two other requests still reach the port.
+    port.script(PROVED);
+    for (const subject of ["a", "b"]) {
+      const other = h.propose({ operation: WRITE, subject });
+      expect((await approve(h, other)).outcome).toBe("decided");
+    }
+    expect(port.requests).toHaveLength(3);
+  });
+
+  it("asks again once the cooldown has passed", async () => {
+    const port = createPresenceFake({ kind: "denied" });
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w", requestedTtlMs: 60_000 });
+    await approve(h, id);
+    h.clock.advance(PRESENCE_DENIED_COOLDOWN_MS - 1);
+    expect(await approve(h, id)).toEqual({ outcome: "presence-denied" });
+    expect(port.requests).toHaveLength(1);
+    h.clock.advance(1);
+    await approve(h, id);
+    expect(port.requests).toHaveLength(2);
+  });
+
+  it("records a budget refusal as presence-budget (the client still reads presence-unavailable) and warns presence-rate-limited", async () => {
+    const port = createPresenceFake({ kind: "unavailable" });
+    const h = presenceHarness(port);
+    const ids = [1, 2, 3, 4].map((n) => h.propose({ operation: WRITE, subject: `b${n}` }));
+    for (const id of ids.slice(0, 3)) await approve(h, id);
+    const fourth = ids[3] as ProposalId;
+    expect(await approve(h, fourth)).toEqual({ outcome: "presence-unavailable" });
+    expect(port.requests).toHaveLength(3);
+    expect(auditDetails(h, fourth).at(-1)).toEqual(["presence-refused", "presence-budget"]);
+    expect(
+      h.log.lines.some((l) => l.level === "warn" && l.fields.code === "presence-rate-limited"),
+    ).toBe(true);
+    // An ordinary unavailable stays presence-unavailable on the record.
+    expect(auditDetails(h, ids[0] as ProposalId).at(-1)).toEqual([
+      "presence-refused",
+      "presence-unavailable",
+    ]);
   });
 });

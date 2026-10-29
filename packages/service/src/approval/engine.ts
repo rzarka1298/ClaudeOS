@@ -178,6 +178,13 @@ const PRESENCE_WINDOW_MS = 60_000;
  */
 export const PRESENCE_ENGINE_TIMEOUT_MS = PRESENCE_PROMPT_TIMEOUT_MS + 5_000;
 
+/**
+ * After the owner's prompt for a proposal is denied, the same proposal cannot prompt again for this long
+ * (m3). A token-holder looping approve on one request then costs one prompt, not the whole budget; it
+ * does not stop one holding several requests from spending the global budget (recorded as residual risk).
+ */
+export const PRESENCE_DENIED_COOLDOWN_MS = 30_000;
+
 /** Rejects after `ms`; the timer is always cleared once the race settles. */
 async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -693,6 +700,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
   const presenceFlights = new Map<string, Promise<DecideResponse>>();
   /** When each of the recent presence checks started, in epoch ms, for the prompt budget. */
   let presenceStarts: number[] = [];
+  /** When each recently denied proposal may be asked about again, in epoch ms (m3). */
+  const deniedUntil = new Map<string, number>();
 
   /**
    * An approve of a presence-required request. The cheap refusals come first and never start a check: a
@@ -719,6 +728,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
         : { outcome: "already-decided", state: row.state };
     }
     if (input.payloadHash !== current.payloadHash) return { outcome: "hash-mismatch" };
+
+    // A proposal whose prompt was just denied does not prompt again yet: no port call, no budget spent (m3).
+    const cooledUntil = deniedUntil.get(proposalId);
+    if (cooledUntil !== undefined) {
+      if (Date.parse(now) < cooledUntil) {
+        return refuseApprove(current, "presence-denied", "presence-cooldown");
+      }
+      deniedUntil.delete(proposalId);
+    }
 
     const running = presenceFlights.get(proposalId);
     if (running !== undefined) return joinFlight(proposalId, running);
@@ -775,7 +793,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     const startedAt = Date.parse(askedAt);
     presenceStarts = presenceStarts.filter((started) => startedAt - started < PRESENCE_WINDOW_MS);
     if (presenceStarts.length >= PRESENCE_PROMPTS_PER_MINUTE) {
-      return refuseApprove(current, "presence-unavailable", "presence-rate-limited");
+      return refuseApprove(current, "presence-unavailable", "presence-budget");
     }
     presenceStarts.push(startedAt);
 
@@ -803,11 +821,16 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     if (answer === ABANDONED) return { outcome: "operation-reserved" };
     const result = presenceResultOf(answer);
     if (result.kind !== "proved") {
-      return refuseApprove(
-        current,
-        result.kind === "denied" ? "presence-denied" : "presence-unavailable",
-      );
+      if (result.kind === "denied") {
+        const until = Date.parse(askedAt) + PRESENCE_DENIED_COOLDOWN_MS;
+        for (const [id, expiresAtMs] of deniedUntil)
+          if (expiresAtMs <= Date.parse(askedAt)) deniedUntil.delete(id);
+        deniedUntil.set(proposalId, until);
+        return refuseApprove(current, "presence-denied");
+      }
+      return refuseApprove(current, "presence-unavailable");
     }
+    deniedUntil.delete(proposalId);
     // Shutting down mid-prompt: the request stays pending for the next boot.
     if (stopping) return { outcome: "operation-reserved" };
     // The store re-checks the deadline against this later instant, so a request that lapsed while the
@@ -836,10 +859,12 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
    */
   function refuseApprove(
     current: StoredProposal,
-    detail: "presence-denied" | "presence-unavailable",
-    cause?: "presence-rate-limited",
+    outcome: "presence-denied" | "presence-unavailable",
+    reason: "presence-cooldown" | "presence-budget" | undefined = undefined,
   ): DecideResponse {
     const proposalId = current.proposalId;
+    // The client is told the closed outcome; the record keeps the finer reason when there is one.
+    const detail = reason ?? outcome;
     const recorded = store.recordDecisionRefusal({
       proposalId,
       at: clock.now(),
@@ -847,7 +872,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       detail,
     });
     if (recorded === "recorded") {
-      if (cause !== undefined) log.warn({ proposalId, code: cause });
+      if (reason === "presence-budget") log.warn({ proposalId, code: "presence-rate-limited" });
+      if (reason === "presence-cooldown") log.warn({ proposalId, code: "presence-cooldown" });
       log.warn({ proposalId, code: "presence-refused", detail });
     }
     if (recorded === "not-pending") {
@@ -857,7 +883,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
         ? { outcome: "not-found" }
         : { outcome: "already-decided", state: now.state };
     }
-    return { outcome: detail };
+    return { outcome };
   }
 
   /** Claim, then start the effect WITHOUT awaiting it: decide returns once the request is `executing` (D-14). */

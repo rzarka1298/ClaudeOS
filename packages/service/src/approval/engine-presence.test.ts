@@ -186,7 +186,7 @@ describe("concurrency and budget (Task 2)", () => {
     expect(
       h.log.lines.some((l) => l.level === "warn" && l.fields.code === "presence-rate-limited"),
     ).toBe(true);
-    expect(auditDetails(h, fourth).at(-1)).toEqual(["presence-refused", "presence-unavailable"]);
+    expect(auditDetails(h, fourth).at(-1)).toEqual(["presence-refused", "presence-budget"]);
     h.clock.advance(60_000);
     await approve(h, h.propose({ operation: WRITE, subject: "w5" }));
     expect(port.requests).toHaveLength(4);
