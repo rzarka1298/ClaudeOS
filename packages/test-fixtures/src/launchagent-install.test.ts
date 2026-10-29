@@ -512,6 +512,8 @@ describe("09-15 Task 2: install builds and enrols the presence helper, and only 
       `presence-build-stub: ${fx.runtimeDir}`,
       "presence-stub: enrol",
     ]);
+    // 09-18: a successful enrol leaves the single-use marker the service reads to adopt the new pin.
+    expect(existsSync(join(fx.runtimeDir, "presence-pin-installed"))).toBe(true);
   });
 
   it("a re-install unenrols the OLD binary first, rebuilds, then enrols, in that order, by absolute path", () => {
@@ -539,6 +541,8 @@ describe("09-15 Task 2: install builds and enrols the presence helper, and only 
     // FIX6B m2: the helper's JSON line is kept, not discarded.
     expect(result.out).toContain('{"v":1,"result":"denied","error":-2}');
     expect(launchctlVerbs(fx)).toContain("bootstrap");
+    // No key was enrolled, so no marker: the service must not adopt a pin this install did not write.
+    expect(existsSync(join(fx.runtimeDir, "presence-pin-installed"))).toBe(false);
   });
 
   it("FIX6B C3: a failed unenrol keeps the old helper (no build, no enrol, no replacement) and the install goes on", () => {

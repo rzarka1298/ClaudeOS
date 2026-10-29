@@ -26,6 +26,7 @@ import { buildOperationRegistry } from "../registry.js";
 import { createTestClock, type TestClock } from "./clock.js";
 import { createFakeOperation, type FakeOperation, type FakePayload } from "./fake-operation.js";
 import { createMemoryApprovalStore, type MemoryApprovalStore } from "./memory-store.js";
+import { readTestPin } from "./presence-fake.js";
 
 export type LogLevel = "info" | "warn" | "error";
 
@@ -95,6 +96,8 @@ export interface HarnessOptions {
   readonly table?: ClassificationTable;
   /** The presence port the engine asks for presence-required approvals (default: the engine's unavailable port). */
   readonly presence?: PresencePort;
+  /** Reads the pin presence signatures are verified against (default: the test pin; null fails closed). */
+  readonly readPin?: () => Promise<string | null>;
 }
 
 export function createHarness(options: HarnessOptions = {}): Harness {
@@ -141,6 +144,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     },
     ...(options.projectName === undefined ? {} : { projectName: options.projectName }),
     ...(options.presence === undefined ? {} : { presence: options.presence }),
+    readPin: options.readPin ?? readTestPin,
     ...(options.claimFactsTimeoutMs === undefined
       ? {}
       : { claimFactsTimeoutMs: options.claimFactsTimeoutMs }),

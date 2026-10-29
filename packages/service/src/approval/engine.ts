@@ -52,7 +52,15 @@ import {
   resolveOutcome,
   unknownDecision,
 } from "./outcome.js";
-import { decisionMacFields, signDecisionProof, verifyDecisionProof } from "./proof.js";
+import {
+  decisionMacFields,
+  type PresencePart,
+  type ProofVerdict,
+  presenceMessage,
+  signDecisionProof,
+  verifyDecisionProof,
+  verifyPresenceSignature,
+} from "./proof.js";
 import { createRecovery, type RecoverySummary, tokenExpiryMs } from "./recovery.js";
 import {
   assembleSnapshot,
@@ -157,6 +165,13 @@ export interface ApprovalEngineDeps {
    * (D-01, D-02). Absent, {@link UNAVAILABLE_PRESENCE} stands in, so every such approval fails closed.
    */
   readonly presence?: PresencePort;
+  /**
+   * Reads the pin (the base64 SPKI public key in the helper-only Keychain item, read attribute-only) that a
+   * presence signature is verified against (09-18, R-02). Called only when a `proved` answer needs verifying and
+   * when a presence-required row is re-verified (recovery, the claim, the last gate before execute); never on a
+   * timer. Absent, it answers null, so every presence-required approval and row fails closed.
+   */
+  readonly readPin?: () => Promise<string | null>;
 }
 
 /**
@@ -389,6 +404,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     throw new RangeError(`createApprovalEngine: proofKey must be ${PROOF_KEY_BYTES} bytes`);
   }
   const presence = deps.presence ?? UNAVAILABLE_PRESENCE;
+  const readPin = deps.readPin ?? (async () => null);
   const ids = deps.ids ?? { proposalId: newProposalId, noteId: newNoteId };
   const ledger = createTokenLedger();
   const inflight = new Set<Promise<void>>();
@@ -634,6 +650,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     );
   }
 
+  /**
+   * True when approving `operation` needs the owner's verified presence. An operation that is reserved or has no
+   * row is never carried out (recovery finishes it `operation-reserved`), so it needs no presence part here.
+   */
+  function presenceRequiredFor(operation: string): boolean {
+    const row = Object.hasOwn(registry.table, operation) ? registry.table[operation] : undefined;
+    return row?.class === "approval-required" && row.presence !== "none";
+  }
+
   let stopping = false;
 
   async function decide(input: EngineDecideInput): Promise<DecideResponse> {
@@ -667,7 +692,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
         return { outcome: "hash-mismatch" };
       }
       // Denial never asks for presence (R-03); a presence-required approve goes through the gate (D-01).
-      if (input.decision === "approve" && presenceRequired(current.operation)) {
+      if (input.decision === "approve" && presenceRequiredFor(current.operation)) {
         return decideWithPresence(current, input);
       }
     }
@@ -677,7 +702,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     const via = channelOf(input);
     const proof =
       input.decision === "approve" && current?.state === "pending"
-        ? signApproval(current, now, via)
+        ? signApproval(current, now, via, null)
         : undefined;
     return settleDecision(
       proposalId,
@@ -696,7 +721,12 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
    * The proof text for approving `row` at `approvedAt` through `via` (D-03). The MAC binds the row's id,
    * operation, payload hash, the approval instant and the channel, so it cannot be moved to another row.
    */
-  function signApproval(row: StoredProposal, approvedAt: string, via: DecidedVia): string {
+  function signApproval(
+    row: StoredProposal,
+    approvedAt: string,
+    via: DecidedVia,
+    presencePart: PresencePart | null,
+  ): string {
     const fields = decisionMacFields({
       proposalId: row.proposalId,
       operation: row.operation,
@@ -705,12 +735,30 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       decidedVia: via,
     });
     if (fields === null) throw new Error("approval proof: no covered fields");
-    return signDecisionProof(proofKey, fields, null);
+    return signDecisionProof(proofKey, fields, presencePart);
   }
 
-  /** True when `row` carries a proof that verifies under this engine's key (R-05). Nothing here throws. */
-  function proofVerifies(row: StoredProposal): boolean {
-    return verifyDecisionProof(proofKey, row) === "valid";
+  /** The pin, or null when it cannot be read: a throwing or non-string reader proved nothing. */
+  async function pinOrNull(): Promise<string | null> {
+    try {
+      const pin = await readPin();
+      return typeof pin === "string" ? pin : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The verdict on `row`'s proof under this engine's key (R-05) and, for an operation whose classification needs
+   * presence, on its presence signature against the pin (09-18). The pin is read only for a presence-required
+   * row. `pin-unavailable` (09-FIX9) means the row is sound but the pin could not be read: the caller leaves it
+   * for a later try. Nothing here throws; the verdict is about the row it is given, so a caller that awaits this
+   * and then runs that same row has verified what it runs.
+   */
+  async function proofVerifies(row: StoredProposal): Promise<ProofVerdict> {
+    const required = presenceRequiredFor(row.operation);
+    const pin = required ? await pinOrNull() : null;
+    return verifyDecisionProof(proofKey, row, { presenceRequired: required, pin });
   }
 
   /** The recorded channel of an ungated decision: the hint, with `presence` unreachable from outside (D-03). */
@@ -747,12 +795,6 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   }
 
   // --- the presence gate (D-01, D-02, D-03, R-03) -----------------------------
-
-  /** True when approving `operation` needs the owner's verified presence. An unreadable row fails closed. */
-  function presenceRequired(operation: string): boolean {
-    const row = Object.hasOwn(registry.table, operation) ? registry.table[operation] : undefined;
-    return row?.class === "approval-required" && row.presence !== "none";
-  }
 
   /** One presence-required approve per proposal at a time: a second caller joins the first's outcome (D-01). */
   const presenceFlights = new Map<string, Promise<DecideResponse>>();
@@ -848,6 +890,68 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   }
 
   /**
+   * The presence part to store for a `proved` answer: `ok` with the part, `no-pin` when no pin can be read now,
+   * or `bad` when the answer does not hold up (no signature, a scheme the recorded custody does not produce, or a
+   * signature that does not verify against the pin over this approval's message).
+   */
+  async function verifiedPresencePart(
+    current: StoredProposal,
+    approvedAt: string,
+    result: Extract<PresenceResult, { kind: "proved" }>,
+  ): Promise<
+    { readonly kind: "ok"; readonly part: PresencePart } | { readonly kind: "bad" | "no-pin" }
+  > {
+    if (result.scheme !== "p256" || typeof result.signature !== "string") return { kind: "bad" };
+    const pin = await pinOrNull();
+    if (pin === null) return { kind: "no-pin" };
+    const message = presenceMessage({
+      proposalId: current.proposalId,
+      operation: current.operation,
+      payloadHash: current.payloadHash,
+      approvedAt,
+    });
+    return verifyPresenceSignature(pin, message, result.signature)
+      ? { kind: "ok", part: { scheme: "p256", sig: result.signature } }
+      : { kind: "bad" };
+  }
+
+  /**
+   * The answer to give instead of prompting, when the request is no longer one the owner should be asked about
+   * after the pin lookup: shutting down, no longer pending (denied, withdrawn, expired, decided), past its
+   * deadline on a clock read that is never earlier than the instant of the ask, a payload that is not the one
+   * the caller saw, or a denial cooldown. Null when the prompt may go ahead.
+   */
+  function refusalAfterLookup(
+    current: StoredProposal,
+    callerHash: string,
+    askedAt: string,
+  ): DecideResponse | null {
+    if (stopping) return { outcome: "operation-reserved" };
+    const proposalId = current.proposalId;
+    const row = store.get(proposalId);
+    if (row === null) return { outcome: "not-found" };
+    const settledAs = (state: StoredProposal["state"]): DecideResponse =>
+      state === "expired" ? { outcome: "expired" } : { outcome: "already-decided", state };
+    if (row.state !== "pending") return settledAs(row.state);
+    // A clock that stepped back is clamped to the ask: the test can only be stricter than before.
+    const later = clock.now();
+    const strict = later > askedAt ? later : askedAt;
+    if (strict >= row.expiresAt) {
+      expireDueRows(strict);
+      const after = store.get(proposalId);
+      return after === null ? { outcome: "not-found" } : settledAs(after.state);
+    }
+    if (row.payloadHash !== callerHash || row.payloadHash !== current.payloadHash) {
+      return { outcome: "hash-mismatch" };
+    }
+    const cooledUntil = deniedUntil.get(proposalId);
+    if (cooledUntil !== undefined && Date.parse(strict) < cooledUntil) {
+      return refuseApprove(current, "presence-denied", "presence-cooldown");
+    }
+    return null;
+  }
+
+  /**
    * Asks the presence port BEFORE the store is asked to decide, never inside its transaction, so no
    * database lock is held across a prompt (D-01). Only a `proved` answer reaches `store.decide`; a
    * refusal stays on the record and leaves the request pending.
@@ -859,11 +963,39 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   ): Promise<DecideResponse> {
     const proposalId = current.proposalId;
     const startedAt = Date.parse(askedAt);
+    // The budget is looked at BEFORE the pin is (09-FIX9): a spent budget costs no `security` spawn. A slot is
+    // reserved here, synchronously, so ten concurrent approves cannot all start a lookup; it is handed back
+    // below whenever the check ends without a prompt (no pin, or the request changed during the lookup), so a
+    // refusal that never asked the owner spends nothing.
     presenceStarts = presenceStarts.filter((started) => startedAt - started < PRESENCE_WINDOW_MS);
     if (presenceStarts.length >= PRESENCE_PROMPTS_PER_MINUTE) {
       return refuseApprove(current, "presence-unavailable", "presence-budget");
     }
     presenceStarts.push(startedAt);
+    let prompting = false;
+    try {
+      // The pin comes before the prompt: with no pin the signature could never be checked, so the owner is not
+      // asked for a Touch ID that cannot count and the port is not called.
+      const pinBefore = await pinOrNull();
+      if (pinBefore === null) {
+        return refuseApprove(
+          current,
+          "presence-unavailable",
+          undefined,
+          "presence-pin-unavailable",
+        );
+      }
+      // The lookup took time. The request may have been denied, withdrawn or expired meanwhile, and the
+      // owner must not be asked about one that is no longer open (Codex, FIX9).
+      const changed = refusalAfterLookup(current, callerHash, askedAt);
+      if (changed !== null) return changed;
+      prompting = true;
+    } finally {
+      if (!prompting) {
+        const slot = presenceStarts.lastIndexOf(startedAt);
+        if (slot >= 0) presenceStarts.splice(slot, 1);
+      }
+    }
 
     const approvedAt = askedAt;
     let answer: unknown;
@@ -905,6 +1037,20 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     deniedUntil.delete(proposalId);
     // Shutting down mid-prompt: the request stays pending for the next boot.
     if (stopping) return { outcome: "operation-reserved" };
+    // The helper's word is not enough (D-03, R-02): its signature must verify, against the pinned public key,
+    // over the exact message of THIS approval. Nothing is decided on a signature that does not, a scheme the
+    // recorded custody does not produce, or a pin that cannot be read.
+    const checked = await verifiedPresencePart(current, approvedAt, result);
+    if (checked.kind !== "ok") {
+      return refuseApprove(
+        current,
+        "presence-unavailable",
+        undefined,
+        checked.kind === "no-pin" ? "presence-pin-unavailable" : "presence-proof-invalid",
+      );
+    }
+    const presencePart = checked.part;
+    if (stopping) return { outcome: "operation-reserved" };
     // The store re-checks the deadline against this later instant, so a request that lapsed while the
     // prompt was up is expired. A wall clock that stepped back during the prompt is clamped to the
     // instant the owner vouched for: the deadline test is only ever MORE conservative, and the store
@@ -920,7 +1066,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
         now: decidedAt,
         approvedAt,
         via: "presence",
-        decisionProof: signApproval(current, approvedAt, "presence"),
+        decisionProof: signApproval(current, approvedAt, "presence", presencePart),
       }),
     );
   }
@@ -934,6 +1080,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     current: StoredProposal,
     outcome: "presence-denied" | "presence-unavailable",
     reason: "presence-cooldown" | "presence-budget" | undefined = undefined,
+    warnCode: "presence-proof-invalid" | "presence-pin-unavailable" | undefined = undefined,
   ): DecideResponse {
     const proposalId = current.proposalId;
     // The client is told the closed outcome; the record keeps the finer reason when there is one.
@@ -947,6 +1094,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     if (recorded === "recorded") {
       if (reason === "presence-budget") log.warn({ proposalId, code: "presence-rate-limited" });
       if (reason === "presence-cooldown") log.warn({ proposalId, code: "presence-cooldown" });
+      if (warnCode !== undefined) log.warn({ proposalId, code: warnCode });
       log.warn({ proposalId, code: "presence-refused", detail });
     }
     if (recorded === "not-pending") {
@@ -982,14 +1130,29 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   ): Promise<StoredProposal | null> {
     // The request stays approved; startup recovery picks it up on the next boot.
     if (stopping) return null;
-    // A row whose proof is missing, malformed or not its own is never started (R-05): claimed so it
-    // can be finished, and failed, never silently repaired.
-    if (!proofVerifies(approved)) {
-      refuseUnproved(approved);
-      return null;
-    }
+    // Another caller (a concurrent recovery, say) is already carrying this row through the claim: leave it to
+    // them. The mark is set BEFORE the awaited pin read below, so a second caller cannot slip in during it
+    // (09-FIX9) and this caller can only ever release a mark it set itself.
+    if (active.has(approved.proposalId)) return null;
     active.add(approved.proposalId);
+    // Once the attempt has started, `startAttempt` owns the mark and clears it when the run ends.
+    let handedOver = false;
     try {
+      // A row whose proof is missing, malformed or not its own is never started (R-05): claimed so it
+      // can be finished, and failed, never silently repaired.
+      const verdict = await proofVerifies(approved);
+      if (verdict === "invalid") {
+        refuseUnproved(approved);
+        return null;
+      }
+      if (verdict === "pin-unavailable") {
+        // Sound, but the pin could not be read now (09-FIX9): the owner's approval stands. The row stays
+        // approved and the next recovery tries again; it lapses in time like any approval nobody carried out.
+        log.warn({ proposalId: approved.proposalId, code: "approval-proof-pin-unavailable" });
+        return null;
+      }
+      // The pin read above took time; a shutdown that began meanwhile leaves the row approved for the next boot.
+      if (stopping) return null;
       let facts: ClaimFacts = {};
       if (definition.claimFacts !== undefined) {
         const parsed = parseStoredPayload(definition, approved.payloadJson);
@@ -1005,21 +1168,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
           }
         }
       }
-      if (stopping) {
-        active.delete(approved.proposalId);
-        return null;
-      }
+      if (stopping) return null;
       const claim = store.claim(approved.proposalId, facts, clock.now());
-      if (claim.kind === "lost") {
-        active.delete(approved.proposalId);
-        return null;
-      }
+      if (claim.kind === "lost") return null;
       announce(claim.proposal);
+      handedOver = true;
       startAttempt(claim.proposal);
       return claim.proposal;
-    } catch (error) {
-      active.delete(approved.proposalId);
-      throw error;
+    } finally {
+      if (!handedOver) active.delete(approved.proposalId);
     }
   }
 
@@ -1122,7 +1279,14 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     // `beginRetry`, so it is the row that is about to run. A check made on an earlier snapshot is not
     // enough, because the row can change while the engine awaits claim facts or a reconcile answer.
     // First attempt: nothing ran, `failed`; a retry: an earlier attempt may have run, `unknown`.
-    if (!proofVerifies(proposal)) {
+    const verdict = await proofVerifies(proposal);
+    if (verdict === "pin-unavailable") {
+      // Nothing has run and nothing is finished (09-FIX9): the row stays `executing` and the next recovery
+      // checks it again, reconciling before any retry, exactly as for any row a restart finds executing.
+      log.warn({ proposalId: proposal.proposalId, code: "approval-proof-pin-unavailable" });
+      return;
+    }
+    if (verdict !== "valid") {
       log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
       failBeforeExecute(proposal, "proof-invalid");
       return;
@@ -1240,7 +1404,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     announce,
     isActive: (proposalId) => active.has(proposalId),
     verifiedPayload,
-    verifyProof: (proposal) => (proofVerifies(proposal) ? "valid" : "invalid"),
+    verifyProof: (proposal) => proofVerifies(proposal),
     refuseUnproved,
     finish: finishWith,
     startAttempt,

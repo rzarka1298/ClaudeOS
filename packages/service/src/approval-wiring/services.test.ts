@@ -545,6 +545,42 @@ describe("the presence port (09-14, Test 3)", () => {
   });
 });
 
+describe("the pin reader (09-18 Task 3, Test 2)", () => {
+  // The production classification table has no enabled presence-required row, so an approve cannot be driven
+  // through these services to the port; the engine tests (engine-presence, recovery) prove what the engine does
+  // with them. What is pinned here is the wiring: both dependencies reach the engine, by identity.
+  const engineDeps = () =>
+    vi.mocked(approvalEntry.createApprovalEngine).mock.calls.at(-1)?.[0] as
+      | { presence?: unknown; readPin?: unknown }
+      | undefined;
+
+  it("hands the presence port and the pin reader to the engine", () => {
+    const port = {
+      async prove() {
+        return { kind: "denied" } as const;
+      },
+      async availability() {
+        return "available" as const;
+      },
+    };
+    const readPin = async () => null;
+    const runtime = startApprovalServices({
+      ...baseDeps(fakeOperations()),
+      presence: port,
+      readPin,
+    });
+    expect(engineDeps()?.presence).toBe(port);
+    expect(engineDeps()?.readPin).toBe(readPin);
+    void runtime.stop();
+  });
+
+  it("builds the engine with no pin reader when none is given, so presence-required rows fail closed", () => {
+    const runtime = startApprovalServices(baseDeps(fakeOperations()));
+    expect(engineDeps()).not.toHaveProperty("readPin");
+    void runtime.stop();
+  });
+});
+
 describe("the decision proof through the composed services (09-17 Task 1, Test 3, tracer)", () => {
   it("does not compile without a proof key", () => {
     const { proofKey: _omitted, ...withoutKey } = baseDeps(fakeOperations());
@@ -577,8 +613,15 @@ describe("the decision proof through the composed services (09-17 Task 1, Test 3
     const row = sql.get(approvedId as never);
     if (row === null) throw new Error("expected a row");
     expect(row.decisionProof).toEqual(expect.any(String));
-    expect(approvalEntry.verifyDecisionProof(PROOF_KEY, row)).toBe("valid");
-    expect(approvalEntry.verifyDecisionProof(Buffer.alloc(32, 6), row)).toBe("invalid");
+    expect(
+      approvalEntry.verifyDecisionProof(PROOF_KEY, row, { presenceRequired: false, pin: null }),
+    ).toBe("valid");
+    expect(
+      approvalEntry.verifyDecisionProof(Buffer.alloc(32, 6), row, {
+        presenceRequired: false,
+        pin: null,
+      }),
+    ).toBe("invalid");
 
     const second = runtime.engine.submit({
       operation: "session.force-terminate",

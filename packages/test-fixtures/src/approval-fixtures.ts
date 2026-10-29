@@ -1,3 +1,4 @@
+import { createSign, generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,7 @@ import {
   type ApprovalEngine,
   buildOperationRegistry,
   createApprovalEngine,
+  presenceMessage,
   type SubmitInput,
 } from "@ccc/service/approval";
 
@@ -598,10 +600,25 @@ export interface WorldOptions {
   readonly start?: string;
 }
 
-/** A presence port that always proves, under the `none` scheme: a test stand-in for the owner's gesture. */
+const PROVING_KEYS = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+
+/** The pin of {@link PROVING_PRESENCE}: base64 DER SPKI of a throwaway P-256 key made at import. */
+export const PROVING_PIN: string = PROVING_KEYS.publicKey
+  .export({ format: "der", type: "spki" })
+  .toString("base64");
+
+/**
+ * A presence port that always proves, with a REAL ECDSA P-256 signature over the canonical message made with
+ * a throwaway key (09-18): a test stand-in for the owner's gesture that the engine's verification accepts. It
+ * is never the real helper and reads no Keychain; the engine is given {@link PROVING_PIN} as its pin.
+ */
 export const PROVING_PRESENCE: PresencePort = {
-  async prove() {
-    return { kind: "proved", scheme: "none", signature: null };
+  async prove(request) {
+    const signature = createSign("sha256")
+      .update(presenceMessage(request), "utf8")
+      .sign({ key: PROVING_KEYS.privateKey, dsaEncoding: "der" })
+      .toString("base64");
+    return { kind: "proved", scheme: "p256", signature };
   },
   async availability() {
     return "available";
@@ -694,6 +711,7 @@ export function openEngine(
       : { claimFactsTimeoutMs: options.claimFactsTimeoutMs }),
     ...(options.projectName === undefined ? {} : { projectName: options.projectName }),
     ...(world.presence === undefined ? {} : { presence: world.presence }),
+    readPin: async () => PROVING_PIN,
   });
 
   let closed = false;

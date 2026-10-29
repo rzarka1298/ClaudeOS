@@ -346,16 +346,31 @@ export function ApprovalDecision(props: ApprovalDecisionProps): VNode {
         props.announce(APPROVAL_STATUS.reserved);
         return;
       case "presence-denied":
+        if (decision === "deny") {
+          // A deny never needs presence (R-03), so this answer to a deny is unexpected, and the words below
+          // are about approving. Ask the service what happened and act on that alone.
+          await resolveUnconfirmed();
+          return;
+        }
         // The request is still pending and nothing ran: say so, and let the owner press again.
         props.announce(APPROVAL_STATUS.presenceDenied);
         props.notify(APPROVAL_STATUS.presenceDenied);
         return;
       case "presence-unavailable":
+        if (decision === "deny") {
+          await resolveUnconfirmed();
+          return;
+        }
         props.announce(APPROVAL_STATUS.presenceUnavailable);
         props.notify(APPROVAL_STATUS.presenceUnavailable);
         return;
-      default:
+      default: {
+        // Compile-time exhaustiveness: a new outcome in DecideResponse fails here until it is handled above.
+        // At run time an unknown outcome (a newer service) is treated as an unconfirmed decision.
+        const unhandled: never = response;
+        void unhandled;
         await resolveUnconfirmed();
+      }
     }
   }
 

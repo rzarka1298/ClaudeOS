@@ -94,7 +94,7 @@ describe("the locked strings (UI-SPEC Copywriting Contract, Test 8)", () => {
       "Approving this needs your Touch ID or password, and it wasn't given. Nothing was changed.",
     );
     expect(APPROVAL_STATUS.presenceUnavailable).toBe(
-      "Approving this needs your Touch ID or password, and that check isn't available on this Mac right now. Nothing was changed.",
+      "Approving this needs your Touch ID or password, and that check isn't available on this Mac right now. Nothing was changed. Check Diagnostics, or run the service install again to set it up.",
     );
     expect(APPROVAL_STATUS.confirmFailed).toBe(
       "Couldn't confirm whether your decision went through. Refresh the list before deciding again.",

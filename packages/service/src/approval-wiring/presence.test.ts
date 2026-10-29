@@ -1,13 +1,19 @@
 // The presence helper adapter (plan 09-15, D-01, R-02). Every test runs the adapter against the FAKE
 // helper (test-support/fake-presence-helper.mjs): a node script copied to a temporary absolute path as
 // `ccc-presence`. No test spawns the owner's real helper, shows a prompt or reads a Keychain item (T-09-33).
+
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,10 +33,15 @@ import {
 } from "../projects/command-runner.js";
 import {
   createHelperPresencePort,
+  createInstallMarker,
+  guardPinReader,
   PRESENCE_CHECK_TIMEOUT_MS,
   PRESENCE_HELPER_KILL_MS,
   PRESENCE_HELPER_MAX_OUTPUT_BYTES,
+  PRESENCE_PIN_ACCOUNT,
+  PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS,
   type PresenceCustody,
+  pinReaderFromEnv,
   presencePortFromEnv,
 } from "./presence.js";
 
@@ -493,5 +504,284 @@ describe("09-15 Task 1 Test 5: a sandbox or test environment gets the fail-close
     expect(() =>
       presencePortFromEnv({}, "relative/dir", { runner, exists: () => true, homeDir: HOME }),
     ).toThrow(/absolute/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-18 Task 3: the pin reader and the pin-change guard
+
+describe("pinReaderFromEnv (09-18 Task 3, Test 1)", () => {
+  it("answers null and never reads the Keychain when CCC_INSTALL_SECRET_ACCOUNT is set", async () => {
+    let calls = 0;
+    const read = pinReaderFromEnv({ CCC_INSTALL_SECRET_ACCOUNT: "x" }, async () => {
+      calls += 1;
+      return "pin";
+    });
+    expect(await read()).toBeNull();
+    expect(await read()).toBeNull();
+    expect(calls).toBe(0);
+  });
+
+  it("without the variable reads the pin item once per read", async () => {
+    const seen: string[] = [];
+    const read = pinReaderFromEnv({}, async (account) => {
+      seen.push(account);
+      return "the-pin";
+    });
+    expect(await read()).toBe("the-pin");
+    expect(await read()).toBe("the-pin");
+    expect(seen).toEqual(["approval-presence-pin", "approval-presence-pin"]);
+    expect(PRESENCE_PIN_ACCOUNT).toBe("approval-presence-pin");
+  });
+
+  it("treats a throwing reader as no pin", async () => {
+    const read = pinReaderFromEnv({}, async () => {
+      throw new Error("keychain down");
+    });
+    expect(await read()).toBeNull();
+  });
+});
+
+describe("guardPinReader: trust on first use and refusal of a changed pin (spike: Residual, detection)", () => {
+  const sha = (value: string): string => createHash("sha256").update(value).digest("hex");
+  type MarkerState = "absent" | "fresh" | "stale" | "not-regular";
+
+  function setup(initialRecorded: string | null = null, markerState: MarkerState = "absent") {
+    let current: string | null = "pin-one";
+    let recorded = initialRecorded;
+    let marker: MarkerState = markerState;
+    const lines: { level: "info" | "warn"; fields: Record<string, unknown> }[] = [];
+    const read = guardPinReader({
+      read: async () => current,
+      recorded: {
+        get: () => recorded,
+        set: (v) => {
+          recorded = v;
+        },
+      },
+      installMarker: {
+        inspect: () => marker,
+        clear: () => {
+          marker = "absent";
+        },
+      },
+      log: {
+        info: (fields) => void lines.push({ level: "info", fields }),
+        warn: (fields) => void lines.push({ level: "warn", fields }),
+      },
+    });
+    return {
+      read,
+      lines,
+      set: (pin: string | null) => {
+        current = pin;
+      },
+      recorded: () => recorded,
+      marker: () => marker,
+      touchMarker: () => {
+        marker = "fresh";
+      },
+    };
+  }
+
+  it("records the SHA-256 of the first pin it sees and returns it (a boot-time read is the trust-on-first-use point)", async () => {
+    const g = setup();
+    expect(await g.read()).toBe("pin-one");
+    expect(g.recorded()).toBe(sha("pin-one"));
+  });
+
+  it("returns the same pin on later reads and records nothing more", async () => {
+    const g = setup(sha("pin-one"));
+    expect(await g.read()).toBe("pin-one");
+    expect(g.lines).toEqual([]);
+  });
+
+  it("refuses a changed pin outside an install, with one closed presence-pin-changed warning per change", async () => {
+    const g = setup(sha("pin-one"));
+    g.set("pin-two");
+    expect(await g.read()).toBeNull();
+    expect(await g.read()).toBeNull();
+    expect(g.recorded()).toBe(sha("pin-one"));
+    expect(g.lines).toEqual([{ level: "warn", fields: { code: "presence-pin-changed" } }]);
+    // Only the pin it was trusted to hold is accepted again.
+    g.set("pin-one");
+    expect(await g.read()).toBe("pin-one");
+  });
+
+  it("adopts a changed pin once, when an install left a fresh marker, clears it and logs the adoption at warn level", async () => {
+    const g = setup(sha("pin-one"), "fresh");
+    g.set("pin-two");
+    expect(await g.read()).toBe("pin-two");
+    expect(g.recorded()).toBe(sha("pin-two"));
+    expect(g.marker()).toBe("absent");
+    expect(g.lines).toEqual([{ level: "warn", fields: { code: "presence-pin-adopted" } }]);
+    // The marker was used up: a later change is refused again.
+    g.set("pin-three");
+    expect(await g.read()).toBeNull();
+  });
+
+  it("09-FIX9: a marker older than the window is ignored, deleted and logged, and a changed pin is still refused", async () => {
+    const g = setup(sha("pin-one"), "stale");
+    g.set("pin-two");
+    expect(await g.read()).toBeNull();
+    expect(g.recorded()).toBe(sha("pin-one"));
+    expect(g.marker()).toBe("absent");
+    expect(g.lines).toEqual([
+      { level: "warn", fields: { code: "presence-pin-marker-ignored" } },
+      { level: "warn", fields: { code: "presence-pin-changed" } },
+    ]);
+  });
+
+  it("09-FIX9: a marker that is not a regular file is ignored the same way", async () => {
+    const g = setup(sha("pin-one"), "not-regular");
+    g.set("pin-two");
+    expect(await g.read()).toBeNull();
+    expect(g.marker()).toBe("absent");
+    expect(g.lines.map((l) => l.fields.code)).toEqual([
+      "presence-pin-marker-ignored",
+      "presence-pin-changed",
+    ]);
+  });
+
+  it("09-FIX9: a stale marker beside an unchanged pin is cleared and logged but changes nothing else", async () => {
+    const g = setup(sha("pin-one"), "stale");
+    expect(await g.read()).toBe("pin-one");
+    expect(g.marker()).toBe("absent");
+    expect(g.lines).toEqual([{ level: "warn", fields: { code: "presence-pin-marker-ignored" } }]);
+  });
+
+  it("an install marker is cleared on the first sight of a pin too (no standing permission)", async () => {
+    const g = setup(null, "fresh");
+    expect(await g.read()).toBe("pin-one");
+    expect(g.recorded()).toBe(sha("pin-one"));
+    expect(g.marker()).toBe("absent");
+    g.touchMarker();
+    expect(await g.read()).toBe("pin-one");
+    expect(g.marker()).toBe("absent");
+  });
+
+  it("no pin means no pin: nothing is recorded, adopted or warned about", async () => {
+    const g = setup(sha("pin-one"), "fresh");
+    g.set(null);
+    expect(await g.read()).toBeNull();
+    expect(g.recorded()).toBe(sha("pin-one"));
+    expect(g.marker()).toBe("fresh");
+    expect(g.lines).toEqual([]);
+  });
+
+  it("never logs the pin or its hash", async () => {
+    const g = setup(sha("pin-one"));
+    g.set("pin-two");
+    await g.read();
+    const text = JSON.stringify(g.lines);
+    expect(text).not.toContain("pin-one");
+    expect(text).not.toContain("pin-two");
+    expect(text).not.toContain(sha("pin-one"));
+    expect(text).not.toContain(sha("pin-two"));
+  });
+
+  it("fails closed when the recorded value cannot be read or written", async () => {
+    const read = guardPinReader({
+      read: async () => "pin-one",
+      recorded: {
+        get: () => {
+          throw new Error("db down");
+        },
+        set: () => undefined,
+      },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+    });
+    expect(await read()).toBeNull();
+  });
+});
+
+describe("createInstallMarker: a single-use, time-bound file (09-FIX9)", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function fixture() {
+    const dir = mkdtempSync(join(tmpdir(), "ccc-marker-"));
+    dirs.push(dir);
+    const path = join(dir, "presence-pin-installed");
+    const nowMs = Date.parse("2026-10-29T12:00:00.000Z");
+    const marker = createInstallMarker({
+      path,
+      now: () => nowMs,
+      lstat: lstatSync,
+      unlink: unlinkSync,
+    });
+    const place = (ageMs: number): void => {
+      writeFileSync(path, "");
+      const at = new Date(nowMs - ageMs);
+      utimesSync(path, at, at);
+    };
+    return { dir, path, marker, place, nowMs };
+  }
+
+  it("is absent when there is no file", () => {
+    expect(fixture().marker.inspect()).toBe("absent");
+  });
+
+  it("is fresh inside the window and stale beyond it; the window is ten minutes", () => {
+    expect(PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS).toBe(10 * 60 * 1000);
+    const f = fixture();
+    f.place(0);
+    expect(f.marker.inspect()).toBe("fresh");
+    f.place(PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS - 1000);
+    expect(f.marker.inspect()).toBe("fresh");
+    f.place(PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS + 1000);
+    expect(f.marker.inspect()).toBe("stale");
+  });
+
+  it("a modification time far in the future is stale too (a marker cannot be made to last)", () => {
+    const f = fixture();
+    f.place(-60 * 60 * 1000);
+    expect(f.marker.inspect()).toBe("stale");
+  });
+
+  it("a directory and a symbolic link are not regular files, and clear() removes a link without following it", () => {
+    const f = fixture();
+    mkdirSync(f.path);
+    expect(f.marker.inspect()).toBe("not-regular");
+    rmSync(f.path, { recursive: true });
+    const target = join(f.dir, "target");
+    writeFileSync(target, "");
+    symlinkSync(target, f.path);
+    expect(f.marker.inspect()).toBe("not-regular");
+    f.marker.clear();
+    expect(existsSync(f.path)).toBe(false);
+    expect(existsSync(target)).toBe(true);
+  });
+
+  it("clear() removes a regular marker and never throws when there is none", () => {
+    const f = fixture();
+    f.place(0);
+    f.marker.clear();
+    expect(existsSync(f.path)).toBe(false);
+    expect(() => f.marker.clear()).not.toThrow();
+  });
+
+  it("a boot-time read with a fresh marker and a replaced pin adopts it once and consumes the file", async () => {
+    const f = fixture();
+    f.place(1000);
+    let recorded: string | null = createHash("sha256").update("pin-one").digest("hex");
+    const lines: Record<string, unknown>[] = [];
+    const read = guardPinReader({
+      read: async () => "pin-two",
+      recorded: {
+        get: () => recorded,
+        set: (v) => {
+          recorded = v;
+        },
+      },
+      installMarker: f.marker,
+      log: { info: (x) => void lines.push(x), warn: (x) => void lines.push(x) },
+    });
+    expect(await read()).toBe("pin-two");
+    expect(existsSync(f.path)).toBe(false);
+    expect(lines).toEqual([{ code: "presence-pin-adopted" }]);
   });
 });

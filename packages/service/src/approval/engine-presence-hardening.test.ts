@@ -25,6 +25,7 @@ import {
   deferredPresence,
   PROVED,
   type PresenceFake,
+  TEST_PIN,
 } from "./test-support/presence-fake.js";
 
 const WRITE = "connector.fake-write";
@@ -146,7 +147,9 @@ describe("a port's answer is validated, and a stepped-back clock is handled (m2)
     expect(row.approvedAt).toBe(asked);
     expect((row.decidedAt ?? "") >= (row.approvedAt ?? "z")).toBe(true);
     // The proof covers the instant the owner vouched for, not the clamped clock read (09-FIX8, M5).
-    expect(verifyDecisionProof(TEST_PROOF_KEY, row)).toBe("valid");
+    expect(
+      verifyDecisionProof(TEST_PROOF_KEY, row, { presenceRequired: true, pin: TEST_PIN }),
+    ).toBe("valid");
   });
 });
 
@@ -439,7 +442,9 @@ describe("review follow-ups from Codex run 20261029T023514538Z", () => {
     port.script(slow.script);
     const id = h.propose({ operation: WRITE, subject: "last" });
     const pending = approveVia(engine, h, id);
-    await Promise.resolve();
+    // The pin is read before the port is asked (09-FIX9), so let the check reach the port.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(port.requests).toHaveLength(26);
     expect(engine.shutdownSubscriptions()).toBe(1);
     engine.beginShutdown();
     expect(await pending).toEqual({ outcome: "operation-reserved" });

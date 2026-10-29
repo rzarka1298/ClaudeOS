@@ -1,4 +1,6 @@
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, createSign, generateKeyPairSync, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   canonicalJson,
   dedupeKeyOf,
@@ -13,8 +15,13 @@ import {
   type DecisionMacFields,
   DecisionProofSchema,
   decisionMacFields,
+  isCanonicalSignature,
+  presenceMessage,
+  SIGNATURE_MAX_BYTES,
+  SIGNATURE_MIN_BYTES,
   signDecisionProof,
   verifyDecisionProof,
+  verifyPresenceSignature,
 } from "./proof.js";
 import { createMemoryApprovalStore } from "./test-support/memory-store.js";
 
@@ -23,6 +30,8 @@ const SECRET = Buffer.from(
   "hex",
 );
 const KEY = approvalProofKey(SECRET);
+/** The check for a row whose operation needs no presence. */
+const NO_PRESENCE = { presenceRequired: false, pin: null } as const;
 const T0 = "2026-10-06T10:00:00.000Z";
 const T1 = "2026-10-06T10:00:30.000Z";
 const T2 = "2026-10-06T10:01:00.000Z";
@@ -114,7 +123,7 @@ describe("known-answer vectors (review finding: no KAT)", () => {
   it("a proof stored as canonical JSON verifies (the stored text is exactly the proof)", () => {
     const text = signDecisionProof(KEY, FIELDS, null);
     expect(text).toBe(`{"mac":"${KAT_MAC_HEX}","presence":null,"v":1}`);
-    expect(verifyDecisionProof(KEY, rowWith(FIELDS, text))).toBe("valid");
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, text), NO_PRESENCE)).toBe("valid");
   });
 });
 
@@ -140,7 +149,7 @@ describe("sign and verify (Test 1)", () => {
 
   it("is valid for the row it was made for", () => {
     const row = rowWith(FIELDS, signDecisionProof(KEY, FIELDS, null));
-    expect(verifyDecisionProof(KEY, row)).toBe("valid");
+    expect(verifyDecisionProof(KEY, row, NO_PRESENCE)).toBe("valid");
   });
 
   it("is deterministic: the same fields give the same proof", () => {
@@ -166,20 +175,20 @@ describe("sign and verify (Test 1)", () => {
   ] as const)("is invalid when the row's %s differs from what was signed", (_name, change) => {
     const proof = signDecisionProof(KEY, FIELDS, null);
     const row = { ...rowWith(FIELDS, proof), ...change } as StoredProposal;
-    expect(verifyDecisionProof(KEY, row)).toBe("invalid");
+    expect(verifyDecisionProof(KEY, row, NO_PRESENCE)).toBe("invalid");
   });
 
   it("is invalid when the MAC has one hex digit changed", () => {
     const parsed = DecisionProofSchema.parse(JSON.parse(signDecisionProof(KEY, FIELDS, null)));
     const first = parsed.mac[0] === "0" ? "1" : "0";
     const bad = JSON.stringify({ ...parsed, mac: `${first}${parsed.mac.slice(1)}` });
-    expect(verifyDecisionProof(KEY, rowWith(FIELDS, bad))).toBe("invalid");
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, bad), NO_PRESENCE)).toBe("invalid");
   });
 
   it("is invalid when the JSON carries an extra key", () => {
     const parsed = DecisionProofSchema.parse(JSON.parse(signDecisionProof(KEY, FIELDS, null)));
     const extra = JSON.stringify({ ...parsed, extra: true });
-    expect(verifyDecisionProof(KEY, rowWith(FIELDS, extra))).toBe("invalid");
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, extra), NO_PRESENCE)).toBe("invalid");
   });
 
   it("is invalid when the version, MAC case or presence member is wrong", () => {
@@ -190,32 +199,36 @@ describe("sign and verify (Test 1)", () => {
       { ...parsed, mac: parsed.mac.slice(2) },
       { ...parsed, presence: "sig" },
     ]) {
-      expect(verifyDecisionProof(KEY, rowWith(FIELDS, JSON.stringify(mutated)))).toBe("invalid");
+      expect(verifyDecisionProof(KEY, rowWith(FIELDS, JSON.stringify(mutated)), NO_PRESENCE)).toBe(
+        "invalid",
+      );
     }
   });
 
   it("treats an absent, null, empty or unparseable proof as invalid (fail closed)", () => {
-    expect(verifyDecisionProof(KEY, rowWith(FIELDS, undefined))).toBe("invalid");
-    expect(verifyDecisionProof(KEY, rowWith(FIELDS, null))).toBe("invalid");
-    expect(verifyDecisionProof(KEY, rowWith(FIELDS, ""))).toBe("invalid");
-    expect(verifyDecisionProof(KEY, rowWith(FIELDS, "not json"))).toBe("invalid");
-    expect(verifyDecisionProof(KEY, rowWith(FIELDS, "[]"))).toBe("invalid");
-    expect(verifyDecisionProof(KEY, rowWith(FIELDS, "null"))).toBe("invalid");
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, undefined), NO_PRESENCE)).toBe("invalid");
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, null), NO_PRESENCE)).toBe("invalid");
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, ""), NO_PRESENCE)).toBe("invalid");
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, "not json"), NO_PRESENCE)).toBe("invalid");
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, "[]"), NO_PRESENCE)).toBe("invalid");
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, "null"), NO_PRESENCE)).toBe("invalid");
   });
 
   it("treats a row with no approval instant or no channel as invalid whatever the proof says", () => {
     const proof = signDecisionProof(KEY, FIELDS, null);
-    expect(verifyDecisionProof(KEY, { ...rowWith(FIELDS, proof), approvedAt: null })).toBe(
-      "invalid",
-    );
-    expect(verifyDecisionProof(KEY, { ...rowWith(FIELDS, proof), decidedVia: null })).toBe(
-      "invalid",
-    );
+    expect(
+      verifyDecisionProof(KEY, { ...rowWith(FIELDS, proof), approvedAt: null }, NO_PRESENCE),
+    ).toBe("invalid");
+    expect(
+      verifyDecisionProof(KEY, { ...rowWith(FIELDS, proof), decidedVia: null }, NO_PRESENCE),
+    ).toBe("invalid");
   });
 
   it("is invalid under a different key", () => {
     const row = rowWith(FIELDS, signDecisionProof(KEY, FIELDS, null));
-    expect(verifyDecisionProof(approvalProofKey(randomBytes(32)), row)).toBe("invalid");
+    expect(verifyDecisionProof(approvalProofKey(randomBytes(32)), row, NO_PRESENCE)).toBe(
+      "invalid",
+    );
   });
 });
 
@@ -271,7 +284,7 @@ describe("the proof over the store port (Test 3, tracer)", () => {
     expect(result.kind).toBe("approved");
     const stored = store.get(proposal.proposalId);
     expect(stored?.decisionProof).toBe(proof);
-    expect(stored && verifyDecisionProof(KEY, stored)).toBe("valid");
+    expect(stored && verifyDecisionProof(KEY, stored, NO_PRESENCE)).toBe("valid");
   });
 
   it("refuses a copied proof: the same proof on a second approved row is invalid", () => {
@@ -304,9 +317,9 @@ describe("the proof over the store port (Test 3, tracer)", () => {
     }
     const a = store.get(first.proposalId);
     const b = store.get(second.proposalId);
-    expect(a && verifyDecisionProof(KEY, a)).toBe("valid");
+    expect(a && verifyDecisionProof(KEY, a, NO_PRESENCE)).toBe("valid");
     expect(b?.state).toBe("approved");
-    expect(b && verifyDecisionProof(KEY, b)).toBe("invalid");
+    expect(b && verifyDecisionProof(KEY, b, NO_PRESENCE)).toBe("invalid");
   });
 
   it("mirrors the SQL store's input check: an empty, non-string or oversized proof throws and writes nothing", () => {
@@ -364,6 +377,236 @@ describe("the proof over the store port (Test 3, tracer)", () => {
     expect(store.get(pending.proposalId)?.decisionProof).toBeNull();
     const approvedUnsigned = store.get(unsigned.proposalId);
     expect(approvedUnsigned?.decisionProof).toBeNull();
-    expect(approvedUnsigned && verifyDecisionProof(KEY, approvedUnsigned)).toBe("invalid");
+    expect(approvedUnsigned && verifyDecisionProof(KEY, approvedUnsigned, NO_PRESENCE)).toBe(
+      "invalid",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-18 Task 1, Test 1: the presence signature (R-02, APPR-11)
+
+function keyPair() {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  return {
+    pin: publicKey.export({ format: "der", type: "spki" }).toString("base64"),
+    sign: (message: string): string =>
+      createSign("sha256")
+        .update(message, "utf8")
+        .sign({ key: privateKey, dsaEncoding: "der" })
+        .toString("base64"),
+  };
+}
+
+describe("verifyPresenceSignature (09-18 Task 1, Test 1)", () => {
+  const pair = keyPair();
+  const message = presenceMessage({
+    proposalId: FIELDS.proposalId,
+    operation: FIELDS.operation,
+    payloadHash: FIELDS.payloadHash,
+    approvedAt: FIELDS.approvedAt,
+  });
+  const sig = pair.sign(message);
+
+  it("builds the canonical message of the approval, in the order the helper signs", () => {
+    expect(JSON.parse(message)).toEqual({
+      v: 1,
+      proposalId: FIELDS.proposalId,
+      operation: FIELDS.operation,
+      payloadHash: FIELDS.payloadHash,
+      decision: "approve",
+      approvedAt: FIELDS.approvedAt,
+    });
+    expect(Object.keys(JSON.parse(message) as object)).toEqual(
+      [...Object.keys(JSON.parse(message) as object)].sort(),
+    );
+  });
+
+  it("is true for a DER signature of the exact message made with the pinned key", () => {
+    expect(verifyPresenceSignature(pair.pin, message, sig)).toBe(true);
+  });
+
+  it("is false for one changed byte of the message", () => {
+    expect(verifyPresenceSignature(pair.pin, `${message} `, sig)).toBe(false);
+    expect(verifyPresenceSignature(pair.pin, message.replace("approve", "approvf"), sig)).toBe(
+      false,
+    );
+  });
+
+  it("is false for one changed byte of the signature", () => {
+    const bytes = Buffer.from(sig, "base64");
+    bytes[bytes.length - 1] = (bytes[bytes.length - 1] ?? 0) ^ 1;
+    expect(verifyPresenceSignature(pair.pin, message, bytes.toString("base64"))).toBe(false);
+  });
+
+  it("is false for a signature from another key", () => {
+    expect(verifyPresenceSignature(pair.pin, message, keyPair().sign(message))).toBe(false);
+  });
+
+  it("is false for a pin that is not a P-256 SPKI, and for non-base64 input", () => {
+    expect(verifyPresenceSignature("not-a-key", message, sig)).toBe(false);
+    expect(verifyPresenceSignature(Buffer.alloc(91, 1).toString("base64"), message, sig)).toBe(
+      false,
+    );
+    expect(verifyPresenceSignature(pair.pin, message, "%%%not base64%%%")).toBe(false);
+    expect(verifyPresenceSignature("%%%", message, sig)).toBe(false);
+    expect(verifyPresenceSignature(pair.pin, message, "")).toBe(false);
+    // A P-384 key is a valid SPKI but not the pinned curve.
+    const other = generateKeyPairSync("ec", { namedCurve: "secp384r1" });
+    const p384 = other.publicKey.export({ format: "der", type: "spki" }).toString("base64");
+    const s384 = createSign("sha256")
+      .update(message, "utf8")
+      .sign({ key: other.privateKey, dsaEncoding: "der" })
+      .toString("base64");
+    expect(verifyPresenceSignature(p384, message, s384)).toBe(false);
+  });
+});
+
+describe("verifyDecisionProof with a presence part (09-18 Task 1)", () => {
+  const pair = keyPair();
+  const msg = presenceMessage({
+    proposalId: FIELDS.proposalId,
+    operation: FIELDS.operation,
+    payloadHash: FIELDS.payloadHash,
+    approvedAt: FIELDS.approvedAt,
+  });
+  const good = signDecisionProof(KEY, FIELDS, { scheme: "p256", sig: pair.sign(msg) });
+
+  it("accepts a MAC-valid row whose presence part verifies against the pin", () => {
+    const row = rowWith(FIELDS, good);
+    expect(verifyDecisionProof(KEY, row, { presenceRequired: true, pin: pair.pin })).toBe("valid");
+  });
+
+  it("refuses a presence-required row with a null presence part, no pin or another pin", () => {
+    const bare = rowWith(FIELDS, signDecisionProof(KEY, FIELDS, null));
+    expect(verifyDecisionProof(KEY, bare, { presenceRequired: true, pin: pair.pin })).toBe(
+      "invalid",
+    );
+    expect(
+      verifyDecisionProof(KEY, rowWith(FIELDS, good), {
+        presenceRequired: true,
+        pin: keyPair().pin,
+      }),
+    ).toBe("invalid");
+  });
+
+  it("09-FIX9: a row that is otherwise sound but cannot be checked for want of a pin is pin-unavailable, never invalid", () => {
+    const row = rowWith(FIELDS, good);
+    expect(verifyDecisionProof(KEY, row, { presenceRequired: true, pin: null })).toBe(
+      "pin-unavailable",
+    );
+    // Anything wrong that the pin is not needed to see stays invalid, with or without a pin.
+    const badMac = rowWith(
+      FIELDS,
+      signDecisionProof(Buffer.alloc(32, 1), FIELDS, { scheme: "p256", sig: pair.sign(msg) }),
+    );
+    expect(verifyDecisionProof(KEY, badMac, { presenceRequired: true, pin: null })).toBe("invalid");
+    const bare = rowWith(FIELDS, signDecisionProof(KEY, FIELDS, null));
+    expect(verifyDecisionProof(KEY, bare, { presenceRequired: true, pin: null })).toBe("invalid");
+    const plugin = { ...FIELDS, decidedVia: "plugin" as const };
+    const wrongChannel = rowWith(
+      plugin,
+      signDecisionProof(KEY, plugin, { scheme: "p256", sig: pair.sign(msg) }),
+    );
+    expect(verifyDecisionProof(KEY, wrongChannel, { presenceRequired: true, pin: null })).toBe(
+      "invalid",
+    );
+    expect(
+      verifyDecisionProof(KEY, rowWith(FIELDS, undefined), { presenceRequired: true, pin: null }),
+    ).toBe("invalid");
+    // A row that needs no presence never asks for a pin.
+    expect(verifyDecisionProof(KEY, bare, { presenceRequired: false, pin: null })).toBe("valid");
+  });
+
+  it("refuses a presence-required row whose channel is not presence", () => {
+    const fields = { ...FIELDS, decidedVia: "plugin" as const };
+    const proof = signDecisionProof(KEY, fields, { scheme: "p256", sig: pair.sign(msg) });
+    expect(
+      verifyDecisionProof(KEY, rowWith(fields, proof), { presenceRequired: true, pin: pair.pin }),
+    ).toBe("invalid");
+  });
+
+  it("refuses a signature copied from another proposal", () => {
+    const otherMsg = presenceMessage({
+      proposalId: FIELDS.proposalId,
+      operation: FIELDS.operation,
+      payloadHash: "cd34".repeat(16),
+      approvedAt: FIELDS.approvedAt,
+    });
+    const copied = signDecisionProof(KEY, FIELDS, { scheme: "p256", sig: pair.sign(otherMsg) });
+    expect(
+      verifyDecisionProof(KEY, rowWith(FIELDS, copied), { presenceRequired: true, pin: pair.pin }),
+    ).toBe("invalid");
+  });
+
+  it("a presence part on a row that needs none is refused, and a null part passes", () => {
+    expect(
+      verifyDecisionProof(KEY, rowWith(FIELDS, good), { presenceRequired: false, pin: null }),
+    ).toBe("invalid");
+    const bare = rowWith(FIELDS, signDecisionProof(KEY, FIELDS, null));
+    expect(verifyDecisionProof(KEY, bare, { presenceRequired: false, pin: null })).toBe("valid");
+  });
+
+  it("the stored schema takes only { scheme: p256, sig } or null", () => {
+    const base = { v: 1, mac: "a".repeat(64) };
+    const sig71 = Buffer.alloc(71, 1).toString("base64");
+    expect(DecisionProofSchema.safeParse({ ...base, presence: null }).success).toBe(true);
+    expect(
+      DecisionProofSchema.safeParse({ ...base, presence: { scheme: "p256", sig: sig71 } }).success,
+    ).toBe(true);
+    expect(DecisionProofSchema.safeParse({ ...base, presence: { scheme: "none" } }).success).toBe(
+      false,
+    );
+    expect(
+      DecisionProofSchema.safeParse({
+        ...base,
+        presence: { scheme: "p256", sig: sig71, extra: 1 },
+      }).success,
+    ).toBe(false);
+    expect(DecisionProofSchema.safeParse({ ...base, presence: { scheme: "p256" } }).success).toBe(
+      false,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-FIX9 item 6: one canonical-base64 signature check, one length bound
+
+describe("isCanonicalSignature (09-FIX9)", () => {
+  const of = (bytes: number): string => Buffer.alloc(bytes, 3).toString("base64");
+
+  it("accepts canonical base64 of the bounded length and nothing outside it", () => {
+    expect(SIGNATURE_MIN_BYTES).toBe(8);
+    expect(SIGNATURE_MAX_BYTES).toBe(80);
+    expect(isCanonicalSignature(of(71))).toBe(true);
+    expect(isCanonicalSignature(of(SIGNATURE_MIN_BYTES))).toBe(true);
+    expect(isCanonicalSignature(of(SIGNATURE_MAX_BYTES))).toBe(true);
+    expect(isCanonicalSignature(of(SIGNATURE_MIN_BYTES - 1))).toBe(false);
+    expect(isCanonicalSignature(of(SIGNATURE_MAX_BYTES + 1))).toBe(false);
+  });
+
+  it("refuses non-canonical base64: missing padding, other alphabets, whitespace, the empty string", () => {
+    expect(isCanonicalSignature(of(71).replace(/=+$/, ""))).toBe(false);
+    expect(isCanonicalSignature(of(71).replace("A", "-"))).toBe(false);
+    expect(isCanonicalSignature(` ${of(71)}`)).toBe(false);
+    expect(isCanonicalSignature("")).toBe(false);
+  });
+
+  it("is the very check the stored proof schema and the helper adapter use (no second copy)", () => {
+    const adapter = readFileSync(
+      fileURLToPath(new URL("../approval-wiring/presence.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(adapter).not.toMatch(
+      /MIN_SIGNATURE_BYTES|MAX_SIGNATURE_BYTES|function isCanonicalBase64/,
+    );
+    expect(adapter).toContain("isCanonicalSignature");
+    const base = { v: 1, mac: "a".repeat(64) };
+    expect(
+      DecisionProofSchema.safeParse({ ...base, presence: { scheme: "p256", sig: of(7) } }).success,
+    ).toBe(false);
+    expect(
+      DecisionProofSchema.safeParse({ ...base, presence: { scheme: "p256", sig: of(8) } }).success,
+    ).toBe(true);
   });
 });

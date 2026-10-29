@@ -249,3 +249,50 @@ describe("main.ts approval proof key derivation (D-03)", () => {
     expect(keyUse).toBeLessThan(src.indexOf("await approvals.recover()"));
   });
 });
+
+describe("main.ts wires the presence helper and the pin reader (09-18 Task 3)", () => {
+  const src = readFileSync(fileURLToPath(new URL("./main.ts", import.meta.url)), "utf8");
+
+  it("builds the port from the environment and the pin reader from the environment, once each, and hands both to the approval services", () => {
+    expect(src.match(/presencePortFromEnv\(/g) ?? []).toHaveLength(1);
+    expect(src.match(/pinReaderFromEnv\(/g) ?? []).toHaveLength(1);
+    expect(src.match(/guardPinReader\(/g) ?? []).toHaveLength(1);
+    // The port gets process.env, so a sandbox service (CCC_INSTALL_SECRET_ACCOUNT) is fail-closed.
+    expect(src).toMatch(/presencePortFromEnv\(process\.env, runtimeDir,/);
+    expect(src).toMatch(/read: pinReaderFromEnv\(process\.env, readItemComment\),/);
+    const startAt = src.indexOf("startApprovalServices({");
+    const recoverAt = src.indexOf("await approvals.recover()");
+    for (const needle of ["presence: presencePort,", "readPin: presencePinReader,"]) {
+      const at = src.indexOf(needle);
+      expect(at, needle).toBeGreaterThan(startAt);
+      expect(at, needle).toBeLessThan(recoverAt);
+    }
+    // Built before the approval services, never after them.
+    expect(src.indexOf("presencePortFromEnv(")).toBeLessThan(startAt);
+    expect(src.indexOf("guardPinReader(")).toBeLessThan(startAt);
+  });
+
+  it("09-FIX9: one guarded pin read at service start, after the store opens and before recovery, makes boot the trust-on-first-use point and the install window", () => {
+    const openAt = src.indexOf("openStore(");
+    const readAt = src.indexOf("await presencePinReader()");
+    const startAt = src.indexOf("startApprovalServices({");
+    const recoverAt = src.indexOf("await approvals.recover()");
+    expect(src.match(/await presencePinReader\(\)/g) ?? []).toHaveLength(1);
+    expect(readAt).toBeGreaterThan(openAt);
+    expect(readAt).toBeGreaterThan(src.indexOf("guardPinReader("));
+    expect(readAt).toBeLessThan(startAt);
+    expect(readAt).toBeLessThan(recoverAt);
+  });
+
+  it("09-FIX9: the install marker is the time-bound, regular-file-only one", () => {
+    expect(src).toMatch(/installMarker: createInstallMarker\(\{/);
+    expect(src).toMatch(/maxAgeMs: PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS/);
+    expect(src).not.toMatch(/present: \(\) => existsSync/);
+  });
+
+  it("reads the pin item only through the guarded reader: no other call of readItemComment", () => {
+    const calls = (src.match(/readItemComment\b/g) ?? []).length;
+    // The import and the one argument to pinReaderFromEnv.
+    expect(calls).toBe(2);
+  });
+});
