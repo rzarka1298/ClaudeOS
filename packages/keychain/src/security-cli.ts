@@ -1,3 +1,5 @@
+import { userInfo } from "node:os";
+import { join } from "node:path";
 import { execa } from "execa";
 import type { SecretStore } from "./index.js";
 
@@ -189,6 +191,107 @@ export async function hasSecret(
     return classifyPresenceResult(result);
   } catch {
     return "error";
+  }
+}
+
+/** `security` prints a handful of short attribute lines; this is far more than any real output. */
+const READ_COMMENT_MAX_BYTES = 4096;
+/** A P-256 SubjectPublicKeyInfo: 26 header bytes and the 65-byte uncompressed point. */
+const SPKI_P256_BYTES = 91;
+/** The `"icmt"<blob>="..."` line of a `find-generic-password` attribute listing. */
+const COMMENT_LINE_PATTERN = /^\s*"icmt"<blob>="([^"\n]*)"\s*$/m;
+
+/** The fixed 26-byte DER prefix of a P-256 SubjectPublicKeyInfo (id-ecPublicKey, prime256v1, bit string). */
+const SPKI_P256_HEADER = Buffer.from("3059301306072a8648ce3d020106082a8648ce3d030107034200", "hex");
+/** The login keychain, relative to the account's home directory. */
+const LOGIN_KEYCHAIN_RELATIVE = "Library/Keychains/login.keychain-db";
+/** The `keychain: "<path>"` line `security` prints before an item's attributes. */
+const KEYCHAIN_LINE_PATTERN = /^keychain: "([^"\n]*)"\s*$/m;
+const ACCT_LINE_PATTERN = /^\s*"acct"<blob>="([^"\n]*)"\s*$/m;
+const SVCE_LINE_PATTERN = /^\s*"svce"<blob>="([^"\n]*)"\s*$/m;
+
+/**
+ * Canonical (padded, standard-alphabet) base64 of exactly a P-256 SPKI: 91 bytes that start with the fixed
+ * 26-byte header and carry an uncompressed (0x04) point. Any other 91 bytes are not a pin (FIX6B m4).
+ */
+function isPinnedPublicKey(value: string): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
+  const bytes = Buffer.from(value, "base64");
+  return (
+    bytes.length === SPKI_P256_BYTES &&
+    bytes.toString("base64") === value &&
+    bytes.subarray(0, SPKI_P256_HEADER.length).equals(SPKI_P256_HEADER) &&
+    bytes[SPKI_P256_HEADER.length] === 0x04
+  );
+}
+
+/**
+ * The login keychain of the account running this process, named by the passwd database. Never `HOME` (and so
+ * never `os.homedir()`, which reads it): a same-user process controls its own environment but not the passwd entry.
+ */
+function loginKeychainPath(): string | null {
+  try {
+    const home = userInfo().homedir;
+    return home.startsWith("/") ? join(home, LOGIN_KEYCHAIN_RELATIVE) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The comment attribute of `account`'s Keychain item, **without ever reading its secret** (plan 09-15,
+ * R-02; the ADR 0017 attribute-read pattern). The presence helper stores the base64 public key of its
+ * signing key there; the service reads it as the pin a presence signature is verified against.
+ *
+ * The argv is the attribute-only lookup of {@link hasSecret}: `find-generic-password -a <account> -s
+ * <service> <login keychain>`, no `-w` and no `-g`, so the secret is never read into this process and the
+ * helper-only item raises no prompt (spike: attr_read_silent). The login keychain is named explicitly
+ * (FIX6B B2): without it `security` walks the user's search list, which a same-user process can reorder to put
+ * a keychain holding a decoy item first. The output must also say the item came from exactly that keychain
+ * and carry exactly this account and service, so a decoy that survives any other way is still `null`. Only
+ * stdout is captured (capped at {@link READ_COMMENT_MAX_BYTES}); the value is returned only when it is
+ * canonical base64 of exactly a 91-byte P-256 SPKI (header and point format checked). A missing item (exit 44), a timeout, a kill, a cancel, any other failure, a missing
+ * comment and any other value are all `null`, never a guess. Only an unsafe `account` throws, before any
+ * process is spawned. Spawned directly (no shell) by absolute path and bounded by
+ * {@link HAS_SECRET_TIMEOUT_MS} with SIGKILL.
+ */
+export async function readItemComment(
+  account: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  assertSafeIdentifier(account, "account");
+  // A leading dash would read as a `security` option, not an account; no real account starts with one.
+  if (account.startsWith("-")) throw new UnsafeSecretInputError("account");
+  // A caller that has already given up gets no process at all.
+  if (signal?.aborted === true) return null;
+  const keychain = loginKeychainPath();
+  if (keychain === null) return null;
+  try {
+    const result = await execa(
+      SECURITY_BINARY,
+      ["find-generic-password", "-a", account, "-s", SERVICE_NAME, keychain],
+      {
+        reject: false,
+        timeout: HAS_SECRET_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+        maxBuffer: READ_COMMENT_MAX_BYTES,
+        ...(signal === undefined ? {} : { cancelSignal: signal }),
+      },
+    );
+    if (classifyPresenceResult(result) !== "present") return null;
+    const stdout: unknown = result.stdout;
+    if (typeof stdout !== "string") return null;
+    // The item must be the login keychain's, for exactly this account and service (FIX6B B2).
+    if (KEYCHAIN_LINE_PATTERN.exec(stdout)?.[1] !== keychain) return null;
+    if (ACCT_LINE_PATTERN.exec(stdout)?.[1] !== account) return null;
+    if (SVCE_LINE_PATTERN.exec(stdout)?.[1] !== SERVICE_NAME) return null;
+    const comment = COMMENT_LINE_PATTERN.exec(stdout)?.[1];
+    return comment !== undefined && isPinnedPublicKey(comment) ? comment : null;
+  } catch {
+    return null;
   }
 }
 

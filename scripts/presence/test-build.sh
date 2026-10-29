@@ -25,6 +25,30 @@ codesign --verify "${RT}/bin/ccc-presence" >/dev/null 2>&1 && check ok "signatur
 [ ! -e "${RT}/bin/ccc-presence.tmp" ] && check ok "no fixed .tmp leftover" || check no "no fixed .tmp leftover"
 [ -z "$(ls -A "${RT}/bin" | grep -v '^ccc-presence$')" ] && check ok "only the helper in bin/" || check no "only the helper in bin/"
 
+# FIX6B B1: the helper is the one binary the Keychain item trusts, so it must carry the hardened runtime. Without
+# it a same-user process can run the genuine binary with DYLD_INSERT_LIBRARIES and execute its own code inside the
+# trusted identity. Two checks: the signature flags name `runtime`, and a constructor dylib the test builds in the
+# mktemp dir is NOT loaded when inserted into the helper. The run uses only a bogus subcommand (usage exit, no
+# LocalAuthentication and no Keychain call).
+FLAGS=$(codesign -dvv "${RT}/bin/ccc-presence" 2>&1 | sed -n 's/^CodeDirectory .*flags=0x[0-9a-f]*(\(.*\)).*$/\1/p')
+case ",${FLAGS}," in
+  *,runtime,*) check ok "signature carries the hardened runtime flag (flags: ${FLAGS})" ;;
+  *) check no "signature carries the hardened runtime flag (flags: ${FLAGS})" ;;
+esac
+INJ="${WORK}/inject"
+mkdir -p "${INJ}"
+cat > "${INJ}/inject.c" <<'CEOF'
+#include <stdio.h>
+__attribute__((constructor)) static void ccc_injected(void) { fputs("CCC-INJECTED-MARKER\n", stderr); }
+CEOF
+if xcrun clang -dynamiclib -o "${INJ}/inject.dylib" "${INJ}/inject.c" >"${INJ}/clang.log" 2>&1; then
+  DYLD_INSERT_LIBRARIES="${INJ}/inject.dylib" "${RT}/bin/ccc-presence" bogus >"${INJ}/out" 2>&1
+  grep -q 'CCC-INJECTED-MARKER' "${INJ}/out" && check no "DYLD_INSERT_LIBRARIES code does not run inside the helper (the constructor ran)" || check ok "DYLD_INSERT_LIBRARIES code does not run inside the helper"
+  grep -q '"error":"usage"' "${INJ}/out" && check ok "the helper still runs normally (bogus subcommand: usage)" || check no "the helper still runs normally (got: $(cat "${INJ}/out"))"
+else
+  check no "the injection dylib builds ($(cat "${INJ}/clang.log"))"
+fi
+
 # F6a: runtime dir that cannot be created -> closed error line.
 : > "${WORK}/afile"
 CCC_RUNTIME_DIR="${WORK}/afile/sub" sh "${BUILD}" >"${WORK}/b2.out" 2>"${WORK}/b2.err"

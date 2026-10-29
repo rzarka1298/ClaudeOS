@@ -14,6 +14,7 @@ export {
   getSecret,
   HAS_SECRET_TIMEOUT_MS,
   hasSecret,
+  readItemComment,
   SERVICE_NAME,
   setSecret,
 } from "./security-cli.js";
