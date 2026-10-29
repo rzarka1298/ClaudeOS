@@ -13,8 +13,7 @@ import {
   type DecideResponse,
   newProposalId,
 } from "@ccc/domain";
-import { openStore } from "@ccc/operational-store";
-import type Database from "better-sqlite3";
+import { type OperationalStore, openStore } from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   authedRequest,
@@ -59,6 +58,9 @@ interface TestResponse {
   readonly proposalId: string;
 }
 
+/** The operational store's database handle, named without importing the SQLite binding. */
+type Db = OperationalStore["db"];
+
 type Row = Record<string, unknown>;
 
 /** A well-formed proof with the given MAC (the strict shape the service stores). */
@@ -77,7 +79,7 @@ function coveredFields(row: Row): ProofRowFields {
   };
 }
 
-function insertRow(db: Database.Database, row: Record<string, unknown>): void {
+function insertRow(db: Db, row: Record<string, unknown>): void {
   const columns = Object.keys(row);
   db.prepare(
     `INSERT INTO proposals (${columns.join(", ")}) VALUES (${columns.map((c) => `@${c}`).join(", ")})`,
@@ -109,11 +111,11 @@ function handMade(template: Row, kind: Kind, proof: string | null, label: string
   };
 }
 
-function rowOf(db: Database.Database, id: string): Row {
+function rowOf(db: Db, id: string): Row {
   return db.prepare("SELECT * FROM proposals WHERE proposal_id = ?").get(id) as Row;
 }
 
-function effectIds(db: Database.Database): string[] {
+function effectIds(db: Db): string[] {
   return (
     db.prepare("SELECT proposal_id FROM diagnostic_effects ORDER BY proposal_id").all() as {
       proposal_id: string;
@@ -122,9 +124,7 @@ function effectIds(db: Database.Database): string[] {
 }
 
 /** The result code of every attempt row; the claim writes one when it takes an approved row, so a refused row has one ended `proof-invalid`. */
-function attemptResults(
-  db: Database.Database,
-): { proposal_id: string; result_code: string | null }[] {
+function attemptResults(db: Db): { proposal_id: string; result_code: string | null }[] {
   return db.prepare("SELECT proposal_id, result_code FROM approval_executions").all() as {
     proposal_id: string;
     result_code: string | null;
