@@ -1,7 +1,8 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { type Clock, DEFAULT_HEARTBEAT_INTERVAL_MS, type ProjectId, type RunId } from "@ccc/domain";
-import { createSecurityCliSecretStore, hasSecret } from "@ccc/keychain";
+import { createSecurityCliSecretStore, hasSecret, readItemComment } from "@ccc/keychain";
 import {
   applyMigrations,
   createDiagnosticEffects,
@@ -14,6 +15,13 @@ import {
   readSchemaVersion,
 } from "@ccc/operational-store";
 import { approvalProofKey } from "./approval/index.js";
+import {
+  guardPinReader,
+  PRESENCE_PIN_INSTALL_MARKER,
+  PRESENCE_PIN_META_KEY,
+  pinReaderFromEnv,
+  presencePortFromEnv,
+} from "./approval-wiring/presence.js";
 import { createProposeForceTerminate } from "./approval-wiring/proposer.js";
 import { createProcessNamer, createRunInspector } from "./approval-wiring/run-inspector.js";
 import { createServiceApprovalLog, startApprovalServices } from "./approval-wiring/services.js";
@@ -358,6 +366,34 @@ async function main(): Promise<void> {
     db: store.db,
     processFacts: claudeServices.processFacts,
   });
+  // The owner-presence check (09-18, D-01, R-02): the real helper port and the pin reader, each built once.
+  // Under any test or sandbox environment (CCC_INSTALL_SECRET_ACCOUNT set) the port is the fail-closed one
+  // and the reader answers null without touching the Keychain. The pin reader is guarded: it records the
+  // SHA-256 of the first pin it sees and refuses a changed one outside an install (presence-pin-changed).
+  const presenceMarkerPath = join(runtimeDir, PRESENCE_PIN_INSTALL_MARKER);
+  const presencePort = presencePortFromEnv(process.env, runtimeDir, {
+    runner: commandRunner,
+    exists: existsSync,
+    homeDir,
+  });
+  const presencePinReader = guardPinReader({
+    read: pinReaderFromEnv(process.env, readItemComment),
+    recorded: {
+      get: () => store.readServiceMeta(PRESENCE_PIN_META_KEY),
+      set: (sha256Hex) => store.writeServiceMeta(PRESENCE_PIN_META_KEY, sha256Hex),
+    },
+    installMarker: {
+      present: () => existsSync(presenceMarkerPath),
+      clear: () => {
+        try {
+          unlinkSync(presenceMarkerPath);
+        } catch {
+          // Already gone: the marker is single-use either way.
+        }
+      },
+    },
+    log: approvalLog,
+  });
   const approvals = startApprovalServices({
     db: store.db,
     definitions: [
@@ -376,6 +412,8 @@ async function main(): Promise<void> {
     log: approvalLog,
     env: process.env,
     proofKey: approvalDecisionProofKey,
+    presence: presencePort,
+    readPin: presencePinReader,
     projectName: (projectId) => getProject(store.db, projectId as ProjectId)?.displayName ?? null,
   });
   const recovered = await approvals.recover();

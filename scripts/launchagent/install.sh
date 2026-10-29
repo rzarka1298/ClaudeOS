@@ -96,6 +96,11 @@ if [ "${REPLACE_PRESENCE}" -eq 1 ]; then
     run_helper enrol
     if [ "${helper_rc}" -ne 0 ]; then
       echo "WARNING: the presence helper could not enrol its signing key (${helper_out}); connector-class approvals will be refused until it does (Diagnostics shows it)." >&2
+    else
+      # 09-18: the install is the one legitimate writer of the pin. Leave a marker the service consumes on
+      # its next pin read, so a pin that differs from the one it recorded is adopted ONCE for this install
+      # and refused (presence-pin-changed) at any other time. The marker holds nothing.
+      : > "${RUNTIME_DIR}/presence-pin-installed"
     fi
   fi
 fi

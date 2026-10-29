@@ -1,6 +1,8 @@
 // The presence helper adapter (plan 09-15, D-01, R-02). Every test runs the adapter against the FAKE
 // helper (test-support/fake-presence-helper.mjs): a node script copied to a temporary absolute path as
 // `ccc-presence`. No test spawns the owner's real helper, shows a prompt or reads a Keychain item (T-09-33).
+
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -27,10 +29,13 @@ import {
 } from "../projects/command-runner.js";
 import {
   createHelperPresencePort,
+  guardPinReader,
   PRESENCE_CHECK_TIMEOUT_MS,
   PRESENCE_HELPER_KILL_MS,
   PRESENCE_HELPER_MAX_OUTPUT_BYTES,
+  PRESENCE_PIN_ACCOUNT,
   type PresenceCustody,
+  pinReaderFromEnv,
   presencePortFromEnv,
 } from "./presence.js";
 
@@ -493,5 +498,163 @@ describe("09-15 Task 1 Test 5: a sandbox or test environment gets the fail-close
     expect(() =>
       presencePortFromEnv({}, "relative/dir", { runner, exists: () => true, homeDir: HOME }),
     ).toThrow(/absolute/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-18 Task 3: the pin reader and the pin-change guard
+
+describe("pinReaderFromEnv (09-18 Task 3, Test 1)", () => {
+  it("answers null and never reads the Keychain when CCC_INSTALL_SECRET_ACCOUNT is set", async () => {
+    let calls = 0;
+    const read = pinReaderFromEnv({ CCC_INSTALL_SECRET_ACCOUNT: "x" }, async () => {
+      calls += 1;
+      return "pin";
+    });
+    expect(await read()).toBeNull();
+    expect(await read()).toBeNull();
+    expect(calls).toBe(0);
+  });
+
+  it("without the variable reads the pin item once per read", async () => {
+    const seen: string[] = [];
+    const read = pinReaderFromEnv({}, async (account) => {
+      seen.push(account);
+      return "the-pin";
+    });
+    expect(await read()).toBe("the-pin");
+    expect(await read()).toBe("the-pin");
+    expect(seen).toEqual(["approval-presence-pin", "approval-presence-pin"]);
+    expect(PRESENCE_PIN_ACCOUNT).toBe("approval-presence-pin");
+  });
+
+  it("treats a throwing reader as no pin", async () => {
+    const read = pinReaderFromEnv({}, async () => {
+      throw new Error("keychain down");
+    });
+    expect(await read()).toBeNull();
+  });
+});
+
+describe("guardPinReader: trust on first use and refusal of a changed pin (spike: Residual, detection)", () => {
+  const sha = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+  function setup(initialRecorded: string | null = null, markerPresent = false) {
+    let current: string | null = "pin-one";
+    let recorded = initialRecorded;
+    let marker = markerPresent;
+    const lines: { level: "info" | "warn"; fields: Record<string, unknown> }[] = [];
+    const read = guardPinReader({
+      read: async () => current,
+      recorded: {
+        get: () => recorded,
+        set: (v) => {
+          recorded = v;
+        },
+      },
+      installMarker: {
+        present: () => marker,
+        clear: () => {
+          marker = false;
+        },
+      },
+      log: {
+        info: (fields) => void lines.push({ level: "info", fields }),
+        warn: (fields) => void lines.push({ level: "warn", fields }),
+      },
+    });
+    return {
+      read,
+      lines,
+      set: (pin: string | null) => {
+        current = pin;
+      },
+      recorded: () => recorded,
+      marker: () => marker,
+      touchMarker: () => {
+        marker = true;
+      },
+    };
+  }
+
+  it("records the SHA-256 of the first pin it sees and returns it", async () => {
+    const g = setup();
+    expect(await g.read()).toBe("pin-one");
+    expect(g.recorded()).toBe(sha("pin-one"));
+  });
+
+  it("returns the same pin on later reads and records nothing more", async () => {
+    const g = setup(sha("pin-one"));
+    expect(await g.read()).toBe("pin-one");
+    expect(g.lines).toEqual([]);
+  });
+
+  it("refuses a changed pin outside an install, with one closed presence-pin-changed warning per change", async () => {
+    const g = setup(sha("pin-one"));
+    g.set("pin-two");
+    expect(await g.read()).toBeNull();
+    expect(await g.read()).toBeNull();
+    expect(g.recorded()).toBe(sha("pin-one"));
+    expect(g.lines).toEqual([{ level: "warn", fields: { code: "presence-pin-changed" } }]);
+    // Only the pin it was trusted to hold is accepted again.
+    g.set("pin-one");
+    expect(await g.read()).toBe("pin-one");
+  });
+
+  it("adopts a changed pin once, when an install left its marker, and clears the marker", async () => {
+    const g = setup(sha("pin-one"), true);
+    g.set("pin-two");
+    expect(await g.read()).toBe("pin-two");
+    expect(g.recorded()).toBe(sha("pin-two"));
+    expect(g.marker()).toBe(false);
+    expect(g.lines).toEqual([{ level: "info", fields: { code: "presence-pin-adopted" } }]);
+    // The marker was used up: a later change is refused again.
+    g.set("pin-three");
+    expect(await g.read()).toBeNull();
+  });
+
+  it("an install marker is cleared on the first sight of a pin too (no standing permission)", async () => {
+    const g = setup(null, true);
+    expect(await g.read()).toBe("pin-one");
+    expect(g.recorded()).toBe(sha("pin-one"));
+    expect(g.marker()).toBe(false);
+    g.touchMarker();
+    expect(await g.read()).toBe("pin-one");
+    expect(g.marker()).toBe(false);
+  });
+
+  it("no pin means no pin: nothing is recorded, adopted or warned about", async () => {
+    const g = setup(sha("pin-one"), true);
+    g.set(null);
+    expect(await g.read()).toBeNull();
+    expect(g.recorded()).toBe(sha("pin-one"));
+    expect(g.marker()).toBe(true);
+    expect(g.lines).toEqual([]);
+  });
+
+  it("never logs the pin or its hash", async () => {
+    const g = setup(sha("pin-one"));
+    g.set("pin-two");
+    await g.read();
+    const text = JSON.stringify(g.lines);
+    expect(text).not.toContain("pin-one");
+    expect(text).not.toContain("pin-two");
+    expect(text).not.toContain(sha("pin-one"));
+    expect(text).not.toContain(sha("pin-two"));
+  });
+
+  it("fails closed when the recorded value cannot be read or written", async () => {
+    const read = guardPinReader({
+      read: async () => "pin-one",
+      recorded: {
+        get: () => {
+          throw new Error("db down");
+        },
+        set: () => undefined,
+      },
+      installMarker: { present: () => false, clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+    });
+    expect(await read()).toBeNull();
   });
 });

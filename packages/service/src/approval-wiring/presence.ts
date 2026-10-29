@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import {
+  type ApprovalLog,
   PAYLOAD_HASH_PATTERN,
   PRESENCE_PROMPT_TIMEOUT_MS,
   PROPOSAL_ID_PATTERN,
@@ -268,4 +270,105 @@ export function presencePortFromEnv(
     custody: deps.custody ?? RECORDED_PRESENCE_CUSTODY,
     ...(deps.killMs === undefined ? {} : { killMs: deps.killMs }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// The pin (09-18, R-02): the public key a presence signature is verified against
+
+/** The Keychain account of the helper-only pin item (service `com.claude-command-center`). */
+export const PRESENCE_PIN_ACCOUNT = "approval-presence-pin";
+
+/** Reads the pin (base64 SPKI), or null when there is none or it cannot be read. Never throws. */
+export type PinReader = () => Promise<string | null>;
+
+/**
+ * The pin reader for a running service: one attribute-only read of `approval-presence-pin` per call, never on a
+ * timer. Under any test or sandbox environment (`CCC_INSTALL_SECRET_ACCOUNT` set, the same switch as
+ * {@link presencePortFromEnv}) it answers null and never calls `read`, so no test reaches the Keychain (T-09-33).
+ */
+export function pinReaderFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  read: (account: string) => Promise<string | null>,
+): PinReader {
+  if (env.CCC_INSTALL_SECRET_ACCOUNT !== undefined) return async () => null;
+  return async () => {
+    try {
+      return await read(PRESENCE_PIN_ACCOUNT);
+    } catch {
+      return null;
+    }
+  };
+}
+
+/** The `service_meta` key the SHA-256 of the pin the service trusts is kept under. */
+export const PRESENCE_PIN_META_KEY = "presence_pin_sha256";
+
+/** The file the install script leaves in the runtime directory after it enrols a key (consumed by the guard). */
+export const PRESENCE_PIN_INSTALL_MARKER = "presence-pin-installed";
+
+export interface PinGuardDeps {
+  /** The raw pin reader (see {@link pinReaderFromEnv}). */
+  readonly read: PinReader;
+  /** The SHA-256 (lowercase hex) of the pin the service trusts; null before it has seen one. */
+  readonly recorded: {
+    get(): string | null;
+    set(sha256Hex: string): void;
+  };
+  /** Whether the install script has enrolled a key since the marker was last cleared. */
+  readonly installMarker: {
+    present(): boolean;
+    clear(): void;
+  };
+  readonly log: Pick<ApprovalLog, "info" | "warn">;
+}
+
+/**
+ * Detection for the delete-and-recreate residual (09-PRESENCE-SPIKE.md, "Residual"): trust on first use.
+ *
+ * - The first pin the service sees is recorded as its SHA-256 and returned.
+ * - A later read equal to the record is returned as is.
+ * - A later read that DIFFERS is accepted only when the install script left its marker (the install is the one
+ *   legitimate writer of the pin item): the new hash is recorded, the marker used up, `presence-pin-adopted` is
+ *   logged. Otherwise the pin is NOT returned (null, so presence signatures cannot verify and presence-required
+ *   rows fail closed) and the closed warning `presence-pin-changed` is logged once for each distinct changed
+ *   pin per process. Nothing else is logged: never the pin and never its hash.
+ *
+ * The marker is cleared on any read that sees a pin, so it is never a standing permission. This is detection,
+ * not prevention: a same-user process that can also write the marker file and the service store can still
+ * replace the record, which is why the spike keeps the verdict at partially met.
+ */
+export function guardPinReader(deps: PinGuardDeps): PinReader {
+  const warned = new Set<string>();
+  return async () => {
+    try {
+      const pin = await deps.read();
+      if (pin === null) return null;
+      const fingerprint = createHash("sha256").update(pin, "utf8").digest("hex");
+      const recorded = deps.recorded.get();
+      const installing = deps.installMarker.present();
+      if (recorded === null) {
+        deps.recorded.set(fingerprint);
+        if (installing) deps.installMarker.clear();
+        return pin;
+      }
+      if (recorded === fingerprint) {
+        if (installing) deps.installMarker.clear();
+        return pin;
+      }
+      if (installing) {
+        deps.recorded.set(fingerprint);
+        deps.installMarker.clear();
+        deps.log.info({ code: "presence-pin-adopted" });
+        return pin;
+      }
+      if (!warned.has(fingerprint)) {
+        warned.add(fingerprint);
+        deps.log.warn({ code: "presence-pin-changed" });
+      }
+      return null;
+    } catch {
+      // A record that cannot be read or written proves nothing about the pin: no pin.
+      return null;
+    }
+  };
 }

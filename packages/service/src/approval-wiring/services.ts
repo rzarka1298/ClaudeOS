@@ -60,9 +60,16 @@ export interface ApprovalRuntimeDeps {
   readonly projectName?: (projectId: string) => string | null;
   /**
    * Verifies the owner's presence for presence-required approvals (D-01). Absent, the engine's
-   * default answers `unavailable`, so every such approval fails closed. The real helper adapter is wired by 09-18.
+   * default answers `unavailable`, so every such approval fails closed. `main.ts` builds the real helper adapter
+   * (`presencePortFromEnv`); every test and sandbox service gets the fail-closed port.
    */
   readonly presence?: PresencePort;
+  /**
+   * Reads the pin a presence signature is verified against (09-18, R-02): `main.ts` builds it with
+   * `pinReaderFromEnv`, guarded by `guardPinReader`. Absent, the engine's default answers null, so every
+   * presence-required approval and stored row fails closed.
+   */
+  readonly readPin?: () => Promise<string | null>;
   /** Replaces the vault mirror (tests only). */
   readonly mirror?: MirrorPort;
   /** Replaces the sweeper's timers (tests only). */
@@ -154,6 +161,7 @@ export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntim
     proofKey: deps.proofKey,
     ...(projectName === undefined ? {} : { projectName }),
     ...(deps.presence === undefined ? {} : { presence: deps.presence }),
+    ...(deps.readPin === undefined ? {} : { readPin: deps.readPin }),
   });
   const sweeper = createExpirySweeper({
     engine,
