@@ -90,6 +90,12 @@ describe("the locked strings (UI-SPEC Copywriting Contract, Test 8)", () => {
       "Couldn't send your decision: the companion service didn't respond within 5 seconds. Checking whether it went through…",
     );
     expect(APPROVAL_STATUS.notThrough).toBe("It did not go through. You can decide again.");
+    expect(APPROVAL_STATUS.presenceDenied).toBe(
+      "Approving this needs your Touch ID or password, and it wasn't given. Nothing was changed.",
+    );
+    expect(APPROVAL_STATUS.presenceUnavailable).toBe(
+      "Approving this needs your Touch ID or password, and that check isn't available on this Mac right now. Nothing was changed.",
+    );
     expect(APPROVAL_STATUS.confirmFailed).toBe(
       "Couldn't confirm whether your decision went through. Refresh the list before deciding again.",
     );

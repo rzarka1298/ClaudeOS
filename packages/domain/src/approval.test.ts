@@ -544,6 +544,8 @@ describe("routes and schemas (Test 6)", () => {
         "hash-mismatch",
         "not-found",
         "operation-reserved",
+        "presence-denied",
+        "presence-unavailable",
       ].sort(),
     );
     const good: unknown[] = [
@@ -553,6 +555,8 @@ describe("routes and schemas (Test 6)", () => {
       { outcome: "already-decided", state: "denied" },
       { outcome: "not-found" },
       { outcome: "operation-reserved" },
+      { outcome: "presence-denied" },
+      { outcome: "presence-unavailable" },
     ];
     for (const body of good) {
       expect(DecideResponseSchema.safeParse(body).success, JSON.stringify(body)).toBe(true);
@@ -562,6 +566,8 @@ describe("routes and schemas (Test 6)", () => {
       { outcome: "decided" },
       { outcome: "already-decided", state: "nope" },
       { outcome: "hash-mismatch", detail: "x" },
+      { outcome: "presence-denied", reason: "x" },
+      { outcome: "presence-unavailable", reason: "x" },
       {},
     ]) {
       expect(DecideResponseSchema.safeParse(body).success, JSON.stringify(body)).toBe(false);

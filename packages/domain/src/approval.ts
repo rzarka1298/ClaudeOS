@@ -470,6 +470,14 @@ export function fitApprovalsSnapshotToBudget(
 // ---------------------------------------------------------------------------
 // Decide response and errors
 
+/**
+ * How long the presence helper may show its Touch ID or password prompt, in milliseconds
+ * (D-01, APPR-11). The single source: the helper adapter's prompt ceiling and the client's
+ * decide timeout both derive from it, so a decide call is never cut off while the owner is
+ * still at the prompt.
+ */
+export const PRESENCE_PROMPT_TIMEOUT_MS = 60_000;
+
 /** Every way a decision can end, as the service reports it. */
 export const APPROVAL_DECIDE_OUTCOMES = [
   "decided",
@@ -478,6 +486,8 @@ export const APPROVAL_DECIDE_OUTCOMES = [
   "already-decided",
   "not-found",
   "operation-reserved",
+  "presence-denied",
+  "presence-unavailable",
 ] as const;
 export type ApprovalDecideOutcome = (typeof APPROVAL_DECIDE_OUTCOMES)[number];
 
@@ -488,6 +498,10 @@ export const DecideResponseSchema = z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("already-decided"), state: ProposalStateSchema }),
   z.strictObject({ outcome: z.literal("not-found") }),
   z.strictObject({ outcome: z.literal("operation-reserved") }),
+  // A connector-class approval whose presence check was not passed (D-01, D-03). The request
+  // stays pending, nothing ran. Neither carries a member: the plugin owns the words.
+  z.strictObject({ outcome: z.literal("presence-denied") }),
+  z.strictObject({ outcome: z.literal("presence-unavailable") }),
 ]);
 export type DecideResponse = z.infer<typeof DecideResponseSchema>;
 
