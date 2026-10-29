@@ -30,6 +30,9 @@ import {
   type SubmitResult,
 } from "@ccc/domain";
 
+/** The longest decision proof the SQL store accepts; this double mirrors it. */
+const MAX_DECISION_PROOF_CHARS = 2048;
+
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 interface Row extends Mutable<StoredProposal> {
@@ -262,6 +265,15 @@ export function createMemoryApprovalStore(
       calls.push("decide");
       if (input.approvedAt !== undefined && input.approvedAt > input.now) {
         throw new Error("invalid approval input: approvedAt");
+      }
+      // Mirrors the SQL store's input check: an opaque text of 1 to 2048 characters, or absent.
+      if (
+        input.decisionProof !== undefined &&
+        (typeof input.decisionProof !== "string" ||
+          input.decisionProof.length === 0 ||
+          input.decisionProof.length > MAX_DECISION_PROOF_CHARS)
+      ) {
+        throw new Error("invalid approval input: decisionProof");
       }
       const row = rows.get(input.proposalId);
       if (!row) return { kind: "not-found" };

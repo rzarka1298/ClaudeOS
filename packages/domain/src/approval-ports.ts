@@ -110,6 +110,8 @@ export interface DecideInput {
    * The decision proof for an approving decision (09-16, D-03), made by the service for exactly this
    * row, instant and channel. Written only when approving and only in the update that moves the row to
    * approved; ignored on a deny. Absent, an approved row is stored with no proof and fails verification.
+   * The store treats it as opaque text of 1 to 2048 characters and validates nothing else; the service
+   * checks its shape and MAC.
    */
   readonly decisionProof?: string;
 }

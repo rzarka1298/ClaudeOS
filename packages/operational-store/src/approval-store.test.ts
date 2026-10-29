@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,6 +27,7 @@ import {
   createApprovalStore,
   createDiagnosticEffects,
   InvalidApprovalInputError,
+  InvalidApprovalRowError,
 } from "./approval-store.js";
 import { applyMigrations } from "./migrate.js";
 import {
@@ -2319,6 +2327,55 @@ describe("decision proof, write-once trigger (09-16 Test 2)", () => {
     const stored = store.get(proposal.proposalId);
     expect(stored?.payloadJson).toBeNull();
     expect(stored?.decisionProof).toBe(PROOF);
+  });
+});
+
+describe("decision proof, a pending row inserted with a proof (09-FIX7)", () => {
+  /** A pending row a same-user process inserted with a non-NULL proof: INSERT is not guarded by the write-once trigger. */
+  function poisonedPending(): NewProposal {
+    const proposal = submitPending();
+    db.exec("DROP TRIGGER IF EXISTS proposals_decision_proof_write_once");
+    db.prepare("UPDATE proposals SET decision_proof = ? WHERE proposal_id = ?").run(
+      PROOF,
+      proposal.proposalId,
+    );
+    db.exec(
+      readFileSync(join(REAL_MIGRATIONS_DIR, "0013_approval_decision_proof.sql"), "utf8").slice(
+        readFileSync(join(REAL_MIGRATIONS_DIR, "0013_approval_decision_proof.sql"), "utf8").indexOf(
+          "CREATE TRIGGER",
+        ),
+      ),
+    );
+    return proposal;
+  }
+
+  it("a deny still works and does not raise the trigger", () => {
+    const proposal = poisonedPending();
+    const result = store.decide(decideInput(proposal, { decision: "deny" }));
+    expect(result.kind).toBe("denied");
+    expect(rowOf(proposal.proposalId).state).toBe("denied");
+  });
+
+  it("an approve fails with the structured row error, writes nothing and leaves the row pending", () => {
+    const proposal = poisonedPending();
+    const auditBefore = auditRows(proposal.proposalId).length;
+    let thrown: unknown;
+    try {
+      store.decide(decideInput(proposal, { decisionProof: OTHER_PROOF }));
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(InvalidApprovalRowError);
+    expect(String((thrown as Error).message)).toContain("decision_proof");
+    expect(rowOf(proposal.proposalId).state).toBe("pending");
+    expect(auditRows(proposal.proposalId)).toHaveLength(auditBefore);
+  });
+
+  it("expiry and withdraw of such a row are unaffected", () => {
+    const expiring = poisonedPending();
+    expect(store.decide(decideInput(expiring, { now: at(2 * HOUR) })).kind).toBe("expired");
+    const withdrawn = poisonedPending();
+    expect(store.withdraw(withdrawn.proposalId, at(3_000))?.state).toBe("withdrawn");
   });
 });
 

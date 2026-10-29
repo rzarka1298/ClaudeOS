@@ -309,6 +309,36 @@ describe("the proof over the store port (Test 3, tracer)", () => {
     expect(b && verifyDecisionProof(KEY, b)).toBe("invalid");
   });
 
+  it("mirrors the SQL store's input check: an empty, non-string or oversized proof throws and writes nothing", () => {
+    const store = createMemoryApprovalStore();
+    const proposal = newPending("diagnostic.test", "bad");
+    store.submit(proposal, { perOperation: 25, total: 50 });
+    for (const bad of ["", 7 as unknown as string, "x".repeat(2049)]) {
+      expect(() =>
+        store.decide({
+          proposalId: proposal.proposalId,
+          decision: "approve",
+          expectedHash: proposal.payloadHash,
+          now: T2,
+          via: "plugin",
+          decisionProof: bad,
+        }),
+      ).toThrow(/decisionProof/);
+    }
+    expect(store.get(proposal.proposalId)?.state).toBe("pending");
+    // The boundary lengths are accepted.
+    expect(
+      store.decide({
+        proposalId: proposal.proposalId,
+        decision: "approve",
+        expectedHash: proposal.payloadHash,
+        now: T2,
+        via: "plugin",
+        decisionProof: "x".repeat(2048),
+      }).kind,
+    ).toBe("approved");
+  });
+
   it("stores null on a deny, on a pending row and on an approve given no proof", () => {
     const store = createMemoryApprovalStore();
     const denied = newPending("diagnostic.test", "denied");

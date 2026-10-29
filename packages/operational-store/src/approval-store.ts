@@ -249,7 +249,7 @@ function isAuditEvent(value: string): value is ApprovalAuditEvent {
 
 const BUCKETS = ["pending", "decided", "expired"] as const satisfies readonly ApprovalBucket[];
 
-/** The longest decision proof the store accepts, in characters. */
+/** The longest decision proof the store accepts, in characters. The store checks length only; the proof is opaque to it. */
 const MAX_DECISION_PROOF_CHARS = 2048;
 
 /** The most audit events one read returns; a request never has more than a handful. */
@@ -346,10 +346,19 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     `UPDATE proposals SET state = 'expired', decided_at = @now, revision = revision + 1
      WHERE proposal_id = @proposalId AND state = 'pending'`,
   );
-  const decideOne = db.prepare(
+  // Approve and deny are two statements so a deny never names `decision_proof`: `UPDATE OF` fires on a
+  // named column even for a no-op assignment, and a pending row that arrived with a proof (INSERT is not
+  // guarded by the write-once trigger) must still be deniable.
+  const approveOne = db.prepare(
     `UPDATE proposals
-     SET state = @state, approved_at = @approvedAt, decided_at = @now, decided_via = @via,
+     SET state = 'approved', approved_at = @approvedAt, decided_at = @now, decided_via = @via,
          decision_proof = @decisionProof, revision = revision + 1
+     WHERE proposal_id = @proposalId AND state = 'pending'`,
+  );
+  const denyOne = db.prepare(
+    `UPDATE proposals
+     SET state = 'denied', approved_at = NULL, decided_at = @now, decided_via = @via,
+         revision = revision + 1
      WHERE proposal_id = @proposalId AND state = 'pending'`,
   );
 
@@ -529,15 +538,20 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
     if (!hashesEqual(input.expectedHash, row.payload_hash)) return { kind: "hash-mismatch" };
 
     const approve = input.decision === "approve";
-    const changed = decideOne.run({
-      proposalId: row.proposal_id,
-      state: approve ? "approved" : "denied",
-      approvedAt: approve ? (input.approvedAt ?? input.now) : null,
-      now: input.now,
-      via: input.via,
-      // Written only in the approving update (D-03); a proof handed to a deny is ignored.
-      decisionProof: approve ? (input.decisionProof ?? null) : null,
-    });
+    // A pending row must carry no proof. One that does was written by something other than this store,
+    // and the write-once trigger would abort the approving update with a raw SQLite error: refuse it
+    // with the row error instead, leaving the row pending (it can still be denied, expired or withdrawn).
+    if (approve && row.decision_proof !== null) throw new InvalidApprovalRowError("decision_proof");
+    const changed = approve
+      ? approveOne.run({
+          proposalId: row.proposal_id,
+          approvedAt: input.approvedAt ?? input.now,
+          now: input.now,
+          via: input.via,
+          // Written only in the approving update (D-03).
+          decisionProof: input.decisionProof ?? null,
+        })
+      : denyOne.run({ proposalId: row.proposal_id, now: input.now, via: input.via });
     if (changed.changes !== 1) return currentStateResult(row.proposal_id);
     writeAudit(
       row.proposal_id,
@@ -727,7 +741,9 @@ export function createApprovalStore(db: Database.Database): ApprovalStore {
         if (input.approvedAt > input.now) throw new InvalidApprovalInputError("approvedAt");
       }
       if (input.decisionProof !== undefined) {
-        // A proof is a short JSON text (about 110 characters today); a bound keeps a bad caller from stuffing the row.
+        // The store treats the proof as opaque text and checks its length only (a proof is about 110
+        // characters today; the bound keeps a bad caller from stuffing the row). Its strict shape and its
+        // MAC are the service's to check (the engine verifies before executing, 09-17), never the store's.
         if (
           typeof input.decisionProof !== "string" ||
           input.decisionProof.length === 0 ||
