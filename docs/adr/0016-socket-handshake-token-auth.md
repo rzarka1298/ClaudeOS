@@ -76,3 +76,6 @@ A hardening decision (a native presence check or peer-process identification) is
 Calendar connectors land. This token layer is not that decision and must not be cited as closing it.
 
 The handshake is unauthenticated beyond the socket permission, so a same-user process needs only socket access to obtain a token. A same-user process able to write the SQLite file could also insert an approved row that recovery would run after a restart; this is the same accepted class, to be named at the milestone 2 hardening gate.
+
+Phase 9 took that hardening decision for connector-class writes: a presence check by a native helper, with the token still not
+the decision, and the record of it, including the residual a same-user process keeps, is the one titled "Connector-class approvals need the owner's presence: a helper asks for Touch ID or the password and signs with a key only it can read, the service verifies that signature against a pinned public key, and what a same-user process can still do is stated in plain words".

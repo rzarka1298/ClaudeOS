@@ -1065,3 +1065,97 @@ describe("09-20 Task 1: the presence decision record", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 09-20 Task 2: the Phase 6 records point at the hardening
+
+describe("09-20 Task 2: the Phase 6 records point at the hardening", () => {
+  const phase9 = (): string => flat(section(approvalAdr(), "## Phase 9 hardening"));
+  const HANDSHAKE_NOTE = "## Note: the approval engine and the same-user limitation";
+
+  it("Test 1: ADR 0026 has a Phase 9 hardening section after the Milestone 2 gate", () => {
+    const text = approvalAdr().text;
+    expect(text.indexOf("\n## Milestone 2 gate")).toBeGreaterThan(0);
+    expect(text.indexOf("\n## Phase 9 hardening")).toBeGreaterThan(
+      text.indexOf("\n## Milestone 2 gate"),
+    );
+    const body = phase9();
+    expect(body).toContain(presenceAdr().title);
+    expect(body).toMatch(/connector-class[^.]*approvals?[^.]*need[^.]*verified presence proof/i);
+    expect(body).toMatch(/approved rows? carr(y|ies)[^.]*proof[^.]*recovery and (the )?claim/i);
+    expect(body).toMatch(/cause[^.]*prompt[^.]*cannot answer/i);
+    expect(body).toMatch(/replace[^.]*helper/i);
+    expect(body).toMatch(/install secret[^.]*MAC[^.]*detection/i);
+    expect(body).toMatch(/debugger|code injection/i);
+    expect(body).toMatch(/out of scope/i);
+    expect(body).toMatch(/delete[^.]*recreate/i);
+    expect(body).toMatch(/3 per minute[^.]*pending requests/i);
+    expect(body).toMatch(/`presence-budget`/);
+    expect(body).toMatch(/`attr_delete_prompts`/);
+    expect(body).toMatch(/detection, not prevention/i);
+    expect(body).toMatch(/force-terminate[^.]*(unchanged|stands)/i);
+    expect(body).not.toMatch(/cannot forge|unforgeable|cannot be bypassed/i);
+  });
+
+  it("Test 1b: the section reports criterion 2 as partially met in the same words as the decision record", () => {
+    const sentence =
+      /(Roadmap success criterion 2 is partially met: .*?not a proof against every same-user process\.)/.exec(
+        flat(presenceAdr().text),
+      )?.[1];
+    expect(sentence).toBeDefined();
+    expect(phase9()).toContain((sentence as string).trim());
+  });
+
+  it("Test 1c: the Milestone 2 gate and the residual-risk sections point forward without losing a word", () => {
+    const gate = flat(section(approvalAdr(), "## Milestone 2 gate"));
+    expect(gate).toMatch(/Phase 9[^.]*Phase 9 hardening/i);
+    const risk = flat(section(approvalAdr(), "## Residual risk: same-user self-approval"));
+    expect(risk).toMatch(/Phase 9[^.]*Phase 9 hardening/i);
+  });
+
+  it("Test 2: the handshake record's note ends with a sentence naming the presence record, original text unchanged", () => {
+    const file = adrFileContaining(HANDSHAKE_LAST_LINE);
+    const text = parseAdr(file).text;
+    const note = flat(text.split(HANDSHAKE_NOTE)[1] ?? "");
+    expect(note).toContain(
+      "This token layer is not that decision and must not be cited as closing it.",
+    );
+    const last =
+      note
+        .trim()
+        .split(/(?<=\.)\s+/)
+        .pop() ?? "";
+    expect(last).toContain(presenceAdr().title);
+    expect(last).toMatch(/Phase 9/);
+    expect(note).toContain(
+      "A same-user process able to write the SQLite file could also insert an approved row that recovery would run after a restart;",
+    );
+  });
+
+  it.skipIf(!existsSync(join(REPO_ROOT, ".planning", "deferred-items.md")))(
+    "Test 3: the deferred-items row keeps its milestone 1 wording and records the Phase 9 resolution",
+    () => {
+      const row = flat(
+        readFileSync(join(REPO_ROOT, ".planning", "deferred-items.md"), "utf8")
+          .split("\n")
+          .filter((line) => /self-approval/i.test(line) && line.startsWith("|"))
+          .join(" "),
+      );
+      expect(row).toMatch(/accepted for milestone 1/i);
+      expect(row).toMatch(
+        /hardening decision[^.|]*required[^.|]*before[^.|]*Gmail and Calendar connectors/i,
+      );
+      expect(row).toContain(approvalAdr().title);
+      expect(row).toMatch(/resolved in Phase 9/i);
+      expect(row).toContain(presenceAdr().title);
+      expect(row).toMatch(/partially met/i);
+      expect(row).not.toMatch(/cannot forge|unforgeable/i);
+    },
+  );
+
+  it("Test 4: the three edited Phase 6 records use placeholders only", () => {
+    expect(approvalAdr().text).not.toMatch(HOME_PATH);
+    expect(parseAdr(adrFileContaining(HANDSHAKE_LAST_LINE)).text).not.toMatch(HOME_PATH);
+    expect(presenceAdr().text).not.toMatch(HOME_PATH);
+  });
+});

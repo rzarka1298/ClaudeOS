@@ -258,6 +258,8 @@ untrusted: it is neutralised and length-capped by the service, rendered as text 
 
 ## Residual risk: same-user self-approval
 
+Added in Phase 9; the text below is the milestone 1 record and is unchanged. Phase 9 answered part of it for connector-class writes, and the section Phase 9 hardening at the end of this record says what remains.
+
 A prompt-injected agent running as the same user could open the service socket, submit a force-terminate request and decide
 it itself. The socket's `0600` permission keeps other users and browsers out (ADR 0001) but does not separate two processes of
 the same user, and ADR 0016 already says so. The decision route has no cheap in-process fix: peer-process identification or a
@@ -306,6 +308,8 @@ operations that cannot be undone and that act outside this machine, so the accep
 decision must choose a native presence check at decide time or peer-process identification on the socket, or record why neither
 is needed. This requirement is also recorded in ADR 0016 and in the deferred-items record, so it cannot be forgotten.
 
+Phase 9 took this decision for connector-class writes: a native presence check, recorded in the section Phase 9 hardening below and in ADR 0032. The gate is answered in part, not closed against every same-user process.
+
 ## Considered Options
 
 **Visual-only expiry.** Rejected. A request that only looks expired in the interface can still be approved through the
@@ -335,3 +339,46 @@ signing and distribution story for a risk the owner accepted. It is required bef
 - An `unknown` request is permanent. It tells the owner the truth (the outcome could not be confirmed) at the cost of a request
   that never resolves to success or failure.
 - Mirror notes accumulate with no deletion path. The folder index growth is the only cost at milestone 1 volumes.
+
+## Phase 9 hardening
+
+Added in Phase 9; every sentence above is unchanged and remains the record for operations that need no presence. The hardening
+decision the Milestone 2 gate asked for is recorded in the record titled "Connector-class approvals need the owner's presence: a helper asks for Touch ID or the password and signs with a key only it can read, the service verifies that signature against a pinned public key, and what a same-user process can still do is stated in plain words" (ADR 0032). This section states what it
+changes in this record and, in plain words, what it leaves.
+
+What changed:
+
+- Connector-class approvals now need a verified presence proof. Approving a request whose classification row has
+  `presence: required` is accepted only when the presence helper has asked the owner for Touch ID or the password and returned
+  a signature that verifies, against a public key pinned in a helper-only Keychain item, over the exact approval. The decision
+  channel of such a row is `presence`, written only by the engine after that check. Denying never needs presence.
+  `session.force-terminate` is unchanged, and the Phase 6 acceptance for it stands.
+- Approved rows carry a proof (the `decision_proof` column: a MAC, and for a presence-required row a signature as well) that is
+  checked at recovery and the claim, and again at the last gate before execution. A row without a valid proof is never
+  reconciled, retried, claimed or run; it is finished `failed` (approved rows) or `unknown` (executing rows) with the code
+  `proof-invalid`. This answers the second fact in the residual risk above, a same-user writer inserting an approved row into
+  the SQLite file, for every row that needs presence; for a row that needs none, the MAC is detection only.
+- The `X-Ccc-Decided-Via` header no longer influences authorisation. The accident-detector sentences above describe an
+  unverified hint, `plugin` or `other`, and nothing more.
+
+What a process running as the owner can still do:
+
+- It can cause a prompt to appear but cannot answer it: the answer is the owner's Touch ID or password, and the helper signs
+  only after it.
+- It can spend the global prompt budget, 3 per minute, across several pending requests, so that the owner's own approve is
+  refused for a while; the audit reason is `presence-budget`. That costs time and approves nothing.
+- It can replace the helper binary; a replacement cannot read the pinned key without a Keychain sheet, and one that only prints
+  "proved" produces no signature that verifies, so the service refuses it.
+- It can read the install secret and so compute the MAC, which makes the MAC detection and not a boundary; the MAC deliberately
+  does not cover the presence part, so a presence-required row still needs the signature.
+- It may be able to delete the pin item and recreate it with its own key, because whether the item's access list gates a
+  foreign delete was not measured. The mitigations (hardened runtime, login-keychain scoping, a code-directory-hash-bound pin,
+  gesture-gated unenrol, trust on first use of the pin with refusal of a changed pin) make this noisy, and a same-user marker
+  write within the window plus a pin replacement still suffices, so it is detection, not prevention.
+- A debugger or code injection into Obsidian or the service, and replacing the login keychain file, are out of scope.
+
+Roadmap success criterion 2 is partially met: an approval of a connector-class request needs a signature from a key that only the hardened presence helper can read, and the helper signs only after the owner's Touch ID or password; but a same-user process that can delete the pin item and recreate it with its own key is not stopped (whether the item's access list gates a foreign delete was not measured), so the check is an operating-system-gated key plus a visible prompt with one recorded residual, not a proof against every same-user process.
+
+The measurement that can change this wording is the owner's foreign-delete check on a throwaway item, recorded as
+`attr_delete_prompts`. If a foreign delete shows a Keychain sheet, the owner may restore the verdict to met by an explicit
+decision recorded in the spike record; if not, the residual stands. Until then the verdict is partially met.
