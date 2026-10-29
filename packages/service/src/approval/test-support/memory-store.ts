@@ -113,6 +113,7 @@ export function createMemoryApprovalStore(
     outcomeNote: row.outcomeNote,
     mirrorNoteId: row.mirrorNoteId,
     supersedes: row.supersedes,
+    decisionProof: row.decisionProof ?? null,
   });
 
   const change = (row: Row, to: ProposalState): void => {
@@ -193,6 +194,7 @@ export function createMemoryApprovalStore(
         outcomeNote: null,
         mirrorNoteId: proposal.mirrorNoteId,
         supersedes,
+        decisionProof: null,
         claimedAt: null,
         finishedAt: null,
         seq,
@@ -277,6 +279,7 @@ export function createMemoryApprovalStore(
       row.approvedAt = approve ? (input.approvedAt ?? input.now) : null;
       row.decidedAt = input.now;
       row.decidedVia = input.via;
+      row.decisionProof = approve ? (input.decisionProof ?? null) : null;
       writeAudit(row.proposalId, approve ? "approved" : "denied", input.now, null);
       return approve
         ? { kind: "approved", proposal: toStored(row) }

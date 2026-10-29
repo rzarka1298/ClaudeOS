@@ -55,6 +55,14 @@ export interface StoredProposal {
   readonly mirrorNoteId: NoteId;
   /** The earlier request this one replaces after an expiry, or null. */
   readonly supersedes: ProposalId | null;
+  /**
+   * The decision proof written when the request was approved (09-16, D-03): strict JSON
+   * `{ v: 1, mac, presence }`, or null for every row that was not approved with one. Both stores always
+   * set it (a string after a signed approve, `null` otherwise); it is optional in the type only so older
+   * row factories keep compiling. An absent value is treated exactly like `null`: it fails verification
+   * (fail closed). The service verifies it; the domain only carries it.
+   */
+  readonly decisionProof?: string | null;
 }
 
 /** What the engine hands the store to create a proposal. State and revision are the store's. */
@@ -98,6 +106,12 @@ export interface DecideInput {
    * check still runs against `now`, so a request that lapsed while the prompt was up is expired.
    */
   readonly approvedAt?: string;
+  /**
+   * The decision proof for an approving decision (09-16, D-03), made by the service for exactly this
+   * row, instant and channel. Written only when approving and only in the update that moves the row to
+   * approved; ignored on a deny. Absent, an approved row is stored with no proof and fails verification.
+   */
+  readonly decisionProof?: string;
 }
 
 /** What the engine hands the store to put a presence refusal on the record. */
