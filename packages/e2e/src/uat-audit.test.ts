@@ -1090,3 +1090,81 @@ describe("Phase 9 in the audit table (plan 09-21, D-17)", () => {
     expect(rowOf(result, "09").defects.join(" ")).toMatch(/spec map/);
   });
 });
+
+describe("an owner item recorded as not walked (FIX11 finding 4)", () => {
+  const script = (result: string) =>
+    [
+      "---",
+      "status: testing",
+      "phase: 09-theta",
+      "---",
+      "",
+      "## Tests",
+      "",
+      "### 1. Walked",
+      "run: owner",
+      "owner-why: real-session",
+      "result: pass — owner 2026-10-30: done",
+      "",
+      "### 2. Not walkable yet",
+      "run: owner",
+      "owner-why: real-session",
+      `result: ${result}`,
+      "",
+      "## Summary",
+      "",
+      "total: 2",
+      "",
+    ].join("\n");
+  const rowFor = (result: string) => {
+    const phases = phasesWith();
+    put(phases, "09-theta", "09-UAT.md", script(result));
+    return rowOf(auditTree(phases, ["09"]), "09");
+  };
+
+  it("counts the item as recorded but lists an exception that needs the owner's dated acceptance", () => {
+    const row = rowFor(
+      "accepted — not walked: no presence-required class is enabled in this build",
+    );
+    expect(row.recorded).toBe(2);
+    expect(row.status).toBe("recorded-with-exceptions");
+    expect(row.exceptions.map((entry) => entry.id)).toEqual(["09-uat-2"]);
+    expect(row.exceptions[0]?.summary).toMatch(/not walked/);
+  });
+
+  it("matches the words case-insensitively and for any phase", () => {
+    expect(rowFor("pass — Not Walked here").exceptions.map((entry) => entry.id)).toEqual([
+      "09-uat-2",
+    ]);
+  });
+
+  it("raises no exception for a walked result", () => {
+    const row = rowFor("pass — owner 2026-10-30: verified");
+    expect(row.exceptions).toEqual([]);
+    expect(row.status).toBe("recorded");
+  });
+
+  it("fails a strict run until the exception carries a dated acceptance", async () => {
+    const phases = phasesWith("02-beta");
+    put(
+      phases,
+      "09-theta",
+      "09-UAT.md",
+      script("accepted — not walked: no presence-required class is enabled in this build").replace(
+        "status: testing",
+        "status: complete",
+      ),
+    );
+    const out = join(scratch, "AUDIT.md");
+    const run = (extra: string[]) =>
+      audit(["--phases-dir", phases, "--out", out, "--only", "02,09", ...extra]);
+    expect((await run([])).code).toBe(0);
+    expect((await run(["--strict"])).code).toBe(1);
+    expect(readFileSync(out, "utf8")).toMatch(/^\| 09-uat-2 \|.*\| pending \|$/m);
+    writeFileSync(
+      out,
+      readFileSync(out, "utf8").replace(/^(\| 09-uat-2 \|.*\| )pending \|$/m, "$12000-05-06 |"),
+    );
+    expect((await run(["--strict"])).code).toBe(0);
+  });
+});

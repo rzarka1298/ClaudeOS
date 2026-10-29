@@ -25,6 +25,8 @@ export type ResultState = "pending" | "ok" | "issue" | "unrecognised";
 
 const OK_RESULT = /^(?:pass|passed|resolved|accepted)\b/i;
 const ISSUE_RESULT = /^(?:fail|failed|issue|blocked)\b/i;
+/** A recorded result that admits the item was never walked (FIX11): an exception, never a plain pass. */
+const NOT_WALKED = /\bnot walked\b/i;
 
 /** Maps one `result:` value to a state. Anything it does not know is reported, never guessed. */
 export function classifyResult(value: string | null): ResultState {
@@ -248,6 +250,18 @@ function scriptAdapter(context: AdapterContext): AdapterOutput {
       state = "unrecognised";
     } else {
       state = classifyResult(item.resultValue);
+      // A result that says the item was NOT WALKED counts as recorded (the owner decided), but it is
+      // a soft spot like any other: listed as an exception that strict mode holds until the owner
+      // dates an acceptance, so a real-session item never reads as passed without being walked.
+      if (state === "ok" && NOT_WALKED.test(item.resultValue ?? "")) {
+        out.exceptions.push(
+          exceptionOf(
+            context.phase,
+            `${context.phase}-uat-${item.number}`,
+            `Item ${item.number} recorded as not walked`,
+          ),
+        );
+      }
       const match = item.autoResult === null ? null : AUTO_RESULT_PATTERN.exec(item.autoResult);
       if (state === "pending" && match !== null) {
         // An automated result stands in for the owner's line only once its run is ratified.
