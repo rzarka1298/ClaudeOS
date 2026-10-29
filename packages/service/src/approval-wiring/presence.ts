@@ -137,17 +137,20 @@ const deniedLine = z.strictObject({
   cause: z.literal("timeout").optional(),
 });
 
-const checkLine = z.strictObject({
-  v: z.literal(1),
-  canEvaluate: z.boolean(),
-  biometry: z.enum(["touch-id", "none"]).optional(),
-  enrolled: z.boolean().optional(),
-  // FIX6B M1: present (true) only when a pin exists that a different binary enrolled (the helper was rebuilt
-  // without a re-enrol). A stale pin is never `available`, whatever else the line says.
-  stale: z.boolean().optional(),
-  // The cannot-evaluate line carries the LocalAuthentication error code (exit 3): `{"canEvaluate":false,"error":N}`.
-  error: z.number().int().optional(),
-});
+const checkLine = z
+  .strictObject({
+    v: z.literal(1),
+    canEvaluate: z.boolean(),
+    biometry: z.enum(["touch-id", "none"]).optional(),
+    enrolled: z.boolean().optional(),
+    // FIX6B M1: present (true) only when a pin exists that a different binary enrolled (the helper was rebuilt
+    // without a re-enrol). A stale pin is never `available`, whatever else the line says.
+    stale: z.boolean().optional(),
+    // The cannot-evaluate line carries the LocalAuthentication error code (exit 3): `{"canEvaluate":false,"error":N}`.
+    error: z.number().int().optional(),
+  })
+  // An error code beside `canEvaluate: true` contradicts itself: it is a failed check, never an available one.
+  .refine((line) => !(line.canEvaluate && line.error !== undefined));
 
 /** The one JSON line a helper run printed, or null when there is not exactly one parseable line. */
 function singleJsonLine(stdout: string): unknown {

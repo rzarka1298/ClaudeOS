@@ -1000,3 +1000,63 @@ describe("09-FIX10A: observed() hands each read its own conclusion", () => {
     expect((await guard.observed()).observation.verdict).toBe("trusted");
   });
 });
+
+describe("09-FIX10A MINOR 4: an error code beside canEvaluate:true is a contradiction, never available", () => {
+  it("reads check-failed from inspect() and unavailable from availability(), at exit 0", async () => {
+    const fake = fakeHelper();
+    for (const stdout of [
+      '{"v":1,"canEvaluate":true,"enrolled":true,"error":-5}\n',
+      '{"v":1,"canEvaluate":true,"biometry":"touch-id","enrolled":true,"error":0}\n',
+    ]) {
+      fake.control({ exit: 0, stdout });
+      expect(await port(fake).inspect(), stdout).toEqual({
+        state: "unavailable",
+        reason: "check-failed",
+      });
+      expect(await port(fake).availability(), stdout).toBe("unavailable");
+    }
+  });
+
+  it("a cannot-evaluate line keeps its error code and still reads cannot-evaluate", async () => {
+    const fake = fakeHelper();
+    fake.control({ exit: 3, stdout: '{"v":1,"canEvaluate":false,"error":-5}\n' });
+    expect(await port(fake).inspect()).toEqual({ state: "unavailable", reason: "cannot-evaluate" });
+  });
+});
+
+describe("09-FIX10A MINOR 7: a throwing observe hook never changes what the guard returns", () => {
+  const sha = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+  it("the pin, the record and the warning are the same with an observe that throws", async () => {
+    const lines: Record<string, unknown>[] = [];
+    let recorded: string | null = sha("pin-one");
+    const guard = guardPinReader({
+      read: async () => "pin-two",
+      recorded: {
+        get: () => recorded,
+        set: (v) => {
+          recorded = v;
+        },
+      },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: (fields) => void lines.push(fields) },
+      observe: () => {
+        throw new Error("listener failed");
+      },
+    });
+    expect(await guard()).toBeNull();
+    expect(lines).toEqual([{ code: "presence-pin-changed" }]);
+    expect(recorded).toBe(sha("pin-one"));
+    const trusted = guardPinReader({
+      read: async () => "pin-one",
+      recorded: { get: () => sha("pin-one"), set: () => undefined },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+      observe: () => {
+        throw new Error("listener failed");
+      },
+    });
+    expect(await trusted()).toBe("pin-one");
+    expect((await trusted.observed()).observation.verdict).toBe("trusted");
+  });
+});
