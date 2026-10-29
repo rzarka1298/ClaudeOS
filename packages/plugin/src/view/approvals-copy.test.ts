@@ -94,7 +94,7 @@ describe("the locked strings (UI-SPEC Copywriting Contract, Test 8)", () => {
       "Approving this needs your Touch ID or password, and it wasn't given. Nothing was changed.",
     );
     expect(APPROVAL_STATUS.presenceUnavailable).toBe(
-      "Approving this needs your Touch ID or password, and that check isn't available on this Mac right now. Nothing was changed. Check Approval presence check under Security in Settings, or run the service install again to set it up.",
+      "Approving this needs your Touch ID or password, and that check isn't available on this Mac right now. Nothing was changed. Open Settings, then Security, then Approval presence check to see why, or run the service install again to set it up. This can also be a temporary limit on how often the prompt may appear, so try again in a minute.",
     );
     expect(APPROVAL_STATUS.confirmFailed).toBe(
       "Couldn't confirm whether your decision went through. Refresh the list before deciding again.",

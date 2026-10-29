@@ -330,9 +330,13 @@ export function SecuritySection({ host, connection, now, notify }: SecuritySecti
   const installView = viewFor("installSecret");
   const researchView = viewFor("researchKey");
   const presenceViewNow = presenceView();
-  // The key fingerprint is shown only for a live, held answer (never while away, failed or loading).
+  // The key fingerprint is shown only for a live, held answer whose state is Available or Unavailable (chip kinds
+  // ok and failing): never while away, failed, loading, unknown, unreported or self-contradictory (09-FIX10A).
   const pinFingerprint =
-    live && response !== null && presenceViewNow.kind === "shown"
+    live &&
+    response !== null &&
+    presenceViewNow.kind === "shown" &&
+    (presenceViewNow.chip.status === "ok" || presenceViewNow.chip.status === "failing")
       ? (response.approvalPresencePin ?? null)
       : null;
   const offerKeySetup = researchView.kind === "shown" && researchView.chip.status !== "ok";

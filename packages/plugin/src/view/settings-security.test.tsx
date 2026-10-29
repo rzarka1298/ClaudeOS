@@ -849,3 +849,37 @@ describe("09-19 Task 2, Test 1: the Approval presence check row", () => {
     expect(screen.queryByRole("button", { name: /enrol|unenrol|reset|trust/i })).toBeNull();
   });
 });
+
+describe("09-FIX10A MINOR 5: the key fingerprint is shown only with an Available or Unavailable answer", () => {
+  it("unknown, an unreported state and a contradictory answer show no fingerprint even when a pin arrives", async () => {
+    const cases: Partial<DiagnosticsHealthResponse>[] = [
+      { approvalPresence: "unknown", approvalPresencePin: "0a1b2c3d" },
+      { approvalPresencePin: "0a1b2c3d" },
+      {
+        approvalPresence: "available",
+        approvalPresenceReason: "helper-missing",
+        approvalPresencePin: "0a1b2c3d",
+      },
+    ];
+    for (const extra of cases) {
+      resetHealthState();
+      serve(presenceResponse(extra));
+      const view = renderSecurity(fixture());
+      await flush();
+      expect(row(PRESENCE_ROW).textContent, JSON.stringify(extra)).not.toContain("0a1b2c3d");
+      expect(row(PRESENCE_ROW).textContent).not.toContain("Key fingerprint");
+      view.unmount();
+    }
+  });
+
+  it("available and unavailable answers still show it", async () => {
+    for (const state of ["available", "unavailable"] as const) {
+      resetHealthState();
+      serve(presenceResponse({ approvalPresence: state, approvalPresencePin: "0a1b2c3d" }));
+      const view = renderSecurity(fixture());
+      await flush();
+      expect(row(PRESENCE_ROW).textContent, state).toContain("0a1b2c3d");
+      view.unmount();
+    }
+  });
+});
