@@ -1,10 +1,11 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHmac, hkdfSync, randomBytes } from "node:crypto";
 import http from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AUTH_HEADER,
+  canonicalJson,
   EVENTS_PATH,
   HANDSHAKE_PATH,
   type HandshakeResponse,
@@ -23,6 +24,9 @@ import { requestJsonOverSocket, requestOverSocket } from "./service-harness.js";
 
 const KEYCHAIN_SERVICE_NAME = "com.claude-command-center";
 const ITEM_NOT_FOUND_EXIT_CODE = 44;
+
+/** The exact shape `setUpServiceEnvironment` gives its throwaway account: the prefix and 12 hex digits. The owner's own `install-secret` can never match. */
+const THROWAWAY_ACCOUNT = /^install-secret-test-[0-9a-f]{12}$/;
 
 /** Sets the throwaway install-secret account and the short timers; returns the account name. */
 export function setUpServiceEnvironment(extra: Record<string, string> = {}): string {
@@ -223,4 +227,52 @@ export function sessionOf(event: ServiceEvent): SessionView | null {
   if (event.type !== "session.upserted") return null;
   const parsed = SessionUpsertedPayloadSchema.safeParse(event.payload);
   return parsed.success ? parsed.data.session : null;
+}
+
+/**
+ * The install secret the service generated into the throwaway Keychain `account` (09-17). Test support
+ * only: it reads an account this run created, never the owner's own `install-secret` item.
+ */
+export function readThrowawayInstallSecret(account: string): Buffer {
+  if (!THROWAWAY_ACCOUNT.test(account)) {
+    throw new Error("readThrowawayInstallSecret: only a throwaway test account may be read");
+  }
+  const out = execFileSync(
+    "security",
+    ["find-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE_NAME, "-w"],
+    { encoding: "utf8" },
+  );
+  return Buffer.from(out.trim(), "base64");
+}
+
+/** The fields of an approved row a decision proof covers. */
+export interface ProofRowFields {
+  readonly proposalId: string;
+  readonly operation: string;
+  readonly payloadHash: string;
+  readonly approvedAt: string;
+  readonly decidedVia: string;
+}
+
+/**
+ * The decision proof text for `row`, made with `key` and computed here, independently of the service's
+ * own proof module (HKDF-SHA256 with the fixed info string, HMAC-SHA256 over the canonical JSON), so the
+ * tests that seed rows by hand do not depend on the code they check. Pass the install secret (not the
+ * derived key) as `installSecret`.
+ */
+export function independentDecisionProof(installSecret: Buffer, row: ProofRowFields): string {
+  const key = Buffer.from(
+    hkdfSync("sha256", installSecret, Buffer.alloc(0), "ccc approval decision proof v1", 32),
+  );
+  const input = canonicalJson({
+    v: 1,
+    proposalId: row.proposalId,
+    operation: row.operation,
+    payloadHash: row.payloadHash,
+    state: "approved",
+    approvedAt: row.approvedAt,
+    decidedVia: row.decidedVia,
+  });
+  const mac = createHmac("sha256", key).update(input, "utf8").digest("hex");
+  return canonicalJson({ v: 1, mac, presence: null });
 }

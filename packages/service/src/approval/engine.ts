@@ -52,6 +52,7 @@ import {
   resolveOutcome,
   unknownDecision,
 } from "./outcome.js";
+import { decisionMacFields, signDecisionProof, verifyDecisionProof } from "./proof.js";
 import { createRecovery, type RecoverySummary, tokenExpiryMs } from "./recovery.js";
 import {
   assembleSnapshot,
@@ -139,6 +140,12 @@ export interface ApprovalEngineDeps {
   readonly publisher: ApprovalPublisher;
   readonly mirror: MirrorPort;
   readonly log: ApprovalLog;
+  /**
+   * The key the engine signs every approval with and checks before an approved or executing row is
+   * carried out (09-17, D-03, APPR-12): `approvalProofKey(installSecret)`. REQUIRED, so no construction
+   * site can skip the proof. It is held here and nowhere else; it is never logged, stored or returned.
+   */
+  readonly proofKey: Buffer;
   /** Mints proposal ids and mirror note ids. Defaults to the domain minters. */
   readonly ids?: { proposalId(): ProposalId; noteId(): NoteId };
   /** The display name of a registered project, or null. Display only; never a path. */
@@ -166,6 +173,18 @@ export const UNAVAILABLE_PRESENCE: PresencePort = {
 };
 
 const DEFAULT_CLAIM_FACTS_TIMEOUT_MS = 5000;
+
+/** The decision-proof key length (`approvalProofKey` derives 32 bytes). */
+const PROOF_KEY_BYTES = 32;
+
+/** What an approved row with no valid proof is finished as: it never ran, so `failed` is truthful (R-05). */
+const PROOF_INVALID_FAILED: FinishDecision = {
+  state: "failed",
+  code: "proof-invalid",
+  note: null,
+  evidence: null,
+  reconciled: false,
+};
 
 /** At most this many presence checks start per {@link PRESENCE_WINDOW_MS}, across all requests (T-09-26). */
 export const PRESENCE_PROMPTS_PER_MINUTE = 3;
@@ -364,7 +383,11 @@ function isoAfter(now: string, ms: number): string {
 // The engine
 
 export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine & EngineProbe {
-  const { store, registry, clock, publisher, mirror, log } = deps;
+  const { store, registry, clock, publisher, mirror, log, proofKey } = deps;
+  // An all-zero or short key would sign proofs anyone can compute: refuse it at construction.
+  if (!Buffer.isBuffer(proofKey) || proofKey.length !== PROOF_KEY_BYTES) {
+    throw new RangeError(`createApprovalEngine: proofKey must be ${PROOF_KEY_BYTES} bytes`);
+  }
   const presence = deps.presence ?? UNAVAILABLE_PRESENCE;
   const ids = deps.ids ?? { proposalId: newProposalId, noteId: newNoteId };
   const ledger = createTokenLedger();
@@ -649,16 +672,45 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       }
     }
 
+    // ONE clock read: the instant the store records as `approvedAt` is the instant the proof covers.
+    const now = clock.now();
+    const via = channelOf(input);
+    const proof =
+      input.decision === "approve" && current?.state === "pending"
+        ? signApproval(current, now, via)
+        : undefined;
     return settleDecision(
       proposalId,
       store.decide({
         proposalId,
         decision: input.decision,
         expectedHash: input.payloadHash,
-        now: clock.now(),
-        via: channelOf(input),
+        now,
+        via,
+        ...(proof === undefined ? {} : { approvedAt: now, decisionProof: proof }),
       }),
     );
+  }
+
+  /**
+   * The proof text for approving `row` at `approvedAt` through `via` (D-03). The MAC binds the row's id,
+   * operation, payload hash, the approval instant and the channel, so it cannot be moved to another row.
+   */
+  function signApproval(row: StoredProposal, approvedAt: string, via: DecidedVia): string {
+    const fields = decisionMacFields({
+      proposalId: row.proposalId,
+      operation: row.operation,
+      payloadHash: row.payloadHash,
+      approvedAt,
+      decidedVia: via,
+    });
+    if (fields === null) throw new Error("approval proof: no covered fields");
+    return signDecisionProof(proofKey, fields, null);
+  }
+
+  /** True when `row` carries a proof that verifies under this engine's key (R-05). Nothing here throws. */
+  function proofVerifies(row: StoredProposal): boolean {
+    return verifyDecisionProof(proofKey, row) === "valid";
   }
 
   /** The recorded channel of an ungated decision: the hint, with `presence` unreachable from outside (D-03). */
@@ -868,6 +920,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
         now: decidedAt,
         approvedAt,
         via: "presence",
+        decisionProof: signApproval(current, approvedAt, "presence"),
       }),
     );
   }
@@ -929,6 +982,12 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   ): Promise<StoredProposal | null> {
     // The request stays approved; startup recovery picks it up on the next boot.
     if (stopping) return null;
+    // A row whose proof is missing, malformed or not its own is never started (R-05): claimed so it
+    // can be finished, and failed, never silently repaired.
+    if (!proofVerifies(approved)) {
+      refuseUnproved(approved);
+      return null;
+    }
     active.add(approved.proposalId);
     try {
       let facts: ClaimFacts = {};
@@ -962,6 +1021,18 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       active.delete(approved.proposalId);
       throw error;
     }
+  }
+
+  /**
+   * Claims an approved row that has no valid proof and finishes it `failed` / `proof-invalid`; it never runs.
+   * Returns true when the refusal was written. One implementation, used by the claim and by recovery.
+   */
+  function refuseUnproved(approved: StoredProposal): boolean {
+    log.warn({ proposalId: approved.proposalId, code: "approval-proof-invalid" });
+    const claim = store.claim(approved.proposalId, {}, clock.now());
+    if (claim.kind !== "claimed") return false;
+    announce(claim.proposal);
+    return finishWith(claim.proposal, PROOF_INVALID_FAILED) !== null;
   }
 
   /** Runs one claimed attempt without awaiting it; `settled()` waits for it. */
@@ -1047,6 +1118,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
 
   /** Carries out one attempt of a claimed request and records the outcome. */
   async function runAttempt(proposal: StoredProposal): Promise<void> {
+    // The last gate before any effect (09-FIX8): `proposal` is the row the store returned from `claim` or
+    // `beginRetry`, so it is the row that is about to run. A check made on an earlier snapshot is not
+    // enough, because the row can change while the engine awaits claim facts or a reconcile answer.
+    // First attempt: nothing ran, `failed`; a retry: an earlier attempt may have run, `unknown`.
+    if (!proofVerifies(proposal)) {
+      log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
+      failBeforeExecute(proposal, "proof-invalid");
+      return;
+    }
     const definition = registry.lookup(proposal.operation);
     const row = approvalRowOf(registry.table, proposal.operation);
     if (definition === undefined || row === undefined || proposal.approvedAt === null) {
@@ -1160,6 +1240,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     announce,
     isActive: (proposalId) => active.has(proposalId),
     verifiedPayload,
+    verifyProof: (proposal) => (proofVerifies(proposal) ? "valid" : "invalid"),
+    refuseUnproved,
     finish: finishWith,
     startAttempt,
     claimAndStart: async (approved, definition) =>

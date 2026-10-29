@@ -61,6 +61,9 @@ export function defaultRegistry(fakes: readonly FakeOperation[]): OperationRegis
   return buildOperationRegistry(fakes.map((fake) => fake.definition));
 }
 
+/** A fixed 32-byte proof key every harness engine signs with (09-17); tests verify proofs under it. */
+export const TEST_PROOF_KEY: Buffer = Buffer.alloc(32, 7);
+
 export const REQUESTER: Requester = { kind: "dashboard", label: "Test dashboard" };
 
 export interface Harness {
@@ -112,6 +115,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     registry,
     clock,
     log,
+    proofKey: TEST_PROOF_KEY,
     ids: {
       proposalId: () => {
         counter += 1;

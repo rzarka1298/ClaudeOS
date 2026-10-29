@@ -10,7 +10,12 @@ import type {
   OperationDefinition,
   ServiceEventType,
 } from "@ccc/domain";
-import { applyMigrations, type OperationalStore, openStore } from "@ccc/operational-store";
+import {
+  applyMigrations,
+  createApprovalStore,
+  type OperationalStore,
+  openStore,
+} from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import * as approvalEntry from "../approval/index.js";
@@ -92,6 +97,9 @@ function fakeOperations(): FakeOps {
   return { definitions: [diagnostic, terminate], executed };
 }
 
+/** A fixed 32-byte proof key for the composed services (09-17). */
+const PROOF_KEY = Buffer.alloc(32, 5);
+
 interface Published {
   readonly type: ServiceEventType;
   readonly payload: unknown;
@@ -113,6 +121,7 @@ function baseDeps(ops: FakeOps, published: Published[] = []): ApprovalRuntimeDep
     getVaultRoot: () => null,
     log,
     env: {},
+    proofKey: PROOF_KEY,
   };
 }
 
@@ -533,5 +542,68 @@ describe("the presence port (09-14, Test 3)", () => {
     const runtime = startApprovalServices(baseDeps(fakeOperations()));
     expect(engineDeps()).not.toHaveProperty("presence");
     void runtime.stop();
+  });
+});
+
+describe("the decision proof through the composed services (09-17 Task 1, Test 3, tracer)", () => {
+  it("does not compile without a proof key", () => {
+    const { proofKey: _omitted, ...withoutKey } = baseDeps(fakeOperations());
+    // @ts-expect-error proofKey is required: a construction site cannot skip the proof.
+    const attempt = () => startApprovalServices(withoutKey);
+    expect(typeof attempt).toBe("function");
+  });
+
+  it("an approve over the real migrated store leaves a verifying proof, a deny none, and the key is never logged", async () => {
+    const lines: string[] = [];
+    const record = (fields: object): void => void lines.push(JSON.stringify(fields));
+    const runtime = startApprovalServices({
+      ...baseDeps(fakeOperations()),
+      log: { info: record, warn: record, error: record },
+    });
+    await runtime.recover();
+    const sql = createApprovalStore(store.db);
+    const approvedId = (runtime.services.test({}) as { proposalId: string }).proposalId;
+    const approvedFound = runtime.services.get(approvedId);
+    if (approvedFound.kind !== "found") throw new Error("expected found");
+    const reply = await runtime.services.decide({
+      proposalId: approvedId,
+      decision: "approve",
+      payloadHash: approvedFound.payloadHash,
+      channelHint: "plugin",
+    });
+    expect(reply.outcome).toBe("decided");
+    await runtime.settled();
+
+    const row = sql.get(approvedId as never);
+    if (row === null) throw new Error("expected a row");
+    expect(row.decisionProof).toEqual(expect.any(String));
+    expect(approvalEntry.verifyDecisionProof(PROOF_KEY, row)).toBe("valid");
+    expect(approvalEntry.verifyDecisionProof(Buffer.alloc(32, 6), row)).toBe("invalid");
+
+    const second = runtime.engine.submit({
+      operation: "session.force-terminate",
+      subject: "run-1",
+      requester: { kind: "dashboard", label: "Agent runs" },
+      projectId: null,
+      runId: null,
+      reason: "r",
+      payload: { runId: "run-1" },
+    });
+    if (second.kind !== "proposed") throw new Error("expected proposed");
+    const secondFound = runtime.services.get(second.proposalId);
+    if (secondFound.kind !== "found") throw new Error("expected found");
+    await runtime.services.decide({
+      proposalId: second.proposalId,
+      decision: "deny",
+      payloadHash: secondFound.payloadHash,
+      channelHint: "plugin",
+    });
+    expect(sql.get(second.proposalId)?.decisionProof ?? null).toBeNull();
+
+    const logged = lines.join("\n");
+    expect(logged).not.toContain(PROOF_KEY.toString("hex"));
+    expect(logged).not.toContain(PROOF_KEY.toString("base64"));
+    expect(logged).not.toContain(row.decisionProof ?? "no-proof");
+    await runtime.stop();
   });
 });

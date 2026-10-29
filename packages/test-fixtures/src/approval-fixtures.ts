@@ -54,6 +54,9 @@ export type Db = OperationalStore["db"];
 /** A fixed, round, millisecond-precision ISO 8601 UTC instant the suites start at. */
 export const FIXTURE_EPOCH = "2026-10-06T12:00:00.000Z";
 
+/** The fixed 32-byte decision-proof key every fixture engine signs with (09-17); tests verify under it. */
+export const PROOF_KEY: Buffer = Buffer.alloc(32, 3);
+
 // ---------------------------------------------------------------------------
 // Clock
 
@@ -675,6 +678,7 @@ export function openEngine(
     registry,
     clock: world.clock,
     log: world.log,
+    proofKey: PROOF_KEY,
     publisher: {
       publish(_event, payload) {
         published.push(payload.approval);

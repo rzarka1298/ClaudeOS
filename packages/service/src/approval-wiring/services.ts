@@ -50,6 +50,12 @@ export interface ApprovalRuntimeDeps {
   readonly getVaultRoot: () => string | null;
   readonly log: ApprovalLog;
   readonly env: NodeJS.ProcessEnv;
+  /**
+   * The approval decision-proof key, `approvalProofKey(installSecret)` (09-17, D-03). REQUIRED: every
+   * approval is signed with it and every approved or executing row is checked against it. It goes to the
+   * engine and nowhere else; it is never logged, stored or returned by a route.
+   */
+  readonly proofKey: Buffer;
   /** The display name of a registered project, or null. Display only. */
   readonly projectName?: (projectId: string) => string | null;
   /**
@@ -145,6 +151,7 @@ export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntim
     publisher,
     mirror,
     log,
+    proofKey: deps.proofKey,
     ...(projectName === undefined ? {} : { projectName }),
     ...(deps.presence === undefined ? {} : { presence: deps.presence }),
   });

@@ -405,6 +405,7 @@ describe("the decided-via header is a hint, end to end (09-14, Test 2)", () => {
       getVaultRoot: () => null,
       log: { info() {}, warn() {}, error() {} },
       env: {},
+      proofKey: Buffer.alloc(32, 5),
     });
     await runtime.recover();
     const real = await startRouteHarness(store, { approvals: runtime.services });
