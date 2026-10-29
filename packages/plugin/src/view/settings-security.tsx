@@ -115,7 +115,7 @@ export function keychainChipFor(
 }
 
 /**
- * The Approval presence check chip over the closed state (09-19, D-04): `Available` needs the service's own
+ * The presence row's chip over the closed state (09-19, D-04): `Available` needs the service's own
  * `available`; `null` (no answer, an older service without the member) and `unknown` read `Unknown`. The word is
  * always present beside the glyph, so no state is carried by colour alone.
  */
