@@ -53,23 +53,50 @@ sed \
 # never an install failure: the service starts and connector-class approvals are refused
 # until the helper works (Diagnostics shows its state). No test or sandbox reaches here
 # with a real helper: the install test points HOME and CCC_RUNTIME_DIR at temp directories.
+#
+# FIX6B: unenrol, and the replacement of an existing key by enrol, now ask for Touch ID or the
+# password (the helper no longer deletes its key for any caller), so an install that replaces a
+# helper shows ONE prompt. Each helper call is bounded (default 90 s; the helper's own prompt
+# ceiling is 60 s) and its JSON answer is kept in the WARNING. If the old helper cannot remove its
+# key, the old binary is KEPT: rebuilding over it would leave a key that no installed binary is
+# trusted to read, so the helper is not replaced this time and the service install goes on.
 PRESENCE_BUILD="${REPO_ROOT}/scripts/presence/build.sh"
+PRESENCE_RUN="${SCRIPT_DIR}/../presence/run-helper.mjs"
 PRESENCE_HELPER="${RUNTIME_DIR}/bin/ccc-presence"
+PRESENCE_TIMEOUT="${CCC_PRESENCE_HELPER_TIMEOUT:-90}"
 PRESENCE_WARNING="WARNING: the presence helper was not built; connector-class approvals will be refused until it is (Diagnostics shows it)."
 
+# Runs one helper subcommand under the bound, leaving its exit code in helper_rc and its output (the
+# helper's JSON line, or the bound's "timed out" line) in helper_out. Never trips `set -e`.
+run_helper() {
+  if helper_out=$("${NODE_PATH}" "${PRESENCE_RUN}" "${PRESENCE_TIMEOUT}" "${PRESENCE_HELPER}" "$1" 2>&1); then
+    helper_rc=0
+  else
+    helper_rc=$?
+  fi
+}
+
+REPLACE_PRESENCE=1
 if [ -x "${PRESENCE_HELPER}" ]; then
-  "${PRESENCE_HELPER}" unenrol >/dev/null 2>&1 || true
+  run_helper unenrol
+  if [ "${helper_rc}" -ne 0 ]; then
+    REPLACE_PRESENCE=0
+    echo "WARNING: the previous presence helper could not remove its previous signing key (${helper_out}); the existing helper and key were kept and the helper was not replaced this time. Run the install again and answer the Touch ID or password prompt to replace it." >&2
+  fi
 fi
-if [ -f "${PRESENCE_BUILD}" ]; then
-  if ! CCC_RUNTIME_DIR="${RUNTIME_DIR}" sh "${PRESENCE_BUILD}"; then
+if [ "${REPLACE_PRESENCE}" -eq 1 ]; then
+  if [ -f "${PRESENCE_BUILD}" ]; then
+    if ! CCC_RUNTIME_DIR="${RUNTIME_DIR}" sh "${PRESENCE_BUILD}"; then
+      echo "${PRESENCE_WARNING}" >&2
+    fi
+  else
     echo "${PRESENCE_WARNING}" >&2
   fi
-else
-  echo "${PRESENCE_WARNING}" >&2
-fi
-if [ -x "${PRESENCE_HELPER}" ]; then
-  if ! "${PRESENCE_HELPER}" enrol >/dev/null 2>&1; then
-    echo "WARNING: the presence helper could not enrol its signing key; connector-class approvals will be refused until it does (Diagnostics shows it)." >&2
+  if [ -x "${PRESENCE_HELPER}" ]; then
+    run_helper enrol
+    if [ "${helper_rc}" -ne 0 ]; then
+      echo "WARNING: the presence helper could not enrol its signing key (${helper_out}); connector-class approvals will be refused until it does (Diagnostics shows it)." >&2
+    fi
   fi
 fi
 

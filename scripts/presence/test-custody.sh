@@ -5,6 +5,7 @@
 # Two TEST-ONLY harness copies of the source are built in a mktemp dir:
 #   accept - the LocalAuthentication evaluatePolicy call is replaced by a stub that replies success
 #   cancel - the stub replies failure -2 (a user cancel)
+# (The stubbed gesture also stands in for the owner when enrol replaces and unenrol removes the item.)
 # Both copies point the pin at a unique test service and account (com.claude-command-center.uat-<random>,
 # ccc-uat-<random>), so the owner's approval-presence-pin item is never read, written or deleted. The
 # item is created and deleted by the same ad-hoc-signed binary that the access list trusts, which is the
@@ -86,6 +87,15 @@ OUT=$("${WORK}/cancel" prove --message "${MSG_B64}"); RC=$?
 "${WORK}/accept" enrol >/dev/null 2>&1; RC=$?
 PIN2=$(/usr/bin/security find-generic-password -a "${ACCOUNT}" -s "${SERVICE}" 2>&1 | sed -n 's/^ *"icmt"<blob>="\(.*\)"$/\1/p')
 [ "${RC}" -eq 0 ] && [ -n "${PIN2}" ] && [ "${PIN2}" != "${PIN}" ] && check ok "re-enrol: a new key replaces the pin" || check no "re-enrol: a new key replaces the pin (rc ${RC})"
+
+# FIX6B M1: a pin that a DIFFERENT binary enrolled is stale. A copy of the harness binary re-signed under another
+# identifier has another code-directory hash, so its attribute-only lookup says stale and `prove` stops before any
+# prompt or secret read (it never touches the item's secret, so no Keychain sheet is expected here).
+cp "${WORK}/accept" "${WORK}/foreign" && codesign -f -s - -i com.example.ccc-uat-foreign "${WORK}/foreign" >/dev/null 2>&1
+OUT=$("${WORK}/foreign" check); RC=$?
+[ "${RC}" -eq 0 ] && printf '%s' "${OUT}" | grep -q '"enrolled":false,"stale":true' && check ok "check by a different binary: enrolled false, stale true" || check no "check by a different binary: stale (rc ${RC}: ${OUT})"
+OUT=$("${WORK}/foreign" prove --message "${MSG_B64}"); RC=$?
+[ "${RC}" -eq 3 ] && [ "${OUT}" = '{"v":1,"canEvaluate":true,"enrolled":false,"stale":true}' ] && check ok "prove by a different binary: unavailable (exit 3), stale, no prompt" || check no "prove by a different binary (rc ${RC}: ${OUT})"
 
 # Unenrol deletes the item; a second unenrol is still success.
 OUT=$("${WORK}/accept" unenrol); RC=$?
