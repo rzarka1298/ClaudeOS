@@ -32,6 +32,7 @@ import {
   normaliseDecidedVia,
   type OperationDefinition,
   PAYLOAD_HASH_PATTERN,
+  PRESENCE_PROMPT_TIMEOUT_MS,
   type PresencePort,
   type PresenceResult,
   type ProposalId,
@@ -170,6 +171,13 @@ const DEFAULT_CLAIM_FACTS_TIMEOUT_MS = 5000;
 export const PRESENCE_PROMPTS_PER_MINUTE = 3;
 const PRESENCE_WINDOW_MS = 60_000;
 
+/**
+ * How long the engine waits for the port before it gives up on it (m1): the helper's own prompt ceiling
+ * plus a margin for its start and teardown, still inside the client's decide timeout (prompt + 10 s), so
+ * a port that never settles answers `presence-unavailable` instead of wedging the proposal's flight.
+ */
+export const PRESENCE_ENGINE_TIMEOUT_MS = PRESENCE_PROMPT_TIMEOUT_MS + 5_000;
+
 /** Rejects after `ms`; the timer is always cleared once the race settles. */
 async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -182,6 +190,9 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
     clearTimeout(timer);
   }
 }
+
+/** What a presence check resolves to when shutdown abandons it. */
+const ABANDONED = Symbol("presence-check-abandoned");
 
 /** The answer of a presence port narrowed to the closed set; anything else proved nothing (fail closed, m2). */
 function presenceResultOf(answer: unknown): PresenceResult {
@@ -731,6 +742,25 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
       : { outcome: "already-decided", state: row.state };
   }
 
+  /** Resolved by {@link beginShutdown}: the single signal every in-flight presence check abandons on (m1). */
+  let abandonFlights: () => void = () => undefined;
+  const shutdownSignal = new Promise<typeof ABANDONED>((resolve) => {
+    abandonFlights = () => resolve(ABANDONED);
+  });
+
+  /** The port's answer, cut off after {@link PRESENCE_ENGINE_TIMEOUT_MS} (rejects "timeout") or at shutdown ({@link ABANDONED}). */
+  async function proveWithin(request: Parameters<PresencePort["prove"]>[0]): Promise<unknown> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cutoff = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("timeout")), PRESENCE_ENGINE_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([presence.prove(request), cutoff, shutdownSignal]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /**
    * Asks the presence port BEFORE the store is asked to decide, never inside its transaction, so no
    * database lock is held across a prompt (D-01). Only a `proved` answer reaches `store.decide`; a
@@ -752,17 +782,25 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     const approvedAt = askedAt;
     let answer: unknown;
     try {
-      answer = await presence.prove({
+      answer = await proveWithin({
         proposalId,
         operation: current.operation,
         payloadHash: current.payloadHash,
         approvedAt,
       });
-    } catch {
-      // A port that fails is a port that proved nothing; never log the error text.
-      log.warn({ proposalId, code: "presence-check-failed" });
+    } catch (error) {
+      // A port that fails or never answers is a port that proved nothing; never log the error text.
+      log.warn({
+        proposalId,
+        code:
+          error instanceof Error && error.message === "timeout"
+            ? "presence-check-timeout"
+            : "presence-check-failed",
+      });
       answer = undefined;
     }
+    // Shutdown began while the prompt was up: the request stays pending for the next boot, nothing is recorded.
+    if (answer === ABANDONED) return { outcome: "operation-reserved" };
     const result = presenceResultOf(answer);
     if (result.kind !== "proved") {
       return refuseApprove(
@@ -1061,8 +1099,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
   }
 
   async function settled(): Promise<void> {
-    while (inflight.size > 0) {
-      await Promise.allSettled([...inflight]);
+    while (inflight.size > 0 || presenceFlights.size > 0) {
+      await Promise.allSettled([...inflight, ...presenceFlights.values()]);
     }
   }
 
@@ -1094,6 +1132,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine {
     settled,
     beginShutdown: () => {
       stopping = true;
+      abandonFlights();
     },
   };
 }

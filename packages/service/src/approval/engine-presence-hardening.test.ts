@@ -3,9 +3,15 @@
 // off (m1), a denial cools down and a budget refusal is told apart (m3), and the paths that were never
 // exercised are (m5). Kept apart from `engine-presence.test.ts` so the 09-18 wiring change to that file
 // does not collide. Same doubles: the in-memory store over the EXTENDED table and a scriptable port.
-import type { Clock, DecideResponse, ProposalId, StoredProposal } from "@ccc/domain";
+import {
+  type Clock,
+  type DecideResponse,
+  PRESENCE_PROMPT_TIMEOUT_MS,
+  type ProposalId,
+  type StoredProposal,
+} from "@ccc/domain";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createApprovalEngine } from "./engine.js";
+import { createApprovalEngine, PRESENCE_ENGINE_TIMEOUT_MS } from "./engine.js";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
 import { createHarness, type Harness } from "./test-support/harness.js";
@@ -166,5 +172,66 @@ describe("a token-holder looping on a pending request cannot flood the record or
     expect(rows).toBeLessThanOrEqual(8);
     expect(h.store.auditFor(id)[0]?.event).toBe("requested");
     expect(h.log.lines.filter((l) => l.fields.code === "presence-refused").length).toBe(rows);
+  });
+});
+
+describe("a hung port cannot wedge the proposal or shutdown (m1)", () => {
+  it("cuts a never-settling port off after the prompt ceiling plus a margin: unavailable, still pending, joiners released, a retry can ask again", async () => {
+    vi.useFakeTimers();
+    const port = createPresenceFake(() => new Promise(() => undefined));
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    // The client waits PROMPT + 10 s; the engine must answer inside that.
+    expect(PRESENCE_ENGINE_TIMEOUT_MS).toBeGreaterThan(PRESENCE_PROMPT_TIMEOUT_MS);
+    expect(PRESENCE_ENGINE_TIMEOUT_MS).toBeLessThan(PRESENCE_PROMPT_TIMEOUT_MS + 10_000);
+
+    const first = approve(h, id);
+    const joiner = approve(h, id);
+    await vi.advanceTimersByTimeAsync(PRESENCE_ENGINE_TIMEOUT_MS);
+
+    expect(await first).toEqual({ outcome: "presence-unavailable" });
+    expect(await joiner).toEqual({ outcome: "presence-unavailable" });
+    expect(stored(h, id).state).toBe("pending");
+    expect(auditDetails(h, id).at(-1)).toEqual(["presence-refused", "presence-unavailable"]);
+    expect(
+      h.log.lines.some((l) => l.level === "warn" && l.fields.code === "presence-check-timeout"),
+    ).toBe(true);
+
+    // The flight is gone: a later approve starts a fresh check (the port is asked a second time).
+    h.clock.advance(1_000);
+    const retry = approve(h, id);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(port.requests).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(PRESENCE_ENGINE_TIMEOUT_MS);
+    await retry;
+  });
+
+  it("releases the caller and settled() when shutdown begins with the prompt up, and decides nothing", async () => {
+    const port = createPresenceFake();
+    const slow = deferredPresence();
+    port.script(slow.script);
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    let released: DecideResponse | undefined;
+    const pending = approve(h, id).then((response) => {
+      released = response;
+    });
+    await Promise.resolve();
+
+    h.engine.beginShutdown();
+    const outcome = await Promise.race([
+      h.engine.settled().then(() => "settled"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("hung"), 200)),
+    ]);
+
+    expect(outcome).toBe("settled");
+    await pending;
+    expect(released).toEqual({ outcome: "operation-reserved" });
+    expect(stored(h, id).state).toBe("pending");
+    // The prompt answering afterwards changes nothing.
+    slow.settle(PROVED);
+    await Promise.resolve();
+    expect(h.store.calls).not.toContain("decide");
+    expect(h.store.calls).not.toContain("recordDecisionRefusal");
   });
 });
