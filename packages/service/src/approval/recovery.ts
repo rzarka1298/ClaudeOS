@@ -28,7 +28,12 @@ import { consultReconcile, type FinishDecision, unknownDecision } from "./outcom
  *    their maximum approval age, and `lapsed` after it.
  * 4. A request whose operation is reserved or no longer registered is finished
  *    `failed` with a reserved code and never executed (D-04, T-06-15).
- * 5. Payload columns of decided requests older than thirty days are purged; audit
+ * 5. An `executing` or `approved` request whose decision proof is missing, malformed, not its own
+ *    or made with another key is never reconciled, retried, claimed or run (R-05, D-03): an
+ *    approved one is claimed and finished `failed`, an executing one `unknown`, both with the
+ *    code `proof-invalid`, and a warning names the id. A legacy row from before migration 0013
+ *    has no proof and is treated the same way. The row is never repaired.
+ * 6. Payload columns of decided requests older than thirty days are purged; audit
  *    rows are never touched (D-19).
  *
  * It is idempotent (a second run finds nothing to do) and it returns once every
@@ -62,6 +67,8 @@ export interface RecoverySummary {
   readonly failed: number;
   /** Decided requests whose payload text was cleared. */
   readonly purged: number;
+  /** Approved or executing requests refused because their decision proof was missing or invalid (R-05). */
+  readonly proofInvalid: number;
 }
 
 /** The part of the engine recovery needs. Everything here is the engine's own, so recovery reaches no private state. */
@@ -83,6 +90,8 @@ export interface RecoveryHost {
     definition: RegisteredDefinition,
     stored: StoredProposal,
   ): { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly code: string };
+  /** Whether the row's decision proof verifies under the engine's key (R-05). Never throws. */
+  verifyProof(proposal: StoredProposal): "valid" | "invalid";
   /** Records an executing request's outcome and publishes it. */
   finish(proposal: StoredProposal, decision: FinishDecision): StoredProposal | null;
   /** Runs one claimed attempt WITHOUT awaiting it; registered for `settled()`. */
@@ -121,6 +130,15 @@ const RESERVED_DECISION: FinishDecision = {
   reconciled: false,
 };
 
+/** An approved row with no valid proof never ran, so `failed` is the truthful end state (R-05). */
+const PROOF_INVALID_FAILED: FinishDecision = {
+  state: "failed",
+  code: "proof-invalid",
+  note: null,
+  evidence: null,
+  reconciled: false,
+};
+
 const ZERO: RecoverySummary = {
   expired: 0,
   reconciled: 0,
@@ -130,6 +148,7 @@ const ZERO: RecoverySummary = {
   claimed: 0,
   failed: 0,
   purged: 0,
+  proofInvalid: 0,
 };
 
 export interface Recovery {
@@ -157,6 +176,16 @@ export function createRecovery(host: RecoveryHost): Recovery {
     if (!payload.ok) {
       // The row cannot be trusted, so nothing is asked of the operation; an effect may have happened.
       if (host.finish(proposal, unknownDecision(payload.code, null)) !== null) counts.unknown += 1;
+      return;
+    }
+
+    // R-05: an executing row rides the idempotent retry path, so its proof is checked before reconcile
+    // or retry. Nothing is asked of the operation; an effect may have happened, so `unknown`.
+    if (host.verifyProof(proposal) !== "valid") {
+      log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
+      if (host.finish(proposal, unknownDecision("proof-invalid", null)) !== null) {
+        counts.proofInvalid += 1;
+      }
       return;
     }
 
@@ -208,6 +237,15 @@ export function createRecovery(host: RecoveryHost): Recovery {
     if (host.finish(claim.proposal, RESERVED_DECISION) !== null) counts.failed += 1;
   }
 
+  /** An approved request with no valid proof is claimed so it can be finished, and failed; it never starts. */
+  function failUnproved(approved: StoredProposal, counts: Counts): void {
+    log.warn({ proposalId: approved.proposalId, code: "approval-proof-invalid" });
+    const claim = store.claim(approved.proposalId, {}, clock.now());
+    if (claim.kind !== "claimed") return;
+    host.announce(claim.proposal);
+    if (host.finish(claim.proposal, PROOF_INVALID_FAILED) !== null) counts.proofInvalid += 1;
+  }
+
   async function recoverApproved(counts: Counts): Promise<void> {
     for (const approved of store.listApprovedUnclaimed()) {
       if (host.isActive(approved.proposalId)) continue;
@@ -221,6 +259,11 @@ export function createRecovery(host: RecoveryHost): Recovery {
       const definition = registry.lookup(approved.operation);
       if (definition === undefined) continue;
       await guarded(approved, async () => {
+        // R-05: checked here and again inside the engine's claim, so neither entry point can skip it.
+        if (host.verifyProof(approved) !== "valid") {
+          failUnproved(approved, counts);
+          return;
+        }
         if (await host.claimAndStart(approved, definition)) counts.claimed += 1;
       });
     }

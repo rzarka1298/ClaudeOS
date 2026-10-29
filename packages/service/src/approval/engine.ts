@@ -52,7 +52,7 @@ import {
   resolveOutcome,
   unknownDecision,
 } from "./outcome.js";
-import { decisionMacFields, signDecisionProof } from "./proof.js";
+import { decisionMacFields, signDecisionProof, verifyDecisionProof } from "./proof.js";
 import { createRecovery, type RecoverySummary, tokenExpiryMs } from "./recovery.js";
 import {
   assembleSnapshot,
@@ -173,6 +173,15 @@ export const UNAVAILABLE_PRESENCE: PresencePort = {
 };
 
 const DEFAULT_CLAIM_FACTS_TIMEOUT_MS = 5000;
+
+/** What an approved row with no valid proof is finished as: it never ran, so `failed` is truthful (R-05). */
+const PROOF_INVALID_FAILED: FinishDecision = {
+  state: "failed",
+  code: "proof-invalid",
+  note: null,
+  evidence: null,
+  reconciled: false,
+};
 
 /** At most this many presence checks start per {@link PRESENCE_WINDOW_MS}, across all requests (T-09-26). */
 export const PRESENCE_PROMPTS_PER_MINUTE = 3;
@@ -692,6 +701,11 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     return signDecisionProof(proofKey, fields, null);
   }
 
+  /** True when `row` carries a proof that verifies under this engine's key (R-05). Nothing here throws. */
+  function proofVerifies(row: StoredProposal): boolean {
+    return verifyDecisionProof(proofKey, row) === "valid";
+  }
+
   /** The recorded channel of an ungated decision: the hint, with `presence` unreachable from outside (D-03). */
   function channelOf(input: EngineDecideInput): DecidedVia {
     return normaliseDecidedVia(input.channelHint);
@@ -961,6 +975,12 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   ): Promise<StoredProposal | null> {
     // The request stays approved; startup recovery picks it up on the next boot.
     if (stopping) return null;
+    // A row whose proof is missing, malformed or not its own is never started (R-05): claimed so it
+    // can be finished, and failed, never silently repaired.
+    if (!proofVerifies(approved)) {
+      failUnproved(approved);
+      return null;
+    }
     active.add(approved.proposalId);
     try {
       let facts: ClaimFacts = {};
@@ -994,6 +1014,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       active.delete(approved.proposalId);
       throw error;
     }
+  }
+
+  /** Claims an approved row that has no valid proof and finishes it `failed` / `proof-invalid`; it never runs. */
+  function failUnproved(approved: StoredProposal): void {
+    log.warn({ proposalId: approved.proposalId, code: "approval-proof-invalid" });
+    const claim = store.claim(approved.proposalId, {}, clock.now());
+    if (claim.kind !== "claimed") return;
+    announce(claim.proposal);
+    finishWith(claim.proposal, PROOF_INVALID_FAILED);
   }
 
   /** Runs one claimed attempt without awaiting it; `settled()` waits for it. */
@@ -1192,6 +1221,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     announce,
     isActive: (proposalId) => active.has(proposalId),
     verifiedPayload,
+    verifyProof: (proposal) => (proofVerifies(proposal) ? "valid" : "invalid"),
     finish: finishWith,
     startAttempt,
     claimAndStart: async (approved, definition) =>
