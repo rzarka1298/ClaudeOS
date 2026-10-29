@@ -185,8 +185,17 @@ export function startTimeout(runId: RunId, observedAt: string): Evidence {
   return { kind: "start-timeout", runId, observedAt };
 }
 
-export function identityUnknownTimeout(runId: RunId, observedAt: string): Evidence {
-  return { kind: "identity-unknown-timeout", runId, observedAt };
+/**
+ * The cutoff defaults to the observation instant: the Run counts as quiet when its last
+ * activity is at or before `observedAt`. Pass an earlier `quietBefore` to model a Run whose
+ * activity is newer than the instant the sweeper judged it quiet at.
+ */
+export function identityUnknownTimeout(
+  runId: RunId,
+  observedAt: string,
+  quietBefore: string = observedAt,
+): Evidence {
+  return { kind: "identity-unknown-timeout", runId, observedAt, quietBefore };
 }
 
 export function inactivityTimeout(runId: RunId, observedAt: string): Evidence {

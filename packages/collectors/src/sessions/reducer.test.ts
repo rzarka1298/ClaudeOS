@@ -692,6 +692,46 @@ describe("session reducer — endings, stale and terminate (D-18, D-19, D-20, PR
       },
     },
     {
+      // FIX3C: the cutoff is the instant the sweeper judged the Run quiet at; activity newer than
+      // it (a hook the sweeper's snapshot never saw, or one the pipeline is still coalescing) wins.
+      name: "identity-unknown-timeout with a cutoff before the Run's last activity is a no-op",
+      initial: [seedRun({ runId: R1, lastActivityAt: at(1000) })],
+      evidence: [identityUnknownTimeout(R1, at(1900), at(999))],
+      check: (o) => {
+        expect(o.only()).toMatchObject({ state: "running", revision: 1 });
+        expect(o.last).toEqual({ upserts: [], rejected: [] });
+      },
+    },
+    {
+      name: "identity-unknown-timeout with a cutoff equal to the Run's last activity applies",
+      initial: [seedRun({ runId: R1, lastActivityAt: at(1000) })],
+      evidence: [identityUnknownTimeout(R1, at(1900), at(1000))],
+      check: (o) => {
+        expect(o.only()).toMatchObject({ state: "stale", revision: 2 });
+      },
+    },
+    {
+      name: "identity-unknown-timeout judges a Run with no activity by its start time",
+      initial: [seedRun({ runId: R1, lastActivityAt: null, startedAt: at(500) })],
+      evidence: [
+        identityUnknownTimeout(R1, at(1900), at(499)),
+        identityUnknownTimeout(R1, at(1901), at(500)),
+      ],
+      check: (o) => {
+        expect(o.results[0]).toEqual({ upserts: [], rejected: [] });
+        expect(o.only().state).toBe("stale");
+      },
+    },
+    {
+      name: "identity-unknown-timeout with an unparsable cutoff is a no-op (fails closed)",
+      initial: [seedRun({ runId: R1, lastActivityAt: at(1000) })],
+      evidence: [identityUnknownTimeout(R1, at(1900), "not-a-date")],
+      check: (o) => {
+        expect(o.only().state).toBe("running");
+        expect(o.last).toEqual({ upserts: [], rejected: [] });
+      },
+    },
+    {
       name: "evidence naming a RunId the index does not know is rejected as unknown-run",
       initial: [],
       evidence: [pidGone(R2, at(1))],
@@ -724,6 +764,17 @@ describe("session reducer — endings, stale and terminate (D-18, D-19, D-20, PR
       }
     }
     expect(wrote.sort()).toEqual(["running", "waiting-for-approval"]);
+  });
+
+  it("identity-unknown-timeout with a cutoff before the Run's activity upserts nothing in any state (FIX3C)", () => {
+    for (const state of RUN_STATES) {
+      const o = play(
+        [seedRun({ runId: R1, state, lastActivityAt: at(1000) })],
+        [identityUnknownTimeout(R1, at(1900), at(999))],
+      );
+      expect(o.last.upserts).toEqual([]);
+      expect(o.only().state).toBe(state);
+    }
   });
 
   it("normalizes a SessionEnd reason outside the documented list to other", () => {

@@ -100,6 +100,8 @@ let applied: Evidence[];
 let pipeline: ClaudePipeline;
 let bus: EventBus;
 let table: ReturnType<typeof fakeProcessTable>;
+/** Runs, un-awaited, just before the sweeper hands evidence to the pipeline (FIX3C race seam). */
+let beforeApply: (() => Promise<unknown>) | null;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "ccc-liveness-"));
@@ -107,6 +109,7 @@ beforeEach(() => {
   applyMigrations(store.db);
   nowMs = T0;
   applied = [];
+  beforeApply = null;
   table = fakeProcessTable();
   bus = createEventBus();
   pipeline = createClaudePipeline({
@@ -167,9 +170,12 @@ function sweeperWith(
   processFacts: Pick<ProcessFacts, "isAlive" | "readStartTimes"> = table.facts,
 ): LivenessSweeper {
   const spied: Pick<ClaudePipeline, "apply" | "reattribute" | "backfillPidStart"> = {
-    apply: (evidence) => {
+    apply: async (evidence) => {
       applied.push(evidence);
-      return pipeline.apply(evidence);
+      // The racer is queued on the pipeline's chain first, so it is reduced before the evidence.
+      const racer = beforeApply?.();
+      await pipeline.apply(evidence);
+      await racer;
     },
     reattribute: (runId, attribution) => pipeline.reattribute(runId, attribution),
     backfillPidStart: (runId, pidStartedAt) => pipeline.backfillPidStart(runId, pidStartedAt),
@@ -531,6 +537,80 @@ describe("D-08 reproduction: an idle session with a live process", () => {
       await sweeper.sweepNow();
       expect(appliedKinds(run.runId)).toEqual([]);
       expect(stateOf(run.runId)).toBe("completed");
+    });
+
+    // FIX3C: the sweeper's database re-read cannot see activity the pipeline is still
+    // coalescing in memory, and a hook can land between that re-read and the apply. The
+    // guard that decides is the cutoff carried by the evidence, checked inside the
+    // pipeline's serialized apply against the Run as the pipeline sees it.
+    function hookRecord(event: string, observedAt: number, extra: Record<string, unknown> = {}) {
+      return {
+        eventId: randomUUID(),
+        observedAt: new Date(observedAt).toISOString(),
+        hook_event_name: event,
+        session_id: SESSION,
+        env: { CLAUDE_PID: String(PID) },
+        ...extra,
+      };
+    }
+
+    it("held coalesced activity from just now keeps a persisted-quiet Run running (FIX3C)", async () => {
+      table.spawnUnreadable(PID);
+      const quietAt = new Date(T0 - 40 * 60 * 1000).toISOString();
+      const run = seedRun({ activity: "working", lastActivityAt: quietAt });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      // The unknown clock has now run for the whole threshold. A first hook (stamped old, so
+      // it adds no activity) is written at once and opens the 5 s coalescing window; the
+      // hook one second later is activity-only, so the pipeline holds it in memory.
+      nowMs = T0 + QUIET - 2_000;
+      await pipeline.ingest(
+        hookRecord("PostToolUse", T0 - 40 * 60 * 1000, { tool_name: "Read" }),
+        "socket",
+      );
+      nowMs = T0 + QUIET - 1_000;
+      await pipeline.ingest(hookRecord("PostToolUse", nowMs, { tool_name: "Read" }), "socket");
+      expect(getSessionRun(store.db, run.runId)?.lastActivityAt).toBe(quietAt);
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      expect(stateOf(run.runId)).toBe("running");
+      // Once the held activity is flushed the Run is persisted fresh; still running.
+      await pipeline.stop();
+      expect(getSessionRun(store.db, run.runId)?.lastActivityAt).toBe(
+        new Date(T0 + QUIET - 1_000).toISOString(),
+      );
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("a hook ingested between the sweeper's re-read and its apply wins (FIX3C)", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "working",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      beforeApply = () =>
+        pipeline.ingest(hookRecord("PostToolUse", nowMs, { tool_name: "Read" }), "socket");
+      await sweeper.sweepNow();
+      // The sweeper judged the Run quiet and tried to apply; the racing hook was reduced first.
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(stateOf(run.runId)).toBe("running");
+      expect(getSessionRun(store.db, run.runId)?.lastActivityAt).toBe(
+        new Date(nowMs).toISOString(),
+      );
+    });
+
+    it("evidence carries the cutoff instant: now minus the quiet threshold (FIX3C)", async () => {
+      table.spawnUnreadable(PID);
+      seedRun({ activity: "idle", lastActivityAt: new Date(T0 - 10 * QUIET).toISOString() });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      const evidence = applied.find((item) => item.kind === "identity-unknown-timeout");
+      expect(evidence).toMatchObject({ quietBefore: new Date(nowMs - QUIET).toISOString() });
     });
 
     it("alternating unknown and same never stales and never flaps", async () => {

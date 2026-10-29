@@ -236,7 +236,15 @@ A missing lifecycle event never produces an invented terminal state
   (the sweeper remembers the sweep that first saw it unknown, in memory, and any
   `same`, `gone` or backfilled reading, or the Run leaving the candidate set,
   restarts that clock), and its last event is at least the quiet threshold old
-  at the moment of applying. One failed `ps` read, which makes every pid
+  at the moment of applying. The sweeper's own checks against the database row
+  are only a cheap filter: the evidence carries the cutoff instant
+  (`quietBefore`, the sweep's time minus the threshold) and the reducer applies
+  it only when the Run, as the pipeline sees it inside its serialized apply
+  (activity the pipeline is still coalescing in memory included), has a last
+  activity at or before that cutoff. Newer activity makes the evidence a
+  no-op, so a hook that lands during the `ps` read, between the sweeper's
+  re-check and its apply, or that is held unflushed, always wins. One failed
+  `ps` read, which makes every pid
   unknown at once, therefore starts the clock and stales nothing, and an
   intermittently failing `ps` never flaps a Run between stale and running. The
   kind is separate from the PID-less `inactivity-timeout` and never writes

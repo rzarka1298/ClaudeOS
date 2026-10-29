@@ -37,6 +37,9 @@ import { type ProcessFacts, startInstantMs } from "./process-facts.js";
  *   a running or waiting-for-approval Run applies
  *   `identity-unknown-timeout` and reads `stale` (D-06): unknown by
  *   evidence, never an ending. One failed `ps` therefore changes nothing.
+ *   The evidence carries the cutoff (`now - quietAfterMs`) and the pipeline's
+ *   reducer re-checks it against the Run as the pipeline sees it, coalesced
+ *   activity included, so a hook that landed meanwhile always wins (FIX3C).
  * - A Run with a pid but no stored start (hooks installed mid-session, or
  *   a failed SessionStart `ps`) is judged by the read start against its
  *   last hook activity (wave 4): a process that started no later than that
@@ -138,7 +141,7 @@ export interface SweepReport {
   readonly startTimeouts: number;
   /** `inactivity-timeout` evidence applied this sweep. */
   readonly inactivityTimeouts: number;
-  /** `identity-unknown-timeout` evidence applied this sweep (D-06). */
+  /** `identity-unknown-timeout` evidence submitted this sweep (D-06); the reducer may still find activity newer than its cutoff and change nothing. */
   readonly identityUnknownTimeouts: number;
   /** Unclassified Runs given a project after a project-set change. */
   readonly reattributed: number;
@@ -396,10 +399,14 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
             nowMs - Date.parse(current.lastActivityAt ?? current.startedAt) >= config.quietAfterMs
           ) {
             firstSeenUnknown.delete(run.runId);
+            // The checks above are a cheap filter over the database row; the cutoff
+            // is the decision. The pipeline's reducer re-judges the Run, coalesced
+            // activity included, atomically with the write (FIX3C).
             await pipeline.apply({
               kind: "identity-unknown-timeout",
               runId: run.runId,
               observedAt,
+              quietBefore: new Date(nowMs - config.quietAfterMs).toISOString(),
             });
             identityUnknownTimeouts += 1;
           }

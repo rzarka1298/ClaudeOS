@@ -62,14 +62,20 @@ export interface SessionFacts {
 export type Evidence =
   | { readonly kind: "hook"; readonly record: KnownHookRecord; readonly facts: SessionFacts }
   | {
-      readonly kind:
-        | "pid-gone"
-        | "pid-alive"
-        | "start-timeout"
-        | "inactivity-timeout"
-        | "identity-unknown-timeout";
+      readonly kind: "pid-gone" | "pid-alive" | "start-timeout" | "inactivity-timeout";
       readonly runId: RunId;
       readonly observedAt: string;
+    }
+  | {
+      readonly kind: "identity-unknown-timeout";
+      readonly runId: RunId;
+      readonly observedAt: string;
+      /**
+       * The instant the sweeper judged the Run quiet at (`now - quietAfterMs`, ISO).
+       * The Run is staled only if its last activity, as the reducer sees it, is at or
+       * before this instant: activity the sweeper's snapshot never saw wins (FIX3C).
+       */
+      readonly quietBefore: string;
     }
   | {
       readonly kind: "launch-registered";
@@ -362,13 +368,26 @@ export function reduce(
     // `inactivity-timeout` above, which it never touches. Absence of
     // evidence is `stale` (unknown) and nothing else (SESS-06): never an
     // ending, so a later `pid-alive` revives it.
+    //
+    // The cutoff makes the judgement atomic with the write (FIX3C): the sweeper
+    // read the Run before an awaited `ps`, and the pipeline may hold newer
+    // activity it has not flushed, so only the reducer, running on the
+    // pipeline's serialized chain over the Run with its overlay, can say the
+    // Run is still quiet. Newer activity is a no-op, never an error; an
+    // unparsable cutoff or activity time fails closed (no change).
     case "identity-unknown-timeout":
       return onRun(index, evidence.runId, evidence.kind, (run) =>
-        run.state === "running" || run.state === "waiting-for-approval"
+        (run.state === "running" || run.state === "waiting-for-approval") &&
+        quietAtOrBefore(run, evidence.quietBefore)
           ? upserted(write(run, { state: "stale" }))
           : NOTHING,
       );
   }
+}
+
+/** Whether the Run's last activity (else its start) is at or before `cutoff`; false when either is unparsable. */
+function quietAtOrBefore(run: SessionRun, cutoff: string): boolean {
+  return Date.parse(run.lastActivityAt ?? run.startedAt) <= Date.parse(cutoff);
 }
 
 /** Applies `apply` to a known, non-terminal Run; otherwise a rejected edge. */
