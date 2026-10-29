@@ -138,6 +138,9 @@ const checkLine = z.strictObject({
   canEvaluate: z.boolean(),
   biometry: z.enum(["touch-id", "none"]).optional(),
   enrolled: z.boolean().optional(),
+  // FIX6B M1: present (true) only when a pin exists that a different binary enrolled (the helper was rebuilt
+  // without a re-enrol). A stale pin is never `available`, whatever else the line says.
+  stale: z.boolean().optional(),
 });
 
 /** The one JSON line a helper run printed, or null when there is not exactly one parseable line. */
@@ -221,6 +224,7 @@ export function createHelperPresencePort(options: HelperPresencePortOptions): Pr
       if (!ranToCompletion(outcome) || outcome.exitCode !== 0) return "unavailable";
       const parsed = checkLine.safeParse(singleJsonLine(outcome.stdout));
       if (!parsed.success || !parsed.data.canEvaluate) return "unavailable";
+      if (parsed.data.stale === true) return "unavailable";
       if (custody !== "K-SVC" && parsed.data.enrolled !== true) return "unavailable";
       return "available";
     },

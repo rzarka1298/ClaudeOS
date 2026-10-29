@@ -420,6 +420,27 @@ describe("09-15 Task 1 Test 4: availability asks the non-prompting check", () =>
     expect(await port(fake, "K-ATTR").availability()).toBe("unavailable");
   });
 
+  it("FIX6B M1: a stale pin (the helper was rebuilt without a re-enrol) is unavailable, for every custody", async () => {
+    const fake = fakeHelper();
+    // What the helper prints for a pin another binary enrolled.
+    fake.control({
+      exit: 0,
+      stdout: '{"v":1,"canEvaluate":true,"biometry":"touch-id","enrolled":false,"stale":true}\n',
+    });
+    for (const custody of ["K-ATTR", "K-SE", "K-SVC"] as const) {
+      expect(await port(fake, custody).availability(), custody).toBe("unavailable");
+    }
+    // A line that claims both enrolled and stale contradicts itself: never available.
+    fake.control({ exit: 0, stdout: '{"v":1,"canEvaluate":true,"enrolled":true,"stale":true}\n' });
+    expect(await port(fake).availability()).toBe("unavailable");
+    // stale is a boolean when present.
+    fake.control({ exit: 0, stdout: '{"v":1,"canEvaluate":true,"enrolled":true,"stale":"no"}\n' });
+    expect(await port(fake).availability()).toBe("unavailable");
+    // stale:false changes nothing for an enrolled pin.
+    fake.control({ exit: 0, stdout: '{"v":1,"canEvaluate":true,"enrolled":true,"stale":false}\n' });
+    expect(await port(fake).availability()).toBe("available");
+  });
+
   it("is unavailable for a mistyped, doubled or extended check line and for any other exit", async () => {
     const fake = fakeHelper();
     const bad = [
