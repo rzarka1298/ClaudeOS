@@ -1,7 +1,7 @@
 import type { ClaimFacts, ExecuteOutcome, ProposalId, StoredProposal } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import { recomputeFromStored } from "./canonical-hash.js";
-import { decisionMacFields, signDecisionProof } from "./proof.js";
+import { decisionMacFields, presenceMessage, signDecisionProof } from "./proof.js";
 import { buildOperationRegistry } from "./registry.js";
 import { EXTENDED_TABLE, fakeNamed } from "./test-support/extended-table.js";
 import type { FakeOperation } from "./test-support/fake-operation.js";
@@ -12,6 +12,7 @@ import {
   TEST_PROOF_KEY,
 } from "./test-support/harness.js";
 import { codesOf, logViolations } from "./test-support/log-allow-list.js";
+import { generatePresenceKeys, signMessage, TEST_PIN } from "./test-support/presence-fake.js";
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -1073,5 +1074,169 @@ describe("the proof is checked before the registry and payload checks (09-FIX8, 
     expect(
       h.log.lines.filter((l) => l.fields.code === "approval-proof-invalid" && l.level === "warn"),
     ).toHaveLength(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-18 Task 2: a presence-required row needs a presence part that verifies against the pin (R-05, APPR-12)
+
+describe("presence-required rows at recovery and the claim (09-18 Task 2)", () => {
+  const WRITE = "connector.fake-write";
+
+  function writeHarness(readPin?: () => Promise<string | null>) {
+    const write = fakeNamed(WRITE);
+    const h = createHarness({
+      table: EXTENDED_TABLE,
+      registry: ([a, b]) =>
+        buildOperationRegistry(
+          [a, b, fakeNamed("connector.fake-send"), write].flatMap((f) =>
+            f === undefined ? [] : [f.definition],
+          ),
+          EXTENDED_TABLE,
+        ),
+      ...(readPin === undefined ? {} : { readPin }),
+    });
+    return { h, write };
+  }
+
+  /** The proof the engine stores for a presence approval: the MAC plus the helper's signature over `signedFor`. */
+  function presenceProof(
+    row: Pick<StoredProposal, "proposalId" | "operation" | "payloadHash">,
+    approvedAt: string,
+    signedFor: Pick<StoredProposal, "proposalId" | "operation" | "payloadHash"> = row,
+    keys = undefined as ReturnType<typeof generatePresenceKeys> | undefined,
+  ): string {
+    const fields = decisionMacFields({ ...row, approvedAt, decidedVia: "presence" });
+    if (fields === null) throw new Error("fixture: no covered fields");
+    const sig = signMessage(presenceMessage({ ...signedFor, approvedAt }), keys);
+    return signDecisionProof(TEST_PROOF_KEY, fields, { scheme: "p256", sig });
+  }
+
+  /** Approves a pending write in the store with the given proof text (computed from the stored row when null-free). */
+  function approveWrite(
+    h: Harness,
+    id: ProposalId,
+    proofOf: (row: StoredProposal, now: string) => string,
+    via: "presence" | "plugin" = "presence",
+  ): StoredProposal {
+    const row = h.store.get(id);
+    if (row === null) throw new Error("fixture: no row");
+    const now = h.clock.now();
+    const result = h.store.decide({
+      proposalId: id,
+      decision: "approve",
+      expectedHash: row.payloadHash,
+      now,
+      approvedAt: now,
+      via,
+      decisionProof: proofOf(row, now),
+    });
+    if (result.kind !== "approved") throw new Error(`fixture: not approved: ${result.kind}`);
+    return result.proposal;
+  }
+
+  it("Test 1: an approved write row with a valid MAC but no presence part is proof-invalid and never started", async () => {
+    const { h, write } = writeHarness();
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    approveWrite(h, id, (row, now) => proofFor(row, now, "presence"));
+
+    const summary = await h.engine.recover();
+    await h.engine.settled();
+
+    expect(stateOf(h, id)).toBe("failed");
+    expect(h.store.get(id)?.outcomeCode).toBe("proof-invalid");
+    expect(write.executeCalls).toHaveLength(0);
+    expect(summary.proofInvalid).toBe(1);
+    expect(summary.claimed).toBe(0);
+  });
+
+  it("Test 1b: the same, when the MAC was made for a plugin approval of a presence-required operation", async () => {
+    const { h, write } = writeHarness();
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    approveWrite(h, id, (row, now) => proofFor(row, now, "plugin"), "plugin");
+    const summary = await h.engine.recover();
+    await h.engine.settled();
+    expect(stateOf(h, id)).toBe("failed");
+    expect(write.executeCalls).toHaveLength(0);
+    expect(summary.proofInvalid).toBe(1);
+  });
+
+  it("Test 2: a presence signature belonging to another proposal (copied) is proof-invalid", async () => {
+    const { h, write } = writeHarness();
+    const donor = h.propose({ operation: WRITE, subject: "donor" });
+    const victim = h.propose({ operation: WRITE, subject: "victim" });
+    const donorRow = h.store.get(donor);
+    if (donorRow === null) throw new Error("fixture");
+    approveWrite(h, victim, (row, now) => presenceProof(row, now, donorRow));
+
+    const summary = await h.engine.recover();
+    await h.engine.settled();
+
+    expect(stateOf(h, victim)).toBe("failed");
+    expect(h.store.get(victim)?.outcomeCode).toBe("proof-invalid");
+    expect(write.executeCalls).toHaveLength(0);
+    expect(summary.proofInvalid).toBe(1);
+  });
+
+  it("Test 2b: a signature made with a key that is not the pin, and a missing pin, are proof-invalid", async () => {
+    const foreign = writeHarness();
+    const a = foreign.h.propose({ operation: WRITE, subject: "a" });
+    approveWrite(foreign.h, a, (row, now) => presenceProof(row, now, row, generatePresenceKeys()));
+    expect((await foreign.h.engine.recover()).proofInvalid).toBe(1);
+    expect(foreign.write.executeCalls).toHaveLength(0);
+
+    const noPin = writeHarness(async () => null);
+    const b = noPin.h.propose({ operation: WRITE, subject: "b" });
+    approveWrite(noPin.h, b, (row, now) => presenceProof(row, now));
+    expect((await noPin.h.engine.recover()).proofInvalid).toBe(1);
+    expect(stateOf(noPin.h, b)).toBe("failed");
+    expect(noPin.write.executeCalls).toHaveLength(0);
+  });
+
+  it("Test 3: an executing write row with a bad presence part is finished unknown / proof-invalid before reconcile", async () => {
+    const { h, write } = writeHarness();
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    approveWrite(h, id, (row, now) => proofFor(row, now, "presence"));
+    const claim = h.store.claim(id, { pid: 1 }, h.clock.now());
+    expect(claim.kind).toBe("claimed");
+
+    const summary = await h.engine.recover();
+    await h.engine.settled();
+
+    expect(stateOf(h, id)).toBe("unknown");
+    expect(h.store.get(id)?.outcomeCode).toBe("proof-invalid");
+    expect(write.reconcileCalls).toHaveLength(0);
+    expect(write.executeCalls).toHaveLength(0);
+    expect(h.store.calls).not.toContain("beginRetry");
+    expect(summary.proofInvalid).toBe(1);
+  });
+
+  it("Test 4: a correctly proved write row is claimed and started; a MAC-only diagnostic row still is", async () => {
+    const { h, write } = writeHarness();
+    const proved = h.propose({ operation: WRITE, subject: "w" });
+    approveWrite(h, proved, (row, now) => presenceProof(row, now));
+    const plain = h.propose({ subject: "d" });
+    approveInStore(h, plain);
+
+    const summary = await h.engine.recover();
+    await h.engine.settled();
+
+    expect(summary.proofInvalid).toBe(0);
+    expect(summary.claimed).toBe(2);
+    expect(write.executeCalls).toHaveLength(1);
+    expect(h.diagnostic.executeCalls).toHaveLength(1);
+    expect(stateOf(h, proved)).toBe("executed");
+  });
+
+  it("Test 5: the pin is read only for presence-required rows, never for a MAC-only one", async () => {
+    let reads = 0;
+    const { h } = writeHarness(async () => {
+      reads += 1;
+      return TEST_PIN;
+    });
+    approveInStore(h, h.propose({ subject: "d" }));
+    await h.engine.recover();
+    await h.engine.settled();
+    expect(reads).toBe(0);
   });
 });
