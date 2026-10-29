@@ -192,6 +192,68 @@ export async function hasSecret(
   }
 }
 
+/** `security` prints a handful of short attribute lines; this is far more than any real output. */
+const READ_COMMENT_MAX_BYTES = 4096;
+/** A P-256 SubjectPublicKeyInfo: 26 header bytes and the 65-byte uncompressed point. */
+const SPKI_P256_BYTES = 91;
+/** The `"icmt"<blob>="..."` line of a `find-generic-password` attribute listing. */
+const COMMENT_LINE_PATTERN = /^\s*"icmt"<blob>="([^"\n]*)"\s*$/m;
+
+/** Canonical (padded, standard-alphabet) base64 of exactly the bytes of a P-256 SPKI, or false. */
+function isPinnedPublicKey(value: string): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
+  const bytes = Buffer.from(value, "base64");
+  return bytes.length === SPKI_P256_BYTES && bytes.toString("base64") === value;
+}
+
+/**
+ * The comment attribute of `account`'s Keychain item, **without ever reading its secret** (plan 09-15,
+ * R-02; the ADR 0017 attribute-read pattern). The presence helper stores the base64 public key of its
+ * signing key there; the service reads it as the pin a presence signature is verified against.
+ *
+ * The argv is exactly the attribute-only lookup of {@link hasSecret}: `find-generic-password -a
+ * <account> -s <service>`, no `-w` and no `-g`, so the secret is never read into this process and the
+ * helper-only item raises no prompt (spike: attr_read_silent). Only stdout is captured (capped at
+ * {@link READ_COMMENT_MAX_BYTES}); the value is returned only when it is canonical base64 of exactly 91
+ * bytes, a P-256 SPKI. A missing item (exit 44), a timeout, a kill, a cancel, any other failure, a missing
+ * comment and any other value are all `null`, never a guess. Only an unsafe `account` throws, before any
+ * process is spawned. Spawned directly (no shell) by absolute path and bounded by
+ * {@link HAS_SECRET_TIMEOUT_MS} with SIGKILL.
+ */
+export async function readItemComment(
+  account: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  assertSafeIdentifier(account, "account");
+  // A leading dash would read as a `security` option, not an account; no real account starts with one.
+  if (account.startsWith("-")) throw new UnsafeSecretInputError("account");
+  // A caller that has already given up gets no process at all.
+  if (signal?.aborted === true) return null;
+  try {
+    const result = await execa(
+      SECURITY_BINARY,
+      ["find-generic-password", "-a", account, "-s", SERVICE_NAME],
+      {
+        reject: false,
+        timeout: HAS_SECRET_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+        maxBuffer: READ_COMMENT_MAX_BYTES,
+        ...(signal === undefined ? {} : { cancelSignal: signal }),
+      },
+    );
+    if (classifyPresenceResult(result) !== "present") return null;
+    const stdout: unknown = result.stdout;
+    if (typeof stdout !== "string") return null;
+    const comment = COMMENT_LINE_PATTERN.exec(stdout)?.[1];
+    return comment !== undefined && isPinnedPublicKey(comment) ? comment : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A {@link SecretStore} backed by this module's three functions. */
 export function createSecurityCliSecretStore(): SecretStore {
   return { get: getSecret, set: setSecret, delete: deleteSecret };

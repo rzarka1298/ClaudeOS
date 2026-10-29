@@ -6,8 +6,15 @@ vi.mock("execa", () => ({
   execa: (...args: unknown[]) => execaMock(...args),
 }));
 
-const { getSecret, setSecret, deleteSecret, hasSecret, SERVICE_NAME, UnsafeSecretInputError } =
-  await import("./security-cli.js");
+const {
+  getSecret,
+  setSecret,
+  deleteSecret,
+  hasSecret,
+  readItemComment,
+  SERVICE_NAME,
+  UnsafeSecretInputError,
+} = await import("./security-cli.js");
 
 beforeEach(() => {
   execaMock.mockReset();
@@ -297,5 +304,148 @@ describe("hasSecret with the caller's abort signal (plan 08-12, FIX2A)", () => {
       UnsafeSecretInputError,
     );
     expect(execaMock).not.toHaveBeenCalled();
+  });
+});
+
+// readItemComment (plan 09-15, R-02, ADR 0017 attribute-read pattern): the pinned public key, read without
+// the secret. The service reads the approval-presence pin through this and nothing else.
+describe("readItemComment", () => {
+  const ACCOUNT = "approval-presence-pin";
+  // A P-256 SPKI is 91 bytes: 26 header bytes, then the 65-byte X9.63 point.
+  const SPKI = Buffer.concat([
+    Buffer.from("3059301306072a8648ce3d020106082a8648ce3d030107034200", "hex"),
+    Buffer.from([0x04]),
+    Buffer.alloc(64, 0x11),
+  ]).toString("base64");
+  const output = (comment: string): string =>
+    [
+      'keychain: "/Users/<username>/Library/Keychains/login.keychain-db"',
+      "version: 512",
+      'class: "genp"',
+      "attributes:",
+      '    0x00000007 <blob>="Claude Command Center approval presence (safe to delete)"',
+      '    "acct"<blob>="approval-presence-pin"',
+      `    "icmt"<blob>=${comment}`,
+      '    "svce"<blob>="com.claude-command-center"',
+      "",
+    ].join("\n");
+
+  it("Test 1 (tracer): runs exactly find-generic-password -a <account> -s <service> and returns the icmt value", async () => {
+    execaMock.mockResolvedValueOnce({ exitCode: 0, failed: false, stdout: output(`"${SPKI}"`) });
+    await expect(readItemComment(ACCOUNT)).resolves.toBe(SPKI);
+    expect(execaMock).toHaveBeenCalledTimes(1);
+    const [bin, args, options] = execaMock.mock.calls[0] as [
+      string,
+      string[],
+      Record<string, unknown>,
+    ];
+    expect(bin).toBe("/usr/bin/security");
+    expect(args).toEqual(["find-generic-password", "-a", ACCOUNT, "-s", SERVICE_NAME]);
+    expect(args).not.toContain("-w");
+    expect(args).not.toContain("-g");
+    expect(args.some((arg) => /^-[A-Za-z]*[wg][A-Za-z]*$/.test(arg))).toBe(false);
+    // Bounded, shell-free; only stdout is captured, with a small cap; stdin and stderr are ignored.
+    expect(options).toMatchObject({
+      reject: false,
+      timeout: 1500,
+      killSignal: "SIGKILL",
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      maxBuffer: 4096,
+    });
+    expect(options.shell).toBeUndefined();
+  });
+
+  it("Test 2: a missing item, a timeout, a kill, a failure and a missing comment attribute are null", async () => {
+    execaMock.mockResolvedValueOnce({ exitCode: 44, failed: true, stdout: "" });
+    await expect(readItemComment(ACCOUNT)).resolves.toBeNull();
+    execaMock.mockResolvedValueOnce({ exitCode: 1, failed: true, stdout: output(`"${SPKI}"`) });
+    await expect(readItemComment(ACCOUNT)).resolves.toBeNull();
+    execaMock.mockResolvedValueOnce({
+      exitCode: undefined,
+      failed: true,
+      timedOut: true,
+      isTerminated: true,
+      stdout: "",
+    });
+    await expect(readItemComment(ACCOUNT)).resolves.toBeNull();
+    // A killed child that still reports exit 0 and output is not an answer.
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      failed: true,
+      isTerminated: true,
+      stdout: output(`"${SPKI}"`),
+    });
+    await expect(readItemComment(ACCOUNT)).resolves.toBeNull();
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      failed: false,
+      isCanceled: true,
+      stdout: output(`"${SPKI}"`),
+    });
+    await expect(readItemComment(ACCOUNT)).resolves.toBeNull();
+    // The item exists but has no comment, or the attribute line is missing altogether.
+    execaMock.mockResolvedValueOnce({ exitCode: 0, failed: false, stdout: output("<NULL>") });
+    await expect(readItemComment(ACCOUNT)).resolves.toBeNull();
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      failed: false,
+      stdout: 'class: "genp"\nattributes:\n    "acct"<blob>="approval-presence-pin"\n',
+    });
+    await expect(readItemComment(ACCOUNT)).resolves.toBeNull();
+    // A spawn failure that execa surfaces as a rejection still resolves null.
+    execaMock.mockRejectedValueOnce(Object.assign(new Error("spawn"), { code: "ENOENT" }));
+    await expect(readItemComment(ACCOUNT)).resolves.toBeNull();
+  });
+
+  it("Test 2b: an unsafe account, or one starting with a dash, throws before any spawn", async () => {
+    for (const bad of [
+      "has space",
+      'has"quote',
+      "line\nbreak",
+      "-w",
+      "-leading-dash",
+      "",
+      "semi;colon",
+    ]) {
+      await expect(readItemComment(bad), JSON.stringify(bad)).rejects.toBeInstanceOf(
+        UnsafeSecretInputError,
+      );
+    }
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it("Test 3: only base64 of exactly 91 bytes is accepted; anything else is null", async () => {
+    const accept = async (comment: string): Promise<string | null> => {
+      execaMock.mockResolvedValueOnce({
+        exitCode: 0,
+        failed: false,
+        stdout: output(`"${comment}"`),
+      });
+      return readItemComment(ACCOUNT);
+    };
+    expect(await accept(SPKI)).toBe(SPKI);
+    expect(await accept("")).toBeNull();
+    expect(await accept("changed")).toBeNull();
+    expect(await accept(Buffer.alloc(90, 1).toString("base64"))).toBeNull();
+    expect(await accept(Buffer.alloc(92, 1).toString("base64"))).toBeNull();
+    expect(await accept(Buffer.alloc(65, 1).toString("base64"))).toBeNull();
+    // Not canonical base64: padding stripped, a stray character, trailing text.
+    expect(await accept(SPKI.replace(/=+$/, ""))).toBeNull();
+    expect(await accept(`${SPKI.slice(0, -4)}!!!!`)).toBeNull();
+    expect(await accept(`${SPKI} extra`)).toBeNull();
+  });
+
+  it("with the caller's abort signal: a signal that already fired spawns nothing and answers null", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(readItemComment(ACCOUNT, controller.signal)).resolves.toBeNull();
+    expect(execaMock).not.toHaveBeenCalled();
+    const live = new AbortController();
+    execaMock.mockResolvedValueOnce({ exitCode: 0, failed: false, stdout: output(`"${SPKI}"`) });
+    await expect(readItemComment(ACCOUNT, live.signal)).resolves.toBe(SPKI);
+    const [, , options] = execaMock.mock.calls[0] as [string, string[], Record<string, unknown>];
+    expect(options.cancelSignal).toBe(live.signal);
   });
 });
