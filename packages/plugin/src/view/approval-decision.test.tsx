@@ -335,6 +335,25 @@ describe("outcomes (Test 7)", () => {
     }
   });
 
+  it.each([
+    { response: { outcome: "presence-denied" }, line: APPROVAL_STATUS.presenceDenied },
+    { response: { outcome: "presence-unavailable" }, line: APPROVAL_STATUS.presenceUnavailable },
+  ] as const)(
+    "09-13: $response.outcome posts its own fixed words, leaves the request pending and does not refetch",
+    async ({ response, line }) => {
+      const { announce, notify, onFollowUp, refetch } = setup({ decide: async () => response });
+      fireEvent.click(buttons().approve);
+      await waitFor(() => expect(announce).toHaveBeenCalledWith(line));
+      expect(notify).toHaveBeenCalledWith(line);
+      await waitFor(() => expect(buttons().approve.getAttribute("aria-busy")).toBeNull());
+      expect(refetch).not.toHaveBeenCalled();
+      expect(onFollowUp).not.toHaveBeenCalled();
+      expect(announce).not.toHaveBeenCalledWith(APPROVAL_STATUS.confirmFailed);
+      // The request is still pending: the decision can be pressed again.
+      expect(buttons().approve.getAttribute("aria-disabled")).not.toBe("true");
+    },
+  );
+
   describe("a transport failure is UNCONFIRMED", () => {
     it("keeps both buttons disabled and busy while the refetch is outstanding, then restores them if still pending", async () => {
       const check = deferred<RefetchResult>();

@@ -16,10 +16,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import * as classificationModule from "./classification.js";
 import {
+  type ApprovalRow,
   CAPABILITY_CLASSES,
   CAPABILITY_FAMILY_OPERATION,
   CAPABILITY_OPERATION,
   CLASSIFICATION,
+  type ClassificationRow,
   type ClassificationTable,
   classifyCapability,
   classifyOperation,
@@ -395,12 +397,59 @@ describe("no always-allow concept (Test 7, APPR-05)", () => {
         "class",
         "maxApprovalAgeMs",
         "modifiable",
+        "presence",
         "retry",
         "status",
         "summary",
         "ttlMs",
       ]);
     }
+  });
+});
+
+describe("every approval row states whether it needs the owner's presence (09-13, D-02)", () => {
+  const approvalRows: Array<[string, ApprovalRow]> = [];
+  for (const [name, row] of Object.entries(CLASSIFICATION) as Array<[string, ClassificationRow]>) {
+    if (row.class === "approval-required") approvalRows.push([name, row]);
+  }
+
+  it("gives every approval-required row a presence of required or none", () => {
+    expect(approvalRows.length).toBe(ENABLED.length + RESERVED.length);
+    for (const [name, row] of approvalRows) {
+      expect(["required", "none"], name).toContain(row.presence);
+    }
+  });
+
+  it("requires presence for exactly the external-write rows publish and automation.git-write", () => {
+    const required = approvalRows
+      .filter(([, row]) => row.presence === "required")
+      .map(([name]) => name)
+      .sort();
+    expect(required).toEqual(["automation.git-write", "publish"]);
+    // D-02: force-terminate keeps its Phase 6 behaviour.
+    expect(CLASSIFICATION["session.force-terminate"].presence).toBe("none");
+    expect(CLASSIFICATION["diagnostic.test"].presence).toBe("none");
+  });
+
+  it("has no production row that is both enabled and presence-required", () => {
+    for (const [name, row] of approvalRows) {
+      expect(row.status === "enabled" && row.presence === "required", name).toBe(false);
+    }
+  });
+
+  it("fails to compile when an approval row literal leaves presence out", () => {
+    // The compile-time half of the check: tsc fails this file if the directive below is unused.
+    // @ts-expect-error presence is a required property of ApprovalRow
+    const missing: ApprovalRow = {
+      class: "approval-required",
+      status: "reserved",
+      ttlMs: MINUTE,
+      maxApprovalAgeMs: MINUTE,
+      retry: "never",
+      modifiable: false,
+      summary: "a row that forgot its presence",
+    };
+    expect(missing.class).toBe("approval-required");
   });
 });
 
@@ -414,6 +463,7 @@ describe("the table type is usable for injection (D-43)", () => {
         maxApprovalAgeMs: MINUTE,
         retry: "never",
         modifiable: false,
+        presence: "none",
         summary: "a test operation",
       },
       "test.other": { class: "no-approval", reason: "a reason" },

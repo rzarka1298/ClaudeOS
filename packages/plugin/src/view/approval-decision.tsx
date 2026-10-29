@@ -345,6 +345,15 @@ export function ApprovalDecision(props: ApprovalDecisionProps): VNode {
       case "operation-reserved":
         props.announce(APPROVAL_STATUS.reserved);
         return;
+      case "presence-denied":
+        // The request is still pending and nothing ran: say so, and let the owner press again.
+        props.announce(APPROVAL_STATUS.presenceDenied);
+        props.notify(APPROVAL_STATUS.presenceDenied);
+        return;
+      case "presence-unavailable":
+        props.announce(APPROVAL_STATUS.presenceUnavailable);
+        props.notify(APPROVAL_STATUS.presenceUnavailable);
+        return;
       default:
         await resolveUnconfirmed();
     }

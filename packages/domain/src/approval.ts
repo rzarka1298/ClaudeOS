@@ -302,14 +302,21 @@ export const APPROVAL_AUDIT_EVENTS = [
   "retried-after-restart",
   "reconciled-executed",
   "lapsed",
+  // A connector-class approval refused for want of a verified presence proof (D-03). The request stays pending.
+  "presence-refused",
 ] as const;
 export type ApprovalAuditEvent = (typeof APPROVAL_AUDIT_EVENTS)[number];
 
 // ---------------------------------------------------------------------------
 // Decided-through channel (D-47)
 
-/** Which client made a decision: the plugin's own UI, or anything else on this machine. */
-export const DECIDED_VIA = ["plugin", "other"] as const;
+/**
+ * Which channel made a decision. `plugin` (the plugin's own UI) and `other` (anything else on this
+ * machine) are an unverified hint taken from a request header. `presence` means the engine verified
+ * a presence proof (D-03): only the engine writes it, after the proof checks out, and
+ * `normaliseDecidedVia` can never produce it.
+ */
+export const DECIDED_VIA = ["plugin", "other", "presence"] as const;
 export type DecidedVia = (typeof DECIDED_VIA)[number];
 /** The request header the plugin sets on a decision. A hint for the audit trail, never an authority. */
 export const DECIDED_VIA_HEADER = "X-Ccc-Decided-Via";
@@ -470,6 +477,14 @@ export function fitApprovalsSnapshotToBudget(
 // ---------------------------------------------------------------------------
 // Decide response and errors
 
+/**
+ * How long the presence helper may show its Touch ID or password prompt, in milliseconds
+ * (D-01, APPR-11). The single source: the helper adapter's prompt ceiling and the client's
+ * decide timeout both derive from it, so a decide call is never cut off while the owner is
+ * still at the prompt.
+ */
+export const PRESENCE_PROMPT_TIMEOUT_MS = 60_000;
+
 /** Every way a decision can end, as the service reports it. */
 export const APPROVAL_DECIDE_OUTCOMES = [
   "decided",
@@ -478,6 +493,8 @@ export const APPROVAL_DECIDE_OUTCOMES = [
   "already-decided",
   "not-found",
   "operation-reserved",
+  "presence-denied",
+  "presence-unavailable",
 ] as const;
 export type ApprovalDecideOutcome = (typeof APPROVAL_DECIDE_OUTCOMES)[number];
 
@@ -488,6 +505,10 @@ export const DecideResponseSchema = z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("already-decided"), state: ProposalStateSchema }),
   z.strictObject({ outcome: z.literal("not-found") }),
   z.strictObject({ outcome: z.literal("operation-reserved") }),
+  // A connector-class approval whose presence check was not passed (D-01, D-03). The request
+  // stays pending, nothing ran. Neither carries a member: the plugin owns the words.
+  z.strictObject({ outcome: z.literal("presence-denied") }),
+  z.strictObject({ outcome: z.literal("presence-unavailable") }),
 ]);
 export type DecideResponse = z.infer<typeof DecideResponseSchema>;
 

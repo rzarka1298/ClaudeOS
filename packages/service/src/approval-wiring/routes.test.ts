@@ -284,6 +284,8 @@ describe("decide outcomes (tracer test 6)", () => {
       { outcome: "already-decided", state: "denied" },
       { outcome: "not-found" },
       { outcome: "operation-reserved" },
+      { outcome: "presence-denied" },
+      { outcome: "presence-unavailable" },
     ] as const;
     expect(results.map((r) => r.outcome).sort()).toEqual([...APPROVAL_DECIDE_OUTCOMES].sort());
     for (const result of results) {

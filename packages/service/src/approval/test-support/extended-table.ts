@@ -13,6 +13,7 @@ export const EXTENDED_TABLE = {
     maxApprovalAgeMs: 60_000,
     retry: "never",
     modifiable: false,
+    presence: "none",
     summary: "send a fake message",
   },
   "connector.fake-reserved": {
@@ -22,6 +23,7 @@ export const EXTENDED_TABLE = {
     maxApprovalAgeMs: 60_000,
     retry: "never",
     modifiable: false,
+    presence: "none",
     summary: "send a reserved message",
   },
 } as const satisfies ClassificationTable;

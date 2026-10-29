@@ -105,6 +105,8 @@ export const NO_RISKS = "None listed.";
 export const DECIDED_THROUGH = {
   plugin: "The command center",
   other: "Another local client",
+  /** The verified channel (D-03): a presence proof was checked, not a header hint. */
+  presence: "The command center, confirmed with your Touch ID or password",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -165,6 +167,12 @@ export const APPROVAL_STATUS = {
   /** A request whose operation is not enabled yet; the service refuses it before anything changes. */
   reserved: "This kind of request can't be decided yet. Nothing was changed.",
   loadFailed: "Couldn't load this request.",
+  /** A connector-class approval whose Touch ID or password was not given; the request stays pending (D-01, D-03). */
+  presenceDenied:
+    "Approving this needs your Touch ID or password, and it wasn't given. Nothing was changed.",
+  /** The same approval where the check cannot run on this Mac right now. */
+  presenceUnavailable:
+    "Approving this needs your Touch ID or password, and that check isn't available on this Mac right now. Nothing was changed.",
 } as const;
 
 export function approvedNotice(title: string): string {
@@ -218,6 +226,7 @@ export const HISTORY_LABEL: Readonly<Record<ApprovalAuditEvent, string>> = {
   "retried-after-restart": "Retried after a restart",
   "reconciled-executed": "Carried out",
   lapsed: "Lapsed",
+  "presence-refused": "Approval refused: your Touch ID or password wasn't confirmed",
 };
 
 // ---------------------------------------------------------------------------

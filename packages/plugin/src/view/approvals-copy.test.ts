@@ -90,6 +90,12 @@ describe("the locked strings (UI-SPEC Copywriting Contract, Test 8)", () => {
       "Couldn't send your decision: the companion service didn't respond within 5 seconds. Checking whether it went through…",
     );
     expect(APPROVAL_STATUS.notThrough).toBe("It did not go through. You can decide again.");
+    expect(APPROVAL_STATUS.presenceDenied).toBe(
+      "Approving this needs your Touch ID or password, and it wasn't given. Nothing was changed.",
+    );
+    expect(APPROVAL_STATUS.presenceUnavailable).toBe(
+      "Approving this needs your Touch ID or password, and that check isn't available on this Mac right now. Nothing was changed.",
+    );
     expect(APPROVAL_STATUS.confirmFailed).toBe(
       "Couldn't confirm whether your decision went through. Refresh the list before deciding again.",
     );
@@ -98,6 +104,9 @@ describe("the locked strings (UI-SPEC Copywriting Contract, Test 8)", () => {
   it("names who made a decision in a fixed vocabulary", () => {
     expect(DECIDED_THROUGH.plugin).toBe("The command center");
     expect(DECIDED_THROUGH.other).toBe("Another local client");
+    expect(DECIDED_THROUGH.presence).toBe(
+      "The command center, confirmed with your Touch ID or password",
+    );
   });
 
   it("labels every audit event, and only from the fixed history vocabulary", () => {
@@ -115,6 +124,7 @@ describe("the locked strings (UI-SPEC Copywriting Contract, Test 8)", () => {
         "Outcome unknown",
         "Retried after a restart",
         "Lapsed",
+        "Approval refused: your Touch ID or password wasn't confirmed",
       ]),
     );
   });

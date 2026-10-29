@@ -956,6 +956,32 @@ describe("the record and history (Task 3, Test 9)", () => {
     expect(channel.getAttribute("data-channel")).toBe("other");
   });
 
+  it("says a presence-verified decision was confirmed with Touch ID or password, and labels a refusal (09-13)", async () => {
+    const { container } = setup({
+      detail: approvalDetail(
+        decidedView(
+          "approved",
+          { decidedVia: "presence" },
+          {
+            history: [
+              { event: "requested", at: "2026-10-06T11:59:00.000Z" },
+              { event: "presence-refused", at: "2026-10-06T11:59:30.000Z" },
+            ],
+          },
+        ),
+      ),
+    });
+    await loaded();
+    const channel = within(container as HTMLElement).getByText(
+      "The command center, confirmed with your Touch ID or password",
+    );
+    expect(channel.getAttribute("data-channel")).toBe("presence");
+    const items = container.querySelectorAll('[data-block="history"] ol > li');
+    expect(items[1]?.textContent).toContain(
+      "Approval refused: your Touch ID or password wasn't confirmed",
+    );
+  });
+
   it("lists at most twenty audit events in the fixed vocabulary with absolute times", async () => {
     const history = Array.from({ length: 25 }, (_, index) => ({
       event: index === 0 ? ("requested" as const) : ("claimed" as const),
