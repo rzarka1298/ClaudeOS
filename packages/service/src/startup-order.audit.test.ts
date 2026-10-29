@@ -272,6 +272,24 @@ describe("main.ts wires the presence helper and the pin reader (09-18 Task 3)", 
     expect(src.indexOf("guardPinReader(")).toBeLessThan(startAt);
   });
 
+  it("09-FIX9: one guarded pin read at service start, after the store opens and before recovery, makes boot the trust-on-first-use point and the install window", () => {
+    const openAt = src.indexOf("openStore(");
+    const readAt = src.indexOf("await presencePinReader()");
+    const startAt = src.indexOf("startApprovalServices({");
+    const recoverAt = src.indexOf("await approvals.recover()");
+    expect(src.match(/await presencePinReader\(\)/g) ?? []).toHaveLength(1);
+    expect(readAt).toBeGreaterThan(openAt);
+    expect(readAt).toBeGreaterThan(src.indexOf("guardPinReader("));
+    expect(readAt).toBeLessThan(startAt);
+    expect(readAt).toBeLessThan(recoverAt);
+  });
+
+  it("09-FIX9: the install marker is the time-bound, regular-file-only one", () => {
+    expect(src).toMatch(/installMarker: createInstallMarker\(\{/);
+    expect(src).toMatch(/maxAgeMs: PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS/);
+    expect(src).not.toMatch(/present: \(\) => existsSync/);
+  });
+
   it("reads the pin item only through the guarded reader: no other call of readItemComment", () => {
     const calls = (src.match(/readItemComment\b/g) ?? []).length;
     // The import and the one argument to pinReaderFromEnv.

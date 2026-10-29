@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { type Clock, DEFAULT_HEARTBEAT_INTERVAL_MS, type ProjectId, type RunId } from "@ccc/domain";
@@ -16,8 +16,10 @@ import {
 } from "@ccc/operational-store";
 import { approvalProofKey } from "./approval/index.js";
 import {
+  createInstallMarker,
   guardPinReader,
   PRESENCE_PIN_INSTALL_MARKER,
+  PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS,
   PRESENCE_PIN_META_KEY,
   pinReaderFromEnv,
   presencePortFromEnv,
@@ -370,7 +372,6 @@ async function main(): Promise<void> {
   // Under any test or sandbox environment (CCC_INSTALL_SECRET_ACCOUNT set) the port is the fail-closed one
   // and the reader answers null without touching the Keychain. The pin reader is guarded: it records the
   // SHA-256 of the first pin it sees and refuses a changed one outside an install (presence-pin-changed).
-  const presenceMarkerPath = join(runtimeDir, PRESENCE_PIN_INSTALL_MARKER);
   const presencePort = presencePortFromEnv(process.env, runtimeDir, {
     runner: commandRunner,
     exists: existsSync,
@@ -382,18 +383,21 @@ async function main(): Promise<void> {
       get: () => store.readServiceMeta(PRESENCE_PIN_META_KEY),
       set: (sha256Hex) => store.writeServiceMeta(PRESENCE_PIN_META_KEY, sha256Hex),
     },
-    installMarker: {
-      present: () => existsSync(presenceMarkerPath),
-      clear: () => {
-        try {
-          unlinkSync(presenceMarkerPath);
-        } catch {
-          // Already gone: the marker is single-use either way.
-        }
-      },
-    },
+    // The install's marker counts only as a plain file written within the last few minutes (09-FIX9).
+    installMarker: createInstallMarker({
+      path: join(runtimeDir, PRESENCE_PIN_INSTALL_MARKER),
+      now: () => Date.now(),
+      lstat: (path) => lstatSync(path),
+      unlink: (path) => unlinkSync(path),
+      maxAgeMs: PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS,
+    }),
     log: approvalLog,
   });
+  // One guarded read of the pin as the service starts (09-FIX9, after the store has opened): boot is the
+  // trust-on-first-use point, and the install that restarted this service has its marker used up inside its
+  // window rather than left lying about. The read is attribute-only (no Keychain prompt), bounded, and fails
+  // closed; under a test or sandbox environment it answers null without touching the Keychain.
+  await presencePinReader();
   const approvals = startApprovalServices({
     db: store.db,
     definitions: [

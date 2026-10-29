@@ -292,6 +292,64 @@ export const PRESENCE_PIN_META_KEY = "presence_pin_sha256";
 /** The file the install script leaves in the runtime directory after it enrols a key (consumed by the guard). */
 export const PRESENCE_PIN_INSTALL_MARKER = "presence-pin-installed";
 
+/**
+ * How long an install's marker counts: ten minutes. The install restarts the service straight after it enrols, and
+ * the service reads the pin as it starts (09-FIX9), so a real marker is used within seconds. A marker older than
+ * this is a leftover or a plant, not an install.
+ */
+export const PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS = 10 * 60 * 1000;
+
+/** What the install marker is right now: not there, usable, too old (or dated in the future), or not a plain file. */
+export type InstallMarkerState = "absent" | "fresh" | "stale" | "not-regular";
+
+export interface InstallMarker {
+  /** Looks at the marker without following a link; never throws. */
+  inspect(): InstallMarkerState;
+  /** Removes the marker if it is there (a link is removed, not followed); never throws. */
+  clear(): void;
+}
+
+export interface InstallMarkerOptions {
+  /** The marker file, `<runtime dir>/presence-pin-installed`. */
+  readonly path: string;
+  /** The wall clock in epoch milliseconds. */
+  readonly now: () => number;
+  /** `lstatSync`: stat without following a symbolic link. */
+  readonly lstat: (path: string) => { isFile(): boolean; mtimeMs: number };
+  readonly unlink: (path: string) => void;
+  /** Defaults to {@link PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS}. */
+  readonly maxAgeMs?: number;
+}
+
+/**
+ * The marker `install.sh` leaves after a successful enrol (09-FIX9): fresh only while it is a plain file whose
+ * modification time lies within the window behind now. A directory, a link, a pipe, a file older than the window
+ * and a file dated more than a minute ahead are not an install and are never honoured.
+ */
+export function createInstallMarker(options: InstallMarkerOptions): InstallMarker {
+  const maxAgeMs = options.maxAgeMs ?? PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS;
+  return {
+    inspect() {
+      let stat: ReturnType<InstallMarkerOptions["lstat"]>;
+      try {
+        stat = options.lstat(options.path);
+      } catch {
+        return "absent";
+      }
+      if (!stat.isFile()) return "not-regular";
+      const ageMs = options.now() - stat.mtimeMs;
+      return ageMs <= maxAgeMs && ageMs >= -60_000 ? "fresh" : "stale";
+    },
+    clear() {
+      try {
+        options.unlink(options.path);
+      } catch {
+        // Already gone (or a directory that cannot be unlinked): the marker is single-use either way.
+      }
+    },
+  };
+}
+
 export interface PinGuardDeps {
   /** The raw pin reader (see {@link pinReaderFromEnv}). */
   readonly read: PinReader;
@@ -300,38 +358,51 @@ export interface PinGuardDeps {
     get(): string | null;
     set(sha256Hex: string): void;
   };
-  /** Whether the install script has enrolled a key since the marker was last cleared. */
-  readonly installMarker: {
-    present(): boolean;
-    clear(): void;
-  };
+  /** The install script's marker (see {@link createInstallMarker}). */
+  readonly installMarker: InstallMarker;
   readonly log: Pick<ApprovalLog, "info" | "warn">;
 }
 
 /**
  * Detection for the delete-and-recreate residual (09-PRESENCE-SPIKE.md, "Residual"): trust on first use.
  *
- * - The first pin the service sees is recorded as its SHA-256 and returned.
+ * - The first pin the service sees is recorded as its SHA-256 and returned. The service reads the pin once as it
+ *   starts (09-FIX9), so install or first boot is that first sight, not the first presence-required approve.
  * - A later read equal to the record is returned as is.
- * - A later read that DIFFERS is accepted only when the install script left its marker (the install is the one
- *   legitimate writer of the pin item): the new hash is recorded, the marker used up, `presence-pin-adopted` is
- *   logged. Otherwise the pin is NOT returned (null, so presence signatures cannot verify and presence-required
- *   rows fail closed) and the closed warning `presence-pin-changed` is logged once for each distinct changed
- *   pin per process. Nothing else is logged: never the pin and never its hash.
+ * - A later read that DIFFERS is accepted only when the install script left a FRESH marker (a plain file inside
+ *   the window of {@link PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS}): the new hash is recorded, the marker used up
+ *   and `presence-pin-adopted` logged at warn level. Otherwise the pin is NOT returned (null, so presence
+ *   signatures cannot verify and presence-required rows wait for it) and the closed warning
+ *   `presence-pin-changed` is logged once for each distinct changed pin per process.
+ * - A marker that is stale or not a plain file is deleted and ignored, with the closed warning
+ *   `presence-pin-marker-ignored` (once per process), so it can never sit around waiting for a pin to be replaced.
+ *   Nothing else is logged: never the pin and never its hash.
  *
  * The marker is cleared on any read that sees a pin, so it is never a standing permission. This is detection,
- * not prevention: a same-user process that can also write the marker file and the service store can still
- * replace the record, which is why the spike keeps the verdict at partially met.
+ * not prevention: a same-user process that replaces the pin item and writes a fresh marker file within the window
+ * (or that also rewrites the record in the service store) is adopted, which is why the spike keeps the verdict at
+ * partially met.
  */
 export function guardPinReader(deps: PinGuardDeps): PinReader {
   const warned = new Set<string>();
+  let markerIgnoredLogged = false;
   return async () => {
     try {
       const pin = await deps.read();
       if (pin === null) return null;
       const fingerprint = createHash("sha256").update(pin, "utf8").digest("hex");
       const recorded = deps.recorded.get();
-      const installing = deps.installMarker.present();
+      let installing = false;
+      const marker = deps.installMarker.inspect();
+      if (marker === "stale" || marker === "not-regular") {
+        deps.installMarker.clear();
+        if (!markerIgnoredLogged) {
+          markerIgnoredLogged = true;
+          deps.log.warn({ code: "presence-pin-marker-ignored" });
+        }
+      } else {
+        installing = marker === "fresh";
+      }
       if (recorded === null) {
         deps.recorded.set(fingerprint);
         if (installing) deps.installMarker.clear();
@@ -344,7 +415,7 @@ export function guardPinReader(deps: PinGuardDeps): PinReader {
       if (installing) {
         deps.recorded.set(fingerprint);
         deps.installMarker.clear();
-        deps.log.info({ code: "presence-pin-adopted" });
+        deps.log.warn({ code: "presence-pin-adopted" });
         return pin;
       }
       if (!warned.has(fingerprint)) {
