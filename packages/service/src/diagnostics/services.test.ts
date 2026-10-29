@@ -435,3 +435,216 @@ describe("FIX2A m1: the result cache runs on a monotonic clock", () => {
     expect(runs).toBe(2);
   });
 });
+
+describe("09-19 Task 1: the approval presence member (D-04, T-09-42, T-09-43)", () => {
+  type Port = NonNullable<DiagnosticsPorts["approvalPresence"]>;
+  type Check = Awaited<ReturnType<Port["check"]>>;
+
+  function portOf(options: {
+    precheck?: ReturnType<Port["precheck"]>;
+    check?: () => Promise<Check>;
+  }) {
+    const calls = { precheck: 0, check: 0 };
+    const port: Port = {
+      precheck: () => {
+        calls.precheck += 1;
+        return options.precheck ?? null;
+      },
+      check: () => {
+        calls.check += 1;
+        return (options.check ?? (() => Promise.resolve(AVAILABLE)))();
+      },
+    };
+    return { port, calls };
+  }
+  const AVAILABLE: Check = { state: "available", reason: null, fingerprint: "0a1b2c3d" };
+
+  it("without the port the member is absent (an unwired service never claims anything)", async () => {
+    const response = await build().check("gesture");
+    expect(response.approvalPresence).toBeUndefined();
+    expect(response.approvalPresenceReason).toBeUndefined();
+    expect(response.approvalPresencePin).toBeUndefined();
+  });
+
+  it("Test 2 (tracer): an absent helper is unavailable on any trigger and the check is never called", async () => {
+    const { port, calls } = portOf({ precheck: "helper-missing" });
+    const services = build({ approvalPresence: port });
+    for (const trigger of ["reconnect", "gesture"] as const) {
+      vi.advanceTimersByTime(2001);
+      const response = await services.check(trigger);
+      expect(response.approvalPresence).toBe("unavailable");
+      expect(response.approvalPresenceReason).toBe("helper-missing");
+      expect(response.approvalPresencePin).toBeUndefined();
+    }
+    expect(calls.check).toBe(0);
+  });
+
+  it("Test 2: a sandbox service reads unavailable with the sandbox reason and never calls the check", async () => {
+    const { port, calls } = portOf({ precheck: "sandbox" });
+    const response = await build({ approvalPresence: port }).check("gesture");
+    expect(response).toMatchObject({
+      approvalPresence: "unavailable",
+      approvalPresenceReason: "sandbox",
+    });
+    expect(calls.check).toBe(0);
+  });
+
+  it("Test 2: with the helper present a reconnect reads unknown without calling the check; a gesture calls it once and reports its answer", async () => {
+    const { port, calls } = portOf({});
+    const services = build({ approvalPresence: port });
+    const reconnect = await services.check("reconnect");
+    expect(reconnect.approvalPresence).toBe("unknown");
+    expect(reconnect.approvalPresenceReason).toBeUndefined();
+    expect(calls.check).toBe(0);
+    vi.advanceTimersByTime(2001);
+    const gesture = await services.check("gesture");
+    expect(gesture).toMatchObject({
+      approvalPresence: "available",
+      approvalPresencePin: "0a1b2c3d",
+    });
+    expect(gesture.approvalPresenceReason).toBeUndefined();
+    expect(calls.check).toBe(1);
+  });
+
+  it("Test 2: a second gesture inside two seconds is served from the cache (one check)", async () => {
+    const { port, calls } = portOf({});
+    const services = build({ approvalPresence: port });
+    await services.check("gesture");
+    vi.advanceTimersByTime(1999);
+    const second = await services.check("gesture");
+    expect(second.approvalPresence).toBe("available");
+    expect(calls.check).toBe(1);
+    vi.advanceTimersByTime(2);
+    await services.check("gesture");
+    expect(calls.check).toBe(2);
+  });
+
+  it("Test 3: a check that throws is unavailable (check-failed), never available", async () => {
+    const { port } = portOf({ check: () => Promise.reject(new Error("boom")) });
+    const response = await build({ approvalPresence: port }).check("gesture");
+    expect(response).toMatchObject({
+      approvalPresence: "unavailable",
+      approvalPresenceReason: "check-failed",
+    });
+    expect(response.approvalPresencePin).toBeUndefined();
+  });
+
+  it("Test 3: a check that exceeds its deadline is unavailable (check-failed) and leaves no timer", async () => {
+    const { port } = portOf({ check: () => new Promise(() => undefined) });
+    const pending = build({ approvalPresence: port }).check("gesture");
+    await vi.advanceTimersByTimeAsync(10_000);
+    const response = await pending;
+    expect(response).toMatchObject({
+      approvalPresence: "unavailable",
+      approvalPresenceReason: "check-failed",
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("an answer outside the contract is unavailable, not available (a misbehaving port cannot fabricate availability)", async () => {
+    for (const bad of [
+      { state: "AVAILABLE", reason: null, fingerprint: null },
+      { state: "available", reason: "because", fingerprint: null },
+      { state: "available", reason: null, fingerprint: "MIIBIjANBgkqhkiG9w0BAQEFAAOC" },
+      null,
+      "available",
+    ]) {
+      const { port } = portOf({ check: () => Promise.resolve(bad as never) });
+      const response = await build({ approvalPresence: port }).check("gesture");
+      expect(response.approvalPresence, JSON.stringify(bad)).toBe("unavailable");
+      expect(response.approvalPresencePin).toBeUndefined();
+    }
+  });
+
+  it("an unavailable answer keeps its closed reason and the fingerprint of the pin (so a swapped key can be compared)", async () => {
+    const { port } = portOf({
+      check: () =>
+        Promise.resolve({ state: "unavailable", reason: "pin-changed", fingerprint: "deadbeef" }),
+    });
+    const response = await build({ approvalPresence: port }).check("gesture");
+    expect(response).toMatchObject({
+      approvalPresence: "unavailable",
+      approvalPresenceReason: "pin-changed",
+      approvalPresencePin: "deadbeef",
+    });
+    expect(DiagnosticsHealthResponseSchema.safeParse(response).success).toBe(true);
+  });
+
+  it("an available answer without a reason is the only way to read available", async () => {
+    const { port } = portOf({
+      check: () =>
+        Promise.resolve({ state: "available", reason: "not-enrolled", fingerprint: null }),
+    });
+    const response = await build({ approvalPresence: port }).check("gesture");
+    expect(response.approvalPresence).toBe("unavailable");
+  });
+});
+
+describe("09-FIX10A MAJOR 2 and 3: a reconnect never repeats a gesture's answer", () => {
+  type Port = NonNullable<DiagnosticsPorts["approvalPresence"]>;
+
+  function swappable() {
+    let precheck: ReturnType<Port["precheck"]> = null;
+    let checks = 0;
+    const port: Port = {
+      precheck: () => precheck,
+      check: () => {
+        checks += 1;
+        return Promise.resolve({ state: "available", reason: null, fingerprint: "0a1b2c3d" });
+      },
+    };
+    return {
+      port,
+      setPrecheck: (value: ReturnType<Port["precheck"]>) => {
+        precheck = value;
+      },
+      checks: () => checks,
+    };
+  }
+
+  it("MAJOR 2: removing the helper and putting it back inside five minutes does not resurrect the old available answer or its fingerprint", async () => {
+    const h = swappable();
+    const services = build({ approvalPresence: h.port });
+    expect((await services.check("gesture")).approvalPresence).toBe("available");
+    vi.advanceTimersByTime(3000);
+    h.setPrecheck("helper-missing");
+    expect(await services.check("reconnect")).toMatchObject({
+      approvalPresence: "unavailable",
+      approvalPresenceReason: "helper-missing",
+    });
+    vi.advanceTimersByTime(3000);
+    h.setPrecheck(null);
+    const back = await services.check("reconnect");
+    expect(back.approvalPresence).toBe("unknown");
+    expect(back.approvalPresencePin).toBeUndefined();
+    expect(h.checks()).toBe(1);
+  });
+
+  it("MAJOR 3: a reconnect minutes after a gesture does not repeat Available under a fresh generatedAt (the Stale window cannot be reset)", async () => {
+    const h = swappable();
+    const services = build({ approvalPresence: h.port });
+    const gesture = await services.check("gesture");
+    expect(gesture.approvalPresence).toBe("available");
+    vi.advanceTimersByTime(4 * 60 * 1000);
+    const reconnect = await services.check("reconnect");
+    expect(reconnect.generatedAt).not.toBe(gesture.generatedAt);
+    expect(reconnect.approvalPresence).toBe("unknown");
+    expect(reconnect.approvalPresencePin).toBeUndefined();
+    expect(h.checks()).toBe(1);
+  });
+
+  it("a non-available gesture answer is not repeated either: the next reconnect reads unknown", async () => {
+    const services = build({
+      approvalPresence: {
+        precheck: () => null,
+        check: () =>
+          Promise.resolve({ state: "unavailable", reason: "not-enrolled", fingerprint: null }),
+      },
+    });
+    expect((await services.check("gesture")).approvalPresenceReason).toBe("not-enrolled");
+    vi.advanceTimersByTime(3000);
+    const reconnect = await services.check("reconnect");
+    expect(reconnect.approvalPresence).toBe("unknown");
+    expect(reconnect.approvalPresenceReason).toBeUndefined();
+  });
+});

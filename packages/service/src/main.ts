@@ -18,10 +18,12 @@ import { approvalProofKey } from "./approval/index.js";
 import {
   createInstallMarker,
   guardPinReader,
+  isPresenceSandbox,
   PRESENCE_PIN_INSTALL_MARKER,
   PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS,
   PRESENCE_PIN_META_KEY,
   pinReaderFromEnv,
+  presenceHelperPath,
   presencePortFromEnv,
 } from "./approval-wiring/presence.js";
 import { createProposeForceTerminate } from "./approval-wiring/proposer.js";
@@ -38,7 +40,10 @@ import {
 } from "./codex/detection.js";
 import { type CodexServices, startCodexServices } from "./codex/services.js";
 import { createDiagnosticsServices } from "./diagnostics/services.js";
-import { createDiagnosticsPortSets } from "./diagnostics-wiring.js";
+import {
+  createApprovalPresenceDiagnosticsPort,
+  createDiagnosticsPortSets,
+} from "./diagnostics-wiring.js";
 import { createEventBus } from "./events/event-bus.js";
 // The composition root is the ONLY importer of the executors folder (APPR-01,
 // T-06-02): effect code is reachable only through the engine's definitions.
@@ -377,6 +382,8 @@ async function main(): Promise<void> {
     exists: existsSync,
     homeDir,
   });
+  // Diagnostics reads the pin through `presencePinReader.observed`, which returns the conclusion of that very read
+  // (a verdict and a short non-secret fingerprint, never the pin): no shared "latest" state (09-FIX10A).
   const presencePinReader = guardPinReader({
     read: pinReaderFromEnv(process.env, readItemComment),
     recorded: {
@@ -517,6 +524,15 @@ async function main(): Promise<void> {
       probeBundle: (bundleId, options) => launchers.detector.probeBundle(bundleId, options),
       isExecutableFile,
       installSecretPresent: installSecret.length > 0,
+      // 09-19 (D-04): the presence check Diagnostics reports, on an owner gesture only. Under a test or sandbox
+      // environment it starts nothing and reads nothing; otherwise it asks the helper's non-prompting `check`
+      // and makes one guarded, attribute-only pin read.
+      approvalPresence: createApprovalPresenceDiagnosticsPort({
+        sandbox: isPresenceSandbox(process.env),
+        helperPresent: () => existsSync(presenceHelperPath(runtimeDir)),
+        inspect: () => presencePort.inspect(),
+        readPin: presencePinReader.observed,
+      }),
       db: store.db,
       now: () => new Date(),
     }),

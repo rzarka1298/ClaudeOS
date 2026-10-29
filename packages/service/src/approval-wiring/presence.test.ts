@@ -35,6 +35,8 @@ import {
   createHelperPresencePort,
   createInstallMarker,
   guardPinReader,
+  isPresenceSandbox,
+  type PinObservation,
   PRESENCE_CHECK_TIMEOUT_MS,
   PRESENCE_HELPER_KILL_MS,
   PRESENCE_HELPER_MAX_OUTPUT_BYTES,
@@ -783,5 +785,278 @@ describe("createInstallMarker: a single-use, time-bound file (09-FIX9)", () => {
     expect(await read()).toBe("pin-two");
     expect(existsSync(f.path)).toBe(false);
     expect(lines).toEqual([{ code: "presence-pin-adopted" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-19: the closed reason behind an unavailable check, and the pin observation Diagnostics shows
+
+describe("09-19: inspect() names why the presence check is unavailable (closed reasons, never free text)", () => {
+  it("helper absent: helper-missing, no spawn", async () => {
+    const fake = fakeHelper();
+    rmSync(fake.helperPath);
+    expect(await port(fake).inspect()).toEqual({ state: "unavailable", reason: "helper-missing" });
+    expect(fake.calls()).toEqual([]);
+  });
+
+  it("available has no reason and agrees with availability()", async () => {
+    const fake = fakeHelper();
+    fake.control({ exit: 0, stdout: `${CHECK_OK}\n` });
+    expect(await port(fake).inspect()).toEqual({ state: "available", reason: null });
+  });
+
+  it("cannot evaluate, not enrolled and stale are told apart", async () => {
+    const fake = fakeHelper();
+    fake.control({ exit: 3, stdout: '{"v":1,"canEvaluate":false,"error":-5}\n' });
+    expect(await port(fake).inspect()).toEqual({ state: "unavailable", reason: "cannot-evaluate" });
+    fake.control({ exit: 0, stdout: '{"v":1,"canEvaluate":false,"enrolled":true}\n' });
+    expect(await port(fake).inspect()).toEqual({ state: "unavailable", reason: "cannot-evaluate" });
+    fake.control({ exit: 0, stdout: '{"v":1,"canEvaluate":true,"enrolled":false}\n' });
+    expect(await port(fake).inspect()).toEqual({ state: "unavailable", reason: "not-enrolled" });
+    fake.control({
+      exit: 0,
+      stdout: '{"v":1,"canEvaluate":true,"enrolled":false,"stale":true}\n',
+    });
+    expect(await port(fake).inspect()).toEqual({ state: "unavailable", reason: "pin-stale" });
+    // A contradictory line is a failed check, never available.
+    fake.control({ exit: 0, stdout: '{"v":1,"canEvaluate":true,"enrolled":true,"stale":true}\n' });
+    expect(await port(fake).inspect()).toEqual({ state: "unavailable", reason: "pin-stale" });
+  });
+
+  it("every malformed, truncated, doubled or non-zero outcome is check-failed", async () => {
+    const fake = fakeHelper();
+    for (const stdout of [
+      "",
+      "ok\n",
+      `${CHECK_OK}\n${CHECK_OK}\n`,
+      '{"v":2,"canEvaluate":true}\n',
+    ]) {
+      fake.control({ exit: 0, stdout });
+      expect(await port(fake).inspect(), JSON.stringify(stdout)).toEqual({
+        state: "unavailable",
+        reason: "check-failed",
+      });
+    }
+    fake.control({ exit: 5, stdout: `${CHECK_OK}\n` });
+    expect(await port(fake).inspect()).toEqual({ state: "unavailable", reason: "check-failed" });
+  });
+
+  it("a timed-out check is check-failed", async () => {
+    const { runner } = scriptedRunner({ timedOut: true, exitCode: null });
+    const p = createHelperPresencePort({
+      helperPath: "/Users/<username>/.claude-command-center/bin/ccc-presence",
+      runner,
+      exists: () => true,
+      homeDir: HOME,
+      custody: "K-ATTR",
+    });
+    expect(await p.inspect()).toEqual({ state: "unavailable", reason: "check-failed" });
+  });
+
+  it("the sandbox port answers sandbox and spawns nothing (T-09-33)", async () => {
+    const { runner, seen } = scriptedRunner({ stdout: `${CHECK_OK}\n` });
+    const p = presencePortFromEnv({ CCC_INSTALL_SECRET_ACCOUNT: "x" }, "/Users/<username>/rt", {
+      runner,
+      exists: () => true,
+      homeDir: HOME,
+    });
+    expect(await p.inspect()).toEqual({ state: "unavailable", reason: "sandbox" });
+    expect(seen).toEqual([]);
+    expect(isPresenceSandbox({ CCC_INSTALL_SECRET_ACCOUNT: "x" })).toBe(true);
+    expect(isPresenceSandbox({})).toBe(false);
+  });
+});
+
+describe("09-19: guardPinReader reports what it saw (verdict and a short non-secret fingerprint)", () => {
+  const sha = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+  function observed(
+    initial: string | null,
+    current: string | null,
+    marker: "absent" | "fresh" = "absent",
+  ) {
+    const seen: PinObservation[] = [];
+    let recorded = initial;
+    let markerState: "absent" | "fresh" = marker;
+    const read = guardPinReader({
+      read: async () => current,
+      recorded: {
+        get: () => recorded,
+        set: (v) => {
+          recorded = v;
+        },
+      },
+      installMarker: {
+        inspect: () => markerState,
+        clear: () => {
+          markerState = "absent";
+        },
+      },
+      log: { info: () => undefined, warn: () => undefined },
+      observe: (o) => void seen.push(o),
+    });
+    return { read, seen };
+  }
+
+  it("a first pin is trusted with the first eight hex characters of its SHA-256", async () => {
+    const g = observed(null, "pin-one");
+    await g.read();
+    expect(g.seen).toEqual([{ verdict: "trusted", fingerprint: sha("pin-one").slice(0, 8) }]);
+  });
+
+  it("a changed pin outside an install is changed, carrying the fingerprint of the pin now in the Keychain", async () => {
+    const g = observed(sha("pin-one"), "pin-two");
+    expect(await g.read()).toBeNull();
+    expect(g.seen).toEqual([{ verdict: "changed", fingerprint: sha("pin-two").slice(0, 8) }]);
+  });
+
+  it("an adopted pin (fresh install marker) is adopted", async () => {
+    const g = observed(sha("pin-one"), "pin-two", "fresh");
+    await g.read();
+    expect(g.seen).toEqual([{ verdict: "adopted", fingerprint: sha("pin-two").slice(0, 8) }]);
+  });
+
+  it("no pin, or a read that throws, is none with no fingerprint", async () => {
+    const none = observed(null, null);
+    await none.read();
+    expect(none.seen).toEqual([{ verdict: "none", fingerprint: null }]);
+    const seen: PinObservation[] = [];
+    const read = guardPinReader({
+      read: async () => {
+        throw new Error("boom");
+      },
+      recorded: { get: () => null, set: () => undefined },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+      observe: (o) => void seen.push(o),
+    });
+    expect(await read()).toBeNull();
+    expect(seen).toEqual([{ verdict: "none", fingerprint: null }]);
+  });
+
+  it("the fingerprint is never the pin and never longer than eight hex characters", async () => {
+    const g = observed(null, "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA");
+    await g.read();
+    const fp = g.seen[0]?.fingerprint ?? "";
+    expect(fp).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it("observe is optional (existing callers are unchanged)", async () => {
+    const read = guardPinReader({
+      read: async () => "pin",
+      recorded: { get: () => null, set: () => undefined },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+    });
+    expect(await read()).toBe("pin");
+  });
+});
+
+describe("09-FIX10A: observed() hands each read its own conclusion", () => {
+  const sha = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+  it("two reads in flight through one guard each report their own verdict, whichever settles last", async () => {
+    const pins = ["pin-two", "pin-one"];
+    const releases: (() => void)[] = [];
+    const guard = guardPinReader({
+      read: () =>
+        new Promise<string | null>((resolve) => {
+          const pin = pins.shift() ?? null;
+          releases.push(() => resolve(pin));
+        }),
+      recorded: { get: () => sha("pin-one"), set: () => undefined },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+    });
+    const first = guard.observed(); // sees pin-two: changed
+    const second = guard.observed(); // sees pin-one: trusted
+    releases[1]?.();
+    releases[0]?.();
+    expect(await second).toEqual({
+      pin: "pin-one",
+      observation: { verdict: "trusted", fingerprint: sha("pin-one").slice(0, 8) },
+    });
+    expect(await first).toEqual({
+      pin: null,
+      observation: { verdict: "changed", fingerprint: sha("pin-two").slice(0, 8) },
+    });
+  });
+
+  it("the plain reader and observed() are one guard: same pin, same record", async () => {
+    let recorded: string | null = null;
+    const guard = guardPinReader({
+      read: async () => "pin-one",
+      recorded: {
+        get: () => recorded,
+        set: (v) => {
+          recorded = v;
+        },
+      },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+    });
+    expect(await guard()).toBe("pin-one");
+    expect(recorded).toBe(sha("pin-one"));
+    expect((await guard.observed()).observation.verdict).toBe("trusted");
+  });
+});
+
+describe("09-FIX10A MINOR 4: an error code beside canEvaluate:true is a contradiction, never available", () => {
+  it("reads check-failed from inspect() and unavailable from availability(), at exit 0", async () => {
+    const fake = fakeHelper();
+    for (const stdout of [
+      '{"v":1,"canEvaluate":true,"enrolled":true,"error":-5}\n',
+      '{"v":1,"canEvaluate":true,"biometry":"touch-id","enrolled":true,"error":0}\n',
+    ]) {
+      fake.control({ exit: 0, stdout });
+      expect(await port(fake).inspect(), stdout).toEqual({
+        state: "unavailable",
+        reason: "check-failed",
+      });
+      expect(await port(fake).availability(), stdout).toBe("unavailable");
+    }
+  });
+
+  it("a cannot-evaluate line keeps its error code and still reads cannot-evaluate", async () => {
+    const fake = fakeHelper();
+    fake.control({ exit: 3, stdout: '{"v":1,"canEvaluate":false,"error":-5}\n' });
+    expect(await port(fake).inspect()).toEqual({ state: "unavailable", reason: "cannot-evaluate" });
+  });
+});
+
+describe("09-FIX10A MINOR 7: a throwing observe hook never changes what the guard returns", () => {
+  const sha = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+  it("the pin, the record and the warning are the same with an observe that throws", async () => {
+    const lines: Record<string, unknown>[] = [];
+    let recorded: string | null = sha("pin-one");
+    const guard = guardPinReader({
+      read: async () => "pin-two",
+      recorded: {
+        get: () => recorded,
+        set: (v) => {
+          recorded = v;
+        },
+      },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: (fields) => void lines.push(fields) },
+      observe: () => {
+        throw new Error("listener failed");
+      },
+    });
+    expect(await guard()).toBeNull();
+    expect(lines).toEqual([{ code: "presence-pin-changed" }]);
+    expect(recorded).toBe(sha("pin-one"));
+    const trusted = guardPinReader({
+      read: async () => "pin-one",
+      recorded: { get: () => sha("pin-one"), set: () => undefined },
+      installMarker: { inspect: () => "absent", clear: () => undefined },
+      log: { info: () => undefined, warn: () => undefined },
+      observe: () => {
+        throw new Error("listener failed");
+      },
+    });
+    expect(await trusted()).toBe("pin-one");
+    expect((await trusted.observed()).observation.verdict).toBe("trusted");
   });
 });

@@ -77,6 +77,7 @@ export const SETTINGS_TEXT_TABLE = {
   // Security and Paths facts (names of the dl rows).
   factInstallSecret: ["Install secret in keychain", SECURITY, "fragment"],
   factResearchKey: ["Research key in keychain", SECURITY, "fragment"],
+  factApprovalPresence: ["Approval presence check", SECURITY, "fragment"],
   factServiceConnection: ["Service connection", SECURITY, "fragment"],
   factNetworkListener: ["Network listener", SECURITY, "fragment"],
   factConnectionTokens: ["Connection tokens", SECURITY, "fragment"],
@@ -91,6 +92,13 @@ export const SETTINGS_TEXT_TABLE = {
   securityAlways: ["No always-allow control exists.", SECURITY, "fragment"],
   chipPresent: ["Present", SECURITY, "literal"],
   chipMissing: ["Missing", SECURITY, "literal"],
+  chipAvailable: ["Available", SECURITY, "literal"],
+  chipUnavailable: ["Unavailable", SECURITY, "literal"],
+  approvalPresenceSentence: [
+    "Approvals for connectors need Touch ID or your password",
+    SECURITY,
+    "fragment",
+  ],
   chipUnknown: ["Unknown", `packages/domain/src/diagnostics.ts`, "literal"],
   chipNeedsSetup: ["Needs setup", `packages/domain/src/diagnostics.ts`, "literal"],
   copyKeySetup: ["Copy key setup command", SECURITY, "literal"],

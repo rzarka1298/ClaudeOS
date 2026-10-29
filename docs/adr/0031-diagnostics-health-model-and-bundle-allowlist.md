@@ -163,6 +163,39 @@ of this version" rows with no Connect button and are not in the bundle; **OD-4**
 an owner-run script is offered, with no in-app credential change in milestone 1; **OD-5**, the bundle holds schema-only
 facts, no log lines and no free text, delivered by Copy and a Save dialog.
 
+### 8. Phase 9 amendment (2026-10-29): whether the owner's presence can be checked (`09-19`, D-04, APPR-11)
+
+Connector-class approvals need the owner's Touch ID or password (`09-PRESENCE-SPIKE.md`)
+and are refused while the helper cannot ask. The owner needs to see that before wondering why an approval failed, so the
+health response gains three **optional, strict** members beside `keychain`. It is not a seventh subsystem: `SUBSYSTEM_IDS`
+stays six and the row tuple is unchanged (D-41 kept).
+
+- `approvalPresence`: `available`, `unavailable` or `unknown`. An older service that sends nothing reads `Unknown` in the
+  plugin, never `Available` (Pitfall 17).
+- `approvalPresenceReason`: a closed code, meaningful only with `unavailable`: `helper-missing` (not built),
+  `not-enrolled` (no key yet), `pin-stale` (the helper was rebuilt after its key was set up), `pin-changed` (the stored
+  key is not the one the service trusted), `cannot-evaluate` (the Mac cannot ask), `check-failed` (the check failed or did
+  not answer in time) and `sandbox` (a test service that never starts the helper). The reviewers of waves 5, 6 and 9
+  asked for these to be told apart rather than a bare available or unavailable. An answer that carries a reason with any
+  state but `unavailable` contradicts itself, and the plugin does not trust it (it reads `Unknown`).
+- `approvalPresencePin`: the first eight lowercase hex characters of the SHA-256 of the pinned public key, so the owner
+  can compare it across installs and notice a swapped key (the detection plan in `09-PRESENCE-SPIKE.md`, "Residual"). It
+  is a short hash prefix of a public key: not secret, and not a path or a name.
+
+**How it is computed.** An absent helper (or a sandbox service, `CCC_INSTALL_SECRET_ACCOUNT` set) is `unavailable` at once,
+on every trigger, and nothing is started. Otherwise the member is `unknown` until an owner gesture; a gesture runs the
+helper's non-prompting `check` and one guarded, attribute-only pin read through a port the composition root builds (rule
+18 keeps `src/diagnostics/` free of processes), under the existing two-second gesture cache and a deadline. A reconnect
+never runs it and never repeats an earlier answer: it reads `unknown` (an absent helper still reads `unavailable` at once).
+Unlike the research key, nothing is remembered, because a remembered answer would be served under a new `generatedAt` and
+restart the plugin's Stale window, and would outlive a helper that was removed and put back (`09-FIX10A`). `available` needs both the helper's own check and a pin the service trusts; a pin the guard refused is
+`unavailable` with `pin-changed` whatever the helper says, and a failed, overdue or malformed check is `unavailable` with
+`check-failed`, never `available` and never a blank.
+
+**The bundle allowlist is unchanged.** D-04 asks for Diagnostics, not for the bug-report bundle. None of the three members
+is copied into the bundle, so the verifier and the corpus are untouched; the members exist only in the live health
+response and in Settings, under Security.
+
 ## Consequences
 
 - A new subsystem state is a new reason code with a status in a table and a line of copy; the build fails until both exist.

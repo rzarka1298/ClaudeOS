@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import {
   type ApprovalLog,
+  type ApprovalPresenceReason,
   PAYLOAD_HASH_PATTERN,
   PRESENCE_PROMPT_TIMEOUT_MS,
   PROPOSAL_ID_PATTERN,
@@ -57,6 +58,21 @@ export const RECORDED_PRESENCE_CUSTODY: PresenceCustody = "K-ATTR";
 function schemeOf(custody: PresenceCustody): "p256" | "none" {
   return custody === "K-SVC" ? "none" : "p256";
 }
+
+/**
+ * What the non-prompting `check` found, with the closed reason when it is unavailable (09-19). `availability()`
+ * is this answer's `state`; Diagnostics shows the reason so the owner can tell a helper that was never built from
+ * one that is not enrolled, was rebuilt, or did not answer.
+ */
+export interface PresenceInspection {
+  readonly state: "available" | "unavailable";
+  readonly reason: ApprovalPresenceReason | null;
+}
+
+/** A presence port that can also say why its check is unavailable. */
+export type InspectablePresencePort = PresencePort & {
+  inspect(): Promise<PresenceInspection>;
+};
 
 export interface HelperPresencePortOptions {
   /** Absolute path of the built helper, `<runtime dir>/bin/ccc-presence`. */
@@ -121,15 +137,20 @@ const deniedLine = z.strictObject({
   cause: z.literal("timeout").optional(),
 });
 
-const checkLine = z.strictObject({
-  v: z.literal(1),
-  canEvaluate: z.boolean(),
-  biometry: z.enum(["touch-id", "none"]).optional(),
-  enrolled: z.boolean().optional(),
-  // FIX6B M1: present (true) only when a pin exists that a different binary enrolled (the helper was rebuilt
-  // without a re-enrol). A stale pin is never `available`, whatever else the line says.
-  stale: z.boolean().optional(),
-});
+const checkLine = z
+  .strictObject({
+    v: z.literal(1),
+    canEvaluate: z.boolean(),
+    biometry: z.enum(["touch-id", "none"]).optional(),
+    enrolled: z.boolean().optional(),
+    // FIX6B M1: present (true) only when a pin exists that a different binary enrolled (the helper was rebuilt
+    // without a re-enrol). A stale pin is never `available`, whatever else the line says.
+    stale: z.boolean().optional(),
+    // The cannot-evaluate line carries the LocalAuthentication error code (exit 3): `{"canEvaluate":false,"error":N}`.
+    error: z.number().int().optional(),
+  })
+  // An error code beside `canEvaluate: true` contradicts itself: it is a failed check, never an available one.
+  .refine((line) => !(line.canEvaluate && line.error !== undefined));
 
 /** The one JSON line a helper run printed, or null when there is not exactly one parseable line. */
 function singleJsonLine(stdout: string): unknown {
@@ -154,7 +175,9 @@ function ranToCompletion(outcome: CommandOutcome): boolean {
 
 const UNAVAILABLE: PresenceResult = { kind: "unavailable" };
 
-export function createHelperPresencePort(options: HelperPresencePortOptions): PresencePort {
+export function createHelperPresencePort(
+  options: HelperPresencePortOptions,
+): InspectablePresencePort {
   const { helperPath, runner, exists, homeDir, custody } = options;
   if (!isAbsolute(helperPath)) {
     throw new TypeError("the presence helper path must be absolute (no PATH lookup)");
@@ -168,6 +191,26 @@ export function createHelperPresencePort(options: HelperPresencePortOptions): Pr
       env,
       maxBufferBytes: PRESENCE_HELPER_MAX_OUTPUT_BYTES,
     });
+
+  const inspect = async (): Promise<PresenceInspection> => {
+    if (!exists(helperPath)) return { state: "unavailable", reason: "helper-missing" };
+    const outcome = await run(["check"], PRESENCE_CHECK_TIMEOUT_MS);
+    // Exit 0 is a check that ran; exit 3 is the helper's own "cannot evaluate" line. Any other exit is a failure.
+    if (!ranToCompletion(outcome) || (outcome.exitCode !== 0 && outcome.exitCode !== 3)) {
+      return { state: "unavailable", reason: "check-failed" };
+    }
+    const parsed = checkLine.safeParse(singleJsonLine(outcome.stdout));
+    if (!parsed.success) return { state: "unavailable", reason: "check-failed" };
+    if (outcome.exitCode === 3 && parsed.data.canEvaluate) {
+      return { state: "unavailable", reason: "check-failed" };
+    }
+    if (!parsed.data.canEvaluate) return { state: "unavailable", reason: "cannot-evaluate" };
+    if (parsed.data.stale === true) return { state: "unavailable", reason: "pin-stale" };
+    if (custody !== "K-SVC" && parsed.data.enrolled !== true) {
+      return { state: "unavailable", reason: "not-enrolled" };
+    }
+    return { state: "available", reason: null };
+  };
 
   return {
     async prove(request: PresenceRequest): Promise<PresenceResult> {
@@ -203,24 +246,30 @@ export function createHelperPresencePort(options: HelperPresencePortOptions): Pr
     },
 
     async availability(): Promise<PresenceAvailability> {
-      if (!exists(helperPath)) return "unavailable";
-      const outcome = await run(["check"], PRESENCE_CHECK_TIMEOUT_MS);
-      if (!ranToCompletion(outcome) || outcome.exitCode !== 0) return "unavailable";
-      const parsed = checkLine.safeParse(singleJsonLine(outcome.stdout));
-      if (!parsed.success || !parsed.data.canEvaluate) return "unavailable";
-      if (parsed.data.stale === true) return "unavailable";
-      if (custody !== "K-SVC" && parsed.data.enrolled !== true) return "unavailable";
-      return "available";
+      return (await inspect()).state;
     },
+
+    inspect,
   };
 }
 
 /** The port used wherever the real helper must never run: it answers unavailable and spawns nothing. */
-export function createFailClosedPresencePort(): PresencePort {
+export function createFailClosedPresencePort(): InspectablePresencePort {
   return {
     prove: async () => UNAVAILABLE,
     availability: async () => "unavailable",
+    inspect: async () => ({ state: "unavailable", reason: "sandbox" }),
   };
+}
+
+/** The absolute path of the built helper, `<runtime dir>/bin/ccc-presence` (the one place this is spelled). */
+export function presenceHelperPath(runtimeDir: string): string {
+  return join(runtimeDir, "bin", "ccc-presence");
+}
+
+/** True under any test or sandbox environment: the one switch that keeps the real helper and Keychain unreached. */
+export function isPresenceSandbox(env: Readonly<Record<string, string | undefined>>): boolean {
+  return env.CCC_INSTALL_SECRET_ACCOUNT !== undefined;
 }
 
 export interface PresencePortFromEnvDeps {
@@ -242,14 +291,13 @@ export function presencePortFromEnv(
   env: Readonly<Record<string, string | undefined>>,
   runtimeDir: string,
   deps: PresencePortFromEnvDeps,
-): PresencePort {
+): InspectablePresencePort {
   if (!isAbsolute(runtimeDir)) {
     throw new TypeError("the runtime directory must be absolute");
   }
-  const account = env.CCC_INSTALL_SECRET_ACCOUNT;
-  if (account !== undefined) return createFailClosedPresencePort();
+  if (isPresenceSandbox(env)) return createFailClosedPresencePort();
   return createHelperPresencePort({
-    helperPath: join(runtimeDir, "bin", "ccc-presence"),
+    helperPath: presenceHelperPath(runtimeDir),
     runner: deps.runner,
     exists: deps.exists,
     homeDir: deps.homeDir,
@@ -350,6 +398,19 @@ export function createInstallMarker(options: InstallMarkerOptions): InstallMarke
   };
 }
 
+/** What the pin guard last concluded about the pin in the Keychain (09-19): shown in Diagnostics. */
+export interface PinObservation {
+  /** `trusted` equals or first-recorded, `adopted` taken after an install, `changed` refused, `none` no readable pin. */
+  readonly verdict: "trusted" | "adopted" | "changed" | "none";
+  /** The first eight hex characters of the SHA-256 of the pin now in the Keychain; null when there is none. */
+  readonly fingerprint: string | null;
+}
+
+/** The short, non-secret fingerprint of a pin: the first eight lowercase hex characters of its SHA-256. */
+export function pinFingerprint(pin: string): string {
+  return createHash("sha256").update(pin, "utf8").digest("hex").slice(0, 8);
+}
+
 export interface PinGuardDeps {
   /** The raw pin reader (see {@link pinReaderFromEnv}). */
   readonly read: PinReader;
@@ -361,6 +422,8 @@ export interface PinGuardDeps {
   /** The install script's marker (see {@link createInstallMarker}). */
   readonly installMarker: InstallMarker;
   readonly log: Pick<ApprovalLog, "info" | "warn">;
+  /** Hears each read's conclusion (09-19). Optional; it must not throw and is never given the pin. */
+  readonly observe?: (observation: PinObservation) => void;
 }
 
 /**
@@ -383,14 +446,44 @@ export interface PinGuardDeps {
  * (or that also rewrites the record in the service store) is adopted, which is why the spike keeps the verdict at
  * partially met.
  */
-export function guardPinReader(deps: PinGuardDeps): PinReader {
+export function guardPinReader(deps: PinGuardDeps): GuardedPinReader {
+  const observed = guardPinReaderObserved(deps);
+  const read: PinReader = async () => (await observed()).pin;
+  return Object.assign(read, { observed });
+}
+
+/** A {@link PinReader} that also offers {@link ObservedPin} reads (same guard, same record, same warnings). */
+export type GuardedPinReader = PinReader & { readonly observed: () => Promise<ObservedPin> };
+
+/** One guarded read's result together with the conclusion that read itself reached (09-FIX10A). */
+export interface ObservedPin {
+  readonly pin: string | null;
+  readonly observation: PinObservation;
+}
+
+/**
+ * The guard behind {@link guardPinReader}, handing back, with each read's pin, the conclusion THAT read reached. Diagnostics uses
+ * this instead of a shared "latest observation" slot, which a concurrent approval read could overwrite between a
+ * check's read and its look at the slot. `deps.observe` still hears every conclusion.
+ */
+export function guardPinReaderObserved(deps: PinGuardDeps): () => Promise<ObservedPin> {
   const warned = new Set<string>();
   let markerIgnoredLogged = false;
+  const NONE: PinObservation = { verdict: "none", fingerprint: null };
+  const conclude = (pin: string | null, observation: PinObservation): ObservedPin => {
+    try {
+      deps.observe?.(observation);
+    } catch {
+      // A listener's failure never changes what the guard returns.
+    }
+    return { pin, observation };
+  };
   return async () => {
     try {
       const pin = await deps.read();
-      if (pin === null) return null;
+      if (pin === null) return conclude(null, NONE);
       const fingerprint = createHash("sha256").update(pin, "utf8").digest("hex");
+      const shortFingerprint = fingerprint.slice(0, 8);
       const recorded = deps.recorded.get();
       let installing = false;
       const marker = deps.installMarker.inspect();
@@ -406,26 +499,26 @@ export function guardPinReader(deps: PinGuardDeps): PinReader {
       if (recorded === null) {
         deps.recorded.set(fingerprint);
         if (installing) deps.installMarker.clear();
-        return pin;
+        return conclude(pin, { verdict: "trusted", fingerprint: shortFingerprint });
       }
       if (recorded === fingerprint) {
         if (installing) deps.installMarker.clear();
-        return pin;
+        return conclude(pin, { verdict: "trusted", fingerprint: shortFingerprint });
       }
       if (installing) {
         deps.recorded.set(fingerprint);
         deps.installMarker.clear();
         deps.log.warn({ code: "presence-pin-adopted" });
-        return pin;
+        return conclude(pin, { verdict: "adopted", fingerprint: shortFingerprint });
       }
       if (!warned.has(fingerprint)) {
         warned.add(fingerprint);
         deps.log.warn({ code: "presence-pin-changed" });
       }
-      return null;
+      return conclude(null, { verdict: "changed", fingerprint: shortFingerprint });
     } catch {
       // A record that cannot be read or written proves nothing about the pin: no pin.
-      return null;
+      return conclude(null, NONE);
     }
   };
 }
