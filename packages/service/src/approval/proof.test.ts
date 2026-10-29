@@ -1,5 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import {
+  canonicalJson,
   dedupeKeyOf,
   type NewProposal,
   type NoteId,
@@ -76,6 +77,55 @@ describe("approvalProofKey (Test 2)", () => {
 
   it("is not the install secret itself and does not depend on its bytes being reused", () => {
     expect(KEY.equals(SECRET)).toBe(false);
+  });
+});
+
+// Known-answer vectors, computed independently of proof.ts (a separate HKDF-SHA256 and HMAC-SHA256
+// implementation over the literal canonical text below). They pin the HKDF info string, the covered
+// members (including the constant `state`) and the use of the derived key, so a change to any of them
+// fails here instead of silently minting proofs no earlier row can verify.
+const KAT_KEY_HEX = "3dfccd744e9f31f4e4bc6e6e2dc5ad1a79613a9b25317083feff39ac1cecc0e0";
+const KAT_MAC_HEX = "f9884452bfb052523430590a1d8f7ae139923df534515ce2c12f4f56e2770812";
+const KAT_CANONICAL =
+  '{"approvedAt":"2026-10-06T10:00:30.000Z","decidedVia":"presence","operation":"diagnostic.test",' +
+  `"payloadHash":"${"ab12".repeat(16)}","proposalId":"p00000000000000000000000a","state":"approved","v":1}`;
+
+describe("known-answer vectors (review finding: no KAT)", () => {
+  it("derives the pinned key from the pinned secret", () => {
+    expect(approvalProofKey(SECRET).toString("hex")).toBe(KAT_KEY_HEX);
+  });
+
+  it("signs the pinned MAC for the pinned fields", () => {
+    const parsed = DecisionProofSchema.parse(JSON.parse(signDecisionProof(KEY, FIELDS, null)));
+    expect(parsed.mac).toBe(KAT_MAC_HEX);
+  });
+
+  it("the signed bytes are the canonical JSON of the covered members, state included", () => {
+    expect(canonicalJson({ v: 1, ...FIELDS, state: "approved" })).toBe(KAT_CANONICAL);
+    const independent = createHmac("sha256", Buffer.from(KAT_KEY_HEX, "hex"))
+      .update(KAT_CANONICAL, "utf8")
+      .digest("hex");
+    expect(independent).toBe(KAT_MAC_HEX);
+    expect(DecisionProofSchema.parse(JSON.parse(signDecisionProof(KEY, FIELDS, null))).mac).toBe(
+      independent,
+    );
+  });
+
+  it("a proof stored as canonical JSON verifies (the stored text is exactly the proof)", () => {
+    const text = signDecisionProof(KEY, FIELDS, null);
+    expect(text).toBe(`{"mac":"${KAT_MAC_HEX}","presence":null,"v":1}`);
+    expect(verifyDecisionProof(KEY, rowWith(FIELDS, text))).toBe("valid");
+  });
+});
+
+describe("approvalProofKey refuses a short secret (review finding)", () => {
+  it.each([0, 1, 16, 31])("throws RangeError for a %d byte secret", (bytes) => {
+    expect(() => approvalProofKey(Buffer.alloc(bytes, 7))).toThrow(RangeError);
+  });
+
+  it("accepts exactly 32 bytes and longer", () => {
+    expect(approvalProofKey(Buffer.alloc(32, 7))).toHaveLength(32);
+    expect(approvalProofKey(Buffer.alloc(64, 7))).toHaveLength(32);
   });
 });
 

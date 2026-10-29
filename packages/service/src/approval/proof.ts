@@ -31,11 +31,21 @@ const PROOF_VERSION = 1;
 /** A derived key is 32 bytes (the HMAC-SHA256 block-friendly size). */
 const PROOF_KEY_BYTES = 32;
 
+/** The shortest install secret accepted (the service generates 32 random bytes). */
+const MIN_INSTALL_SECRET_BYTES = 32;
+
 /**
  * Derives the proof key from the install secret: HKDF-SHA256, empty salt, a fixed `info`. The same
- * secret always gives the same key, a different secret a different one, and the key is never the secret.
+ * secret always gives the same key, a different secret a different one, and the key is never the secret. Throws a `RangeError` for a secret under 32 bytes.
  */
 export function approvalProofKey(installSecret: Buffer): Buffer {
+  // The install secret is 32 random bytes. A shorter one (an empty buffer most of all) would derive a
+  // constant, public key, so refuse it rather than mint proofs anyone could compute.
+  if (installSecret.length < MIN_INSTALL_SECRET_BYTES) {
+    throw new RangeError(
+      `approvalProofKey: the install secret must be at least ${MIN_INSTALL_SECRET_BYTES} bytes`,
+    );
+  }
   const derived = hkdfSync(
     "sha256",
     installSecret,
