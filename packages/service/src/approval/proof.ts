@@ -91,17 +91,29 @@ export function decisionMacFields(
   };
 }
 
-/** Canonical base64 of 8..80 bytes (a DER ECDSA P-256 signature is 70 to 72). */
-function isSignatureBase64(value: string): boolean {
+/** A DER ECDSA P-256 signature is 70 to 72 bytes; this accepts a little either side, nothing wild. */
+export const SIGNATURE_MIN_BYTES = 8;
+export const SIGNATURE_MAX_BYTES = 80;
+
+/**
+ * True for canonical base64 (the exact text `Buffer.toString("base64")` would give back) of
+ * {@link SIGNATURE_MIN_BYTES} to {@link SIGNATURE_MAX_BYTES} bytes. The one check of a signature's text: the
+ * stored proof schema and the helper adapter both use it, so there is one length bound.
+ */
+export function isCanonicalSignature(value: string): boolean {
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
   const bytes = Buffer.from(value, "base64");
-  return bytes.toString("base64") === value && bytes.length >= 8 && bytes.length <= 80;
+  return (
+    bytes.toString("base64") === value &&
+    bytes.length >= SIGNATURE_MIN_BYTES &&
+    bytes.length <= SIGNATURE_MAX_BYTES
+  );
 }
 
 /** The presence part of a stored proof: the helper's signature, or null when the operation needs no presence. */
 export const PresencePartSchema = z.strictObject({
   scheme: z.literal("p256"),
-  sig: z.string().refine(isSignatureBase64),
+  sig: z.string().refine(isCanonicalSignature),
 });
 
 export type PresencePart = z.infer<typeof PresencePartSchema>;

@@ -29,8 +29,13 @@ export {
   type SweeperTimers,
 } from "./expiry.js";
 // The proof key derivation (main.ts), the check (the composition and integration tests) and the one
-// canonical presence message the helper adapter hands the helper to sign. Signing is the engine's alone:
+// canonical presence message the helper adapter hands the helper to sign, and the one signature-text check. Signing is the engine's alone:
 // it is not exported.
-export { approvalProofKey, presenceMessage, verifyDecisionProof } from "./proof.js";
+export {
+  approvalProofKey,
+  isCanonicalSignature,
+  presenceMessage,
+  verifyDecisionProof,
+} from "./proof.js";
 export { PAYLOAD_RETENTION_MS, type RecoverySummary } from "./recovery.js";
 export { buildOperationRegistry } from "./registry.js";

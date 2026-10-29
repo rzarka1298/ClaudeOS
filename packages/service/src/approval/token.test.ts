@@ -106,6 +106,7 @@ describe("token confinement (Test 4)", () => {
       "buildOperationRegistry",
       "createApprovalEngine",
       "createExpirySweeper",
+      "isCanonicalSignature",
       "presenceMessage",
       "verifyDecisionProof",
     ]);

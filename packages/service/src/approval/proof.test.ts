@@ -1,4 +1,6 @@
 import { createHash, createHmac, createSign, generateKeyPairSync, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   canonicalJson,
   dedupeKeyOf,
@@ -13,7 +15,10 @@ import {
   type DecisionMacFields,
   DecisionProofSchema,
   decisionMacFields,
+  isCanonicalSignature,
   presenceMessage,
+  SIGNATURE_MAX_BYTES,
+  SIGNATURE_MIN_BYTES,
   signDecisionProof,
   verifyDecisionProof,
   verifyPresenceSignature,
@@ -536,5 +541,47 @@ describe("verifyDecisionProof with a presence part (09-18 Task 1)", () => {
     expect(DecisionProofSchema.safeParse({ ...base, presence: { scheme: "p256" } }).success).toBe(
       false,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-FIX9 item 6: one canonical-base64 signature check, one length bound
+
+describe("isCanonicalSignature (09-FIX9)", () => {
+  const of = (bytes: number): string => Buffer.alloc(bytes, 3).toString("base64");
+
+  it("accepts canonical base64 of the bounded length and nothing outside it", () => {
+    expect(SIGNATURE_MIN_BYTES).toBe(8);
+    expect(SIGNATURE_MAX_BYTES).toBe(80);
+    expect(isCanonicalSignature(of(71))).toBe(true);
+    expect(isCanonicalSignature(of(SIGNATURE_MIN_BYTES))).toBe(true);
+    expect(isCanonicalSignature(of(SIGNATURE_MAX_BYTES))).toBe(true);
+    expect(isCanonicalSignature(of(SIGNATURE_MIN_BYTES - 1))).toBe(false);
+    expect(isCanonicalSignature(of(SIGNATURE_MAX_BYTES + 1))).toBe(false);
+  });
+
+  it("refuses non-canonical base64: missing padding, other alphabets, whitespace, the empty string", () => {
+    expect(isCanonicalSignature(of(71).replace(/=+$/, ""))).toBe(false);
+    expect(isCanonicalSignature(of(71).replace("A", "-"))).toBe(false);
+    expect(isCanonicalSignature(` ${of(71)}`)).toBe(false);
+    expect(isCanonicalSignature("")).toBe(false);
+  });
+
+  it("is the very check the stored proof schema and the helper adapter use (no second copy)", () => {
+    const adapter = readFileSync(
+      fileURLToPath(new URL("../approval-wiring/presence.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(adapter).not.toMatch(
+      /MIN_SIGNATURE_BYTES|MAX_SIGNATURE_BYTES|function isCanonicalBase64/,
+    );
+    expect(adapter).toContain("isCanonicalSignature");
+    const base = { v: 1, mac: "a".repeat(64) };
+    expect(
+      DecisionProofSchema.safeParse({ ...base, presence: { scheme: "p256", sig: of(7) } }).success,
+    ).toBe(false);
+    expect(
+      DecisionProofSchema.safeParse({ ...base, presence: { scheme: "p256", sig: of(8) } }).success,
+    ).toBe(true);
   });
 });

@@ -11,7 +11,7 @@ import {
   type PresenceResult,
 } from "@ccc/domain";
 import { z } from "zod";
-import { presenceMessage } from "../approval/index.js";
+import { isCanonicalSignature, presenceMessage } from "../approval/index.js";
 import type { CommandOutcome, CommandRunner } from "../projects/command-runner.js";
 
 /**
@@ -107,25 +107,11 @@ function isValidRequest(request: PresenceRequest): boolean {
   );
 }
 
-/** A DER ECDSA P-256 signature is 70 to 72 bytes; this accepts a little either side, nothing wild. */
-const MIN_SIGNATURE_BYTES = 8;
-const MAX_SIGNATURE_BYTES = 80;
-
-function isCanonicalBase64(value: string): boolean {
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
-  const bytes = Buffer.from(value, "base64");
-  return (
-    bytes.toString("base64") === value &&
-    bytes.length >= MIN_SIGNATURE_BYTES &&
-    bytes.length <= MAX_SIGNATURE_BYTES
-  );
-}
-
 const provedLine = z.strictObject({
   v: z.literal(1),
   result: z.literal("proved"),
   scheme: z.enum(["p256", "none"]),
-  signature: z.string().refine(isCanonicalBase64).nullable(),
+  signature: z.string().refine(isCanonicalSignature).nullable(),
 });
 
 const deniedLine = z.strictObject({
