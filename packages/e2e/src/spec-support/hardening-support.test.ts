@@ -11,11 +11,13 @@ import {
   type BannerRead,
   BUNDLE_GEOMETRY_CONFIG,
   type BundleGeometry,
+  bannerNamesWhereItLooked,
   buildSessionEventRecord,
   checkAgentRunsIdle,
   checkAgentRunsRunning,
   checkAgentRunsSilent,
   checkBannerDisplayPath,
+  checkBannerLeaks,
   checkBundleLineInView,
   checkCardIdle,
   checkCardRunning,
@@ -35,10 +37,12 @@ import {
   type QuietBrowser,
   type QuietRead,
   quietWaitBudgetMs,
+  runBannerDisconnectDrill,
   UI_CLOCK_TICK_MS,
   waitForQuiet,
   withWindowHeight,
 } from "./hardening-support.js";
+import { findUnguardedMutations } from "./health-support.js";
 
 /**
  * Plan 09-21 Task 1: the renderer reader of the quiet session rows, run the way wdio runs it
@@ -530,6 +534,162 @@ describe("rendererReadBanner and checkBannerDisplayPath (Task 2, item 4)", () =>
     expect(checkBannerDisplayPath({ present: false, state: null, text: "" }, forbidden)).toEqual([
       "the connection banner is not on the page",
     ]);
+  });
+});
+
+/**
+ * FIX13 (live run b54088bd, item 4): the first banner the drill saw after the service stopped was
+ * `Disconnected — stream ended`, the transport's own reason, which names no path. The event client
+ * shows it for the first backoff (about half a second); the reconnect then fails with the socket
+ * path in its message, and every later disconnected state carries that path. The spec took the first
+ * disconnected read and asked it for a display path, then left the service stopped when it failed,
+ * so items 5 to 8 failed with the service down.
+ */
+describe("the banner disconnect drill (FIX13, item 4)", () => {
+  const facts = { homeDir: "/Users/USERNAME", runRoot: "/tmp/ccc-uat.abc123" };
+  const disc = (text: string): BannerRead => ({
+    present: true,
+    state: "disconnected",
+    text: `Disconnected — ${text}`,
+  });
+  const connecting: BannerRead = { present: true, state: "connecting", text: "Connecting…" };
+  const live: BannerRead = { present: true, state: "live", text: "Live" };
+  const WITH_PATH = disc(
+    "Could not reach the service socket at …/rt/svc.sock: connect ENOENT …/rt/svc.sock",
+  );
+  const TRANSPORT = disc("stream ended");
+
+  /** A service that records its stops and starts, and a banner that reads `script` while it is down. */
+  function rig(script: readonly (BannerRead | Error)[]) {
+    let running = true;
+    const calls: string[] = [];
+    let step = 0;
+    let now = 0;
+    const clock = {
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+    };
+    return {
+      calls,
+      reads: () => step,
+      service: {
+        isRunning: () => running,
+        stopService: async () => {
+          running = false;
+          calls.push("stop");
+        },
+        startService: async () => {
+          running = true;
+          calls.push("start");
+        },
+      },
+      readBanner: async (): Promise<BannerRead> => {
+        if (running) return live;
+        const next = script[Math.min(step, script.length - 1)] as BannerRead | Error;
+        step += 1;
+        if (next instanceof Error) throw next;
+        return next;
+      },
+      waitForLive: async () => {
+        calls.push("diagnostics-live");
+      },
+      clock,
+    };
+  }
+
+  const drill = (r: ReturnType<typeof rig>, wait = { timeoutMs: 20_000, intervalMs: 250 }) =>
+    runBannerDisconnectDrill({
+      service: r.service,
+      readBanner: r.readBanner,
+      waitForLive: r.waitForLive,
+      facts,
+      wait,
+      clock: r.clock,
+    });
+
+  it("names where it looked once the reconnect has failed, not in the transport's first reason", () => {
+    expect(bannerNamesWhereItLooked(WITH_PATH)).toBe(true);
+    expect(bannerNamesWhereItLooked(disc("connect ENOENT ~/run/svc.sock"))).toBe(true);
+    expect(bannerNamesWhereItLooked(TRANSPORT)).toBe(false);
+    expect(bannerNamesWhereItLooked(connecting)).toBe(false);
+    expect(bannerNamesWhereItLooked(live)).toBe(false);
+    expect(bannerNamesWhereItLooked({ present: false, state: null, text: "" })).toBe(false);
+  });
+
+  it("reports a leak in any state, with the same words the display path check uses", () => {
+    expect(checkBannerLeaks(disc("gone /Users/USERNAME/x"), facts)).toEqual([
+      "the banner holds a /Users/ path",
+      "the banner holds the home folder",
+    ]);
+    expect(checkBannerLeaks(disc("at /tmp/ccc-uat.abc123/rt/svc.sock"), facts)).toEqual([
+      "the banner holds the run root path",
+    ]);
+    expect(checkBannerLeaks(disc("at …/rt/svc.sock"), facts)).toEqual([]);
+  });
+
+  it("waits past the transport's own reason for the one that names the socket as a display path", async () => {
+    const r = rig([TRANSPORT, connecting, WITH_PATH]);
+    expect(await drill(r)).toEqual([]);
+    // Stopped once, started once, the plugin read Live again, and Diagnostics settled.
+    expect(r.calls).toEqual(["stop", "start", "diagnostics-live"]);
+    expect(r.reads()).toBe(3);
+  });
+
+  it("still reports a leak seen only in a transient state", async () => {
+    const r = rig([disc("stream ended at /Users/USERNAME/x/svc.sock"), WITH_PATH]);
+    expect(await drill(r)).toContain("the banner holds a /Users/ path");
+    expect(r.calls).toEqual(["stop", "start", "diagnostics-live"]);
+  });
+
+  it("reports a banner that never names a path with what it read, and still restarts the service", async () => {
+    const r = rig([TRANSPORT]);
+    const problems = await drill(r, { timeoutMs: 2_000, intervalMs: 250 });
+    expect(problems.join(" ")).toMatch(/shows no display path/);
+    expect(problems.join(" ")).toContain("stream ended");
+    expect(r.calls).toEqual(["stop", "start", "diagnostics-live"]);
+  });
+
+  it("does not quote a banner that leaks a path when it reports it", async () => {
+    const r = rig([disc("connect ENOENT /Users/USERNAME/x/svc.sock")]);
+    const problems = await drill(r, { timeoutMs: 1_000, intervalMs: 250 });
+    expect(problems.join(" ")).toMatch(/\/Users\//);
+    expect(problems.join(" ")).not.toContain("USERNAME");
+  });
+
+  it("starts the service again when the drill fails part-way, and throws the drill's own error", async () => {
+    const lost = new Error("invalid session id");
+    const r = rig([TRANSPORT, lost]);
+    await expect(drill(r)).rejects.toThrow(/Obsidian closed/);
+    // The stop was never followed by the body's start; the restore did it.
+    expect(r.calls).toEqual(["stop", "start"]);
+    expect(r.service.isRunning()).toBe(true);
+  });
+
+  it("leaves a running service alone when the drill fails before it stopped anything", async () => {
+    const r = rig([WITH_PATH]);
+    r.service.stopService = async () => {
+      throw new Error("the stop failed");
+    };
+    await expect(drill(r)).rejects.toThrow(/the stop failed/);
+    expect(r.calls).toEqual([]);
+  });
+});
+
+describe("the hardening spec stops the service only inside the drill (FIX13)", () => {
+  it("has no stopService or startService call of its own outside withRestore", () => {
+    const source = readFileSync(join(REPO_ROOT, "packages/e2e/specs/hardening.e2e.ts"), "utf8");
+    expect(findUnguardedMutations(source, ["stopService", "startService"])).toEqual([]);
+  });
+
+  it("control: the scan does flag a bare stop and start", () => {
+    expect(
+      findUnguardedMutations("await env.stopService();\nawait env.startService();", [
+        "stopService",
+        "startService",
+      ]).map((entry) => entry.call),
+    ).toEqual(["stopService", "startService"]);
   });
 });
 

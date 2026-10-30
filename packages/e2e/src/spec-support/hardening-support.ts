@@ -4,6 +4,7 @@ import { type DriverBrowser, type PollOptions, pollUntil } from "../driver.js";
 import { QUIET_THRESHOLD_MS } from "../isolation-guards.js";
 import { APPROVALS_COPY } from "./approvals-copy.js";
 import { HEALTH_ATTRS, HEALTH_CLASSES } from "./health-copy.js";
+import { withRestore } from "./health-support.js";
 import { OVERVIEW_CLASSES, OVERVIEW_TEXT } from "./overview-copy.js";
 import { SETTINGS_TEXT } from "./settings-copy.js";
 import { applyWindowBounds, type RectLite, readWindowFacts } from "./shot-layout.js";
@@ -673,6 +674,35 @@ export function rendererReadBanner(c: BannerConfig): BannerRead {
 
 const DISCONNECTED_PREFIX = "Disconnected — ";
 
+/** The words of the leak problems, shared by the one-banner check and the every-sample check. */
+const LEAK_PROBLEMS = {
+  users: "the banner holds a /Users/ path",
+  home: "the banner holds the home folder",
+  runRoot: "the banner holds the run root path",
+} as const;
+
+/**
+ * What the banner text must never hold, in any state: not `/Users/`, not the home folder, not the
+ * run root (D-11, DIAG-06). Nothing about the text may be quoted here.
+ */
+export function checkBannerLeaks(
+  read: BannerRead,
+  facts: { readonly homeDir: string; readonly runRoot: string },
+): string[] {
+  const problems: string[] = [];
+  if (read.text.includes("/Users/")) problems.push(LEAK_PROBLEMS.users);
+  if (facts.homeDir !== "" && read.text.includes(facts.homeDir)) {
+    problems.push(LEAK_PROBLEMS.home);
+  }
+  if (read.text.includes(facts.runRoot)) problems.push(LEAK_PROBLEMS.runRoot);
+  return problems;
+}
+
+/** Whether the text carries a display path: the `…/` or `~/` form, never an absolute path. */
+function showsDisplayPath(text: string): boolean {
+  return text.includes("…/") || text.includes("~/");
+}
+
 /**
  * The banner is disconnected, names where it looked as a display path (`…/folder/file` or `~/...`),
  * and holds no absolute path: not `/Users/`, not the home folder, not the run root (D-11, DIAG-06).
@@ -689,15 +719,121 @@ export function checkBannerDisplayPath(
   if (!read.text.startsWith(DISCONNECTED_PREFIX)) {
     problems.push(`the banner does not start with "${DISCONNECTED_PREFIX.trim()}"`);
   }
-  if (read.text.includes("/Users/")) problems.push("the banner holds a /Users/ path");
-  if (facts.homeDir !== "" && read.text.includes(facts.homeDir)) {
-    problems.push("the banner holds the home folder");
-  }
-  if (read.text.includes(facts.runRoot)) problems.push("the banner holds the run root path");
-  if (!read.text.includes("…/") && !read.text.includes("~/")) {
-    problems.push("the banner shows no display path");
-  }
+  problems.push(...checkBannerLeaks(read, facts));
+  if (!showsDisplayPath(read.text)) problems.push("the banner shows no display path");
   return problems;
+}
+
+/**
+ * The banner is disconnected and its reason names where it looked. The event client's first reason
+ * after a service stop is the transport's own (`stream ended`, `stream aborted`, `no event received
+ * within the liveness window`), which names no path and stands for the first backoff, about half a
+ * second; the reconnect that follows fails with the socket path in its message, and every later
+ * disconnected state carries it. Only the second kind is what item 4 describes (live run b54088bd).
+ */
+export function bannerNamesWhereItLooked(read: BannerRead): boolean {
+  return read.present && read.state === "disconnected" && showsDisplayPath(read.text);
+}
+
+/** Polls the banner until it names where it looked; every read is kept in `samples`. */
+async function waitForBannerNamingWhereItLooked(
+  readBanner: () => Promise<BannerRead>,
+  samples: BannerRead[],
+  options: { readonly timeoutMs: number; readonly intervalMs: number },
+  clock: Pick<PollOptions, "now" | "sleep">,
+): Promise<BannerRead> {
+  let lastDisconnected: BannerRead | undefined;
+  let last: BannerRead | undefined;
+  try {
+    return await pollUntil(
+      async () => {
+        const read = await readBanner();
+        samples.push(read);
+        last = read;
+        if (read.state === "disconnected") lastDisconnected = read;
+        return bannerNamesWhereItLooked(read) ? read : null;
+      },
+      {
+        ...options,
+        ...clock,
+        describe: "the banner to read Disconnected with where it looked",
+      },
+    );
+  } catch (error) {
+    // A timeout is a finding about the banner, so hand back what it read last and let the check say
+    // what is wrong with it; a lost browser session, or a banner that could never be read, is not.
+    const timedOut = error instanceof Error && error.message.startsWith("Timed out after");
+    const seen = lastDisconnected ?? last;
+    if (!timedOut || seen === undefined) throw error;
+    return seen;
+  }
+}
+
+/** The sandbox service as the banner drill drives it (`ResearchEnvironment` satisfies it). */
+export interface BannerDrillService {
+  isRunning(): boolean;
+  stopService(): Promise<void>;
+  startService(): Promise<void>;
+}
+
+export interface BannerDrillDeps {
+  readonly service: BannerDrillService;
+  readonly readBanner: () => Promise<BannerRead>;
+  /** Waits for Diagnostics to be ready again; run after the banner reads Live. */
+  readonly waitForLive: () => Promise<unknown>;
+  readonly facts: { readonly homeDir: string; readonly runRoot: string };
+  readonly wait?: { readonly timeoutMs: number; readonly intervalMs: number };
+  readonly clock?: Pick<PollOptions, "now" | "sleep">;
+}
+
+/**
+ * Item 4: stops the sandbox service, waits for the banner to name where it looked, starts the
+ * service again and waits for Live. Returns the problems found: the settled banner must pass
+ * {@link checkBannerDisplayPath}, and no read taken on the way (the transport's first reason
+ * included) may hold an absolute path.
+ *
+ * Whatever happens in between, the service is running again when this returns or throws, and the
+ * plugin has been given the chance to reconnect, so one failure here cannot leave items 5 to 8
+ * with no socket (the cascade of live run b54088bd). A drill that threw keeps its own error.
+ */
+export async function runBannerDisconnectDrill(deps: BannerDrillDeps): Promise<string[]> {
+  const wait = deps.wait ?? { ...WAIT.connect, intervalMs: 250 };
+  const clock = deps.clock ?? {};
+  const readsLive = async (): Promise<void> => {
+    await pollUntil(async () => (await deps.readBanner()).state === "live", {
+      ...wait,
+      ...clock,
+      describe: "the banner to read Live again",
+    });
+  };
+  return await withRestore(
+    async () => {
+      if (deps.service.isRunning()) return;
+      await deps.service.startService();
+      await readsLive();
+    },
+    async () => {
+      const samples: BannerRead[] = [];
+      await deps.service.stopService();
+      const settled = await waitForBannerNamingWhereItLooked(deps.readBanner, samples, wait, clock);
+      const problems = checkBannerDisplayPath(settled, deps.facts);
+      const leaks = new Set<string>();
+      for (const sample of samples) {
+        for (const problem of checkBannerLeaks(sample, deps.facts)) leaks.add(problem);
+      }
+      for (const problem of leaks) {
+        if (!problems.includes(problem)) problems.push(problem);
+      }
+      // Say what the banner read when that is safe, so the next run needs no browser log.
+      if (leaks.size === 0 && !bannerNamesWhereItLooked(settled) && settled.present) {
+        problems.push(`the banner last read "${settled.text}"`);
+      }
+      await deps.service.startService();
+      await readsLive();
+      await deps.waitForLive();
+      return problems;
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

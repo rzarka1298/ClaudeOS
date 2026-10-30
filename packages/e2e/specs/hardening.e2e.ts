@@ -38,7 +38,6 @@ import {
   checkAgentRunsIdle,
   checkAgentRunsRunning,
   checkAgentRunsSilent,
-  checkBannerDisplayPath,
   checkBundleLineInView,
   checkCardIdle,
   checkCardRunning,
@@ -55,6 +54,7 @@ import {
   rendererReadBundleGeometry,
   rendererReadLaunchersHeading,
   rendererScrollButtonIntoView,
+  runBannerDisconnectDrill,
   type SessionEvent,
   type WindowBrowser,
   waitForQuiet,
@@ -342,23 +342,16 @@ describe("hardening: settings, approvals and research", function () {
 
   it("[09-UAT#04] The disconnected banner shows a display path with no /Users/", async () => {
     await offeredBundle();
-    await env.stopService();
-    const read = await pollUntil(
-      async () => {
-        const banner = await browser.execute(rendererReadBanner, BANNER_CONFIG);
-        return banner.state === "disconnected" ? banner : null;
-      },
-      { ...WAIT.connect, describe: "the banner to read Disconnected" },
-    );
-    expect(checkBannerDisplayPath(read, { homeDir: homedir(), runRoot: context.runRoot })).toEqual(
-      [],
-    );
-    await env.startService();
-    await pollUntil(
-      async () => (await browser.execute(rendererReadBanner, BANNER_CONFIG)).state === "live",
-      { ...WAIT.connect, describe: "the banner to read Live again" },
-    );
-    await waitForLive(hb);
+    // The drill stops the sandbox service and restarts it in a finally, so a failure here cannot
+    // leave items 5 to 8 with no socket. It waits for the reason that names where the plugin looked
+    // (the transport's own first reason, `stream ended`, names no path) and checks every read.
+    const problems = await runBannerDisconnectDrill({
+      service: env,
+      readBanner: () => browser.execute(rendererReadBanner, BANNER_CONFIG),
+      waitForLive: () => waitForLive(hb),
+      facts: { homeDir: homedir(), runRoot: context.runRoot },
+    });
+    expect(problems).toEqual([]);
   });
 
   it("[09-UAT#05] Settings > Security reads Approval presence check Unavailable in the sandbox", async () => {

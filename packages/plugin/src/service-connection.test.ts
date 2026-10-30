@@ -190,4 +190,34 @@ describe("the disconnect reason is scrubbed where the client's state becomes the
     expect(state.reason).not.toContain("/Users/");
     expect(state.reason).not.toContain("USERNAME");
   });
+
+  // Live run b54088bd, UAT 09 item 4: after a service stop the first disconnected state carries the
+  // transport's own reason, which names no path and stands until the first reconnect fails (about
+  // half a second); the reason after that names the socket, shown as a display path. The shape of
+  // the second reason is what the event client builds from a failed handshake, with the run's
+  // socket path as the sandbox has it. A reader of the banner must wait for the second.
+  it("reads the transport's reason first and the socket as a display path after the reconnect fails", () => {
+    configureConnectionDisplayHome("/Users/USERNAME");
+    const events = fakeEventClient();
+    attachEventClient(events.client);
+    const socket = "/private/tmp/ccc-uat.abc123/rt/svc.sock";
+    const reason = (): string => {
+      const state = connectionState.value;
+      if (state.kind !== "disconnected") throw new Error("expected disconnected");
+      return state.reason;
+    };
+
+    events.setState({ kind: "live" });
+    events.setState({ kind: "disconnected", reason: "stream ended" });
+    expect(reason()).toBe("stream ended");
+
+    events.setState({ kind: "connecting" });
+    events.setState({
+      kind: "disconnected",
+      reason: `Could not reach the service socket at ${socket}: connect ENOENT ${socket}`,
+    });
+    expect(reason()).toBe(
+      "Could not reach the service socket at …/rt/svc.sock: connect ENOENT …/rt/svc.sock",
+    );
+  });
 });
