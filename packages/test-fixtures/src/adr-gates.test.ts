@@ -1087,6 +1087,14 @@ describe("09-20 Task 1: the presence decision record", () => {
       });
     }
 
+    it("states that the product never requests Always Allow and keeps no standing consent (T-09-41, APPR-05)", () => {
+      // The Keychain mitigation leg of T-09-41: the record itself says every sheet is answered
+      // Allow once or Deny, so an "Always Allow" grant is never part of the design.
+      expect(residual()).toMatch(
+        /never requests[^.]*"Always Allow"[^.]*Allow once or Deny[^.]*no standing consent[^.]*APPR-05/i,
+      );
+    });
+
     it("never claims a same-user process cannot forge a decision", () => {
       expect(presenceAdr().text).not.toMatch(
         /cannot forge|cannot be forged|can't forge|unforgeable|tamper[- ]proof|unbypassable|cannot be bypassed/i,

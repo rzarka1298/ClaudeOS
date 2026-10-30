@@ -223,6 +223,8 @@ What a process running as the owner can still do:
   would accept those signatures under the new pin only if the install-marker window is abused as well (a fresh marker
   written by the same process before the next pin read, decision 6); without that, the changed pin is refused and logged.
   Until the measurement below is taken, treat delete as ungated.
+- **Standing consent.** None exists. The product never requests "Always Allow": every helper or Keychain sheet must be
+  answered Allow once or Deny, and there is no standing consent (APPR-05).
 - **Replace the keychain file, or attach a debugger or inject code into Obsidian or the service.** A debugger or code
   injection into Obsidian or the service, or replacing the login keychain file itself, is out of scope for the whole phase
   (D-03).
