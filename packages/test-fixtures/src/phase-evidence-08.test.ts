@@ -1156,30 +1156,42 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
         /(\| 06-claude-ratified \|.*\|)\n/,
         `$1\n| 09-uat-17 | 09 | Item 17 recorded as not walked | OD-7 | ${acceptance} |\n`,
       );
+    // The counts of a regenerated record are derived from its own table, as the audit derives them,
+    // so a fixture is consistent whatever the committed record already holds.
+    const withCounts = (text: string): string => {
+      const { exceptions } = auditTables(text);
+      const dated = exceptions.filter((cells) =>
+        /^(?:accepted )?\d{4}-\d{2}-\d{2}$/.test(cells[5] ?? ""),
+      ).length;
+      return text
+        .replace(/^exceptions: \d+$/m, `exceptions: ${exceptions.length}`)
+        .replace(/^exceptions-accepted: \d+$/m, `exceptions-accepted: ${dated}`);
+    };
     const regenerated = (acceptance: string, strictClean: string, phaseStatus: string): string =>
-      insertRow(
-        historicalOnly
-          .replace(/^phases: \d+$/m, "phases: 11")
-          .replace(/^exceptions: \d+$/m, "exceptions: 10")
-          .replace(/^strict-clean: \w+$/m, `strict-clean: ${strictClean}`)
-          .replace(
-            /^(\| 08 \|.*)$/m,
-            `$1\n| 09 | 1 file(s) | 18/19 | ${phaseStatus} | 09-x/09-UAT.md |`,
-          ),
-        acceptance,
+      withCounts(
+        insertRow(
+          historicalOnly
+            .replace(/^phases: \d+$/m, "phases: 11")
+            .replace(/^exceptions: \d+$/m, "exceptions: 10")
+            .replace(/^strict-clean: \w+$/m, `strict-clean: ${strictClean}`)
+            .replace(
+              /^(\| 08 \|.*)$/m,
+              `$1\n| 09 | 1 file(s) | 18/19 | ${phaseStatus} | 09-x/09-UAT.md |`,
+            ),
+          acceptance,
+        ),
       );
 
     it("accepts the tenth exception pending, with Phase 9 pending and strict-clean false", () => {
       const text = regenerated("pending", "false", "pending-live-uat");
       expect(text).toContain("| 09-uat-17 |");
+      expect(text).toMatch(/^exceptions-accepted: 9$/m);
       expect(auditExceptionProblems(text)).toEqual([]);
     });
 
     it("accepts it dated once the owner accepts it and Phase 9 is recorded, with strict-clean true", () => {
-      const text = regenerated("accepted 2026-11-02", "true", "recorded-with-exceptions").replace(
-        /^exceptions-accepted: \d+$/m,
-        "exceptions-accepted: 10",
-      );
+      const text = regenerated("accepted 2026-11-02", "true", "recorded-with-exceptions");
+      expect(text).toMatch(/^exceptions-accepted: 10$/m);
       expect(auditExceptionProblems(text)).toEqual([]);
     });
 
