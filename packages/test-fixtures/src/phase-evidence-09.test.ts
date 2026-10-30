@@ -187,9 +187,25 @@ run("completeness and shape (Tests 1 and 2 of Task 2)", () => {
     expect(sectionText.length).toBeGreaterThan(0);
     for (const id of open) expect(sectionText, id).toContain(id);
     if (open.length === 0) expect(sectionText).toMatch(/^None\./m);
-    // The two threats whose mitigation is bounded by a recorded same-user residual say so in their status.
-    for (const id of ["T-09-29", "T-09-39"]) {
-      expect(rows().find((row) => row.id === id)?.status, id).toBe("proved, residual noted");
+  });
+
+  it("marks exactly the seven residual-bounded threats `proved, residual noted`, and no other row (FIX12 S2)", () => {
+    // A plain `proved` must not hide a limit the record itself quotes: the delete-and-recreate pin,
+    // the global prompt budget and the MAC that a same-user secret reader can compute.
+    const noted = rows()
+      .filter((row) => /residual noted/.test(row.status))
+      .map((row) => row.id);
+    expect(noted).toEqual([
+      "T-09-24",
+      "T-09-26",
+      "T-09-29",
+      "T-09-34",
+      "T-09-35",
+      "T-09-36",
+      "T-09-39",
+    ]);
+    for (const row of rows().filter((r) => noted.includes(r.id))) {
+      expect(row.status, row.id).toBe("proved, residual noted");
     }
   });
 });
@@ -393,6 +409,10 @@ run("presence trust chain (Test 4 of Task 2)", () => {
     expect(byStep(4)).toMatch(/only after the owner's .*gesture/);
     expect(byStep(5)).toMatch(/login keychain/);
     expect(byStep(5)).toMatch(/guardPinReader/);
+    // A duplicate item is not handled by code, so the record must not say it is (FIX12 S3).
+    expect(byStep(5)).not.toMatch(/missing, duplicate/);
+    expect(byStep(5)).toMatch(/duplicate is not handled by code; it is not reachable/);
+    expect(byStep(5)).toMatch(/The specified item already exists in the keychain/);
     expect(byStep(6)).toMatch(/P-256/);
     expect(byStep(7)).toMatch(/write-once/);
     expect(byStep(8)).toMatch(/before the claim/);
@@ -472,6 +492,39 @@ run("same-user residuals (Test 5 of Task 2)", () => {
     expect(all).toMatch(/Read the install secret and so compute the MAC/);
     expect(all).toMatch(/Delete and recreate the pin item/);
     expect(all).toMatch(/detection, not prevention/);
+  });
+
+  it("quotes the marker-window residual in full, not only its tail (FIX12 S2)", () => {
+    const marker =
+      "A same-user process that replaces the pin item and then writes (or touches) a marker file";
+    expect(quotes().some((quote) => quote.startsWith(marker))).toBe(true);
+    expect(flat(adr)).toContain(
+      "the marker is not authenticated, because everything that could authenticate it is also writable by that user",
+    );
+    expect(quotes().join(" ")).toContain(
+      "the marker is not authenticated, because everything that could authenticate it is also writable by that user",
+    );
+  });
+
+  it("names, for each `proved, residual noted` row, the residual it carries (FIX12 S2)", () => {
+    const expected: Record<string, RegExp> = {
+      "T-09-24": /delete-and-recreate/,
+      "T-09-26": /prompt budget is global/,
+      "T-09-29": /delete-and-recreate/,
+      "T-09-34": /MAC is readable by any same-user secret reader/,
+      "T-09-35": /same limit/,
+      "T-09-36": /same limit/,
+      "T-09-39": /unauthenticated marker window/,
+    };
+    const noted = rows()
+      .filter((row) => /residual noted/.test(row.status))
+      .map((row) => row.id);
+    expect(Object.keys(expected)).toEqual(noted);
+    for (const [id, pattern] of Object.entries(expected)) {
+      const line = residuals.split("\n- ").find((entry) => entry.startsWith(`${id}: `));
+      expect(line, `${id} has a line in Same-user residuals`).toBeDefined();
+      expect(flat(line as string), id).toMatch(pattern);
+    }
   });
 
   it("names the shipped custody, pin and channel exactly as 09-PRESENCE-SPIKE.md records them", () => {
