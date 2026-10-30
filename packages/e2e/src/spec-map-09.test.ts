@@ -25,6 +25,14 @@ const run = planned ? describe : describe.skip;
 const RESULT_FORM = /^(pass|fail|accepted) — \S/;
 
 /**
+ * What the ratification writes for an automated item whose run passed (apply-ratification.ts:
+ * `result: pass - auto run <run-id>`, an ASCII hyphen and the 8-hex run id). It is the only form
+ * besides {@link RESULT_FORM}, and only an automated item may carry it: an owner item's result is
+ * the owner's alone.
+ */
+const RATIFIED_FORM = /^pass - auto run [0-9a-f]{8}$/;
+
+/**
  * The recording state of a script, valid at any point from untouched to fully recorded: each result
  * is `[pending]` or a recognised verb in the house form, the Summary total equals the item count,
  * and the front matter says `testing` exactly while something is pending (the audit's own rule).
@@ -37,6 +45,7 @@ function recordingProblems(script: ReturnType<typeof parseUatScript>): string[] 
     if (item.resultLines !== 1)
       problems.push(`item ${item.number} has ${item.resultLines} result lines`);
     else if (value.startsWith("[pending]")) pending += 1;
+    else if (item.runClass !== "owner" && RATIFIED_FORM.test(value)) continue;
     else if (classifyResult(value) === "unrecognised" || !RESULT_FORM.test(value)) {
       problems.push(
         `item ${item.number} has a result in neither the pending nor the recorded form`,
@@ -364,7 +373,7 @@ run(
 );
 
 describe("recordingProblems accepts every stage of the sitting (FIX11 finding 2)", () => {
-  const script = (status: string, results: string[]) =>
+  const script = (status: string, results: string[], runClass = "owner") =>
     parseUatScript(
       [
         "---",
@@ -376,8 +385,8 @@ describe("recordingProblems accepts every stage of the sitting (FIX11 finding 2)
         "",
         ...results.flatMap((result, index) => [
           `### ${index + 1}. Item`,
-          "run: owner",
-          "owner-why: real-session",
+          `run: ${runClass}`,
+          ...(runClass === "owner" ? ["owner-why: real-session"] : ["via: dom"]),
           `result: ${result}`,
           "",
         ]),
@@ -394,6 +403,28 @@ describe("recordingProblems accepts every stage of the sitting (FIX11 finding 2)
     expect(
       recordingProblems(script("complete", ["pass — owner: ok", "accepted — not walked: none"])),
     ).toEqual([]);
+  });
+
+  it("accepts exactly the ratifier's output for an automated item, never for an owner item (FIX12 C1)", () => {
+    // apply-ratification.ts writes an ASCII hyphen and the 8-hex run id.
+    const ratified = "pass - auto run 0a1b2c3d";
+    expect(recordingProblems(script("testing", [ratified, "[pending]"], "auto"))).toEqual([]);
+    expect(recordingProblems(script("complete", [ratified, ratified], "auto"))).toEqual([]);
+    // The owner's own result keeps the house form: a ratified-shape line on an owner item is refused.
+    expect(
+      recordingProblems(script("testing", [ratified, "[pending]"], "owner")).join(" "),
+    ).toMatch(/neither/);
+    // Near misses of the ratified form are still refused, as is a bare pass on an automated item.
+    for (const near of [
+      "pass - auto run 0A1B2C3D",
+      "pass - auto run 0a1b2c",
+      "pass - auto run 0a1b2c3d extra",
+      "pass",
+    ]) {
+      expect(recordingProblems(script("testing", [near, "[pending]"], "auto")).join(" ")).toMatch(
+        /neither/,
+      );
+    }
   });
 
   it("rejects an unrecognised verb, a bare verb, and a status that disagrees with the results", () => {
