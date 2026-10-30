@@ -450,7 +450,7 @@ run("setup and safety (Test 5)", () => {
     expect(sixteen).toMatch(/Finish with `pnpm run service:install`/);
     const seventeen = flat(tests.find((test) => test.number === 17)?.expected ?? "");
     expect(seventeen).toMatch(
-      /\(c\) [^]*`~\/\.claude-command-center\/bin\/ccc-presence unenrol`[^]*Approve shows the presence-unavailable line/,
+      /\(c\) [\s\S]*`~\/\.claude-command-center\/bin\/ccc-presence unenrol`[\s\S]*Approve shows the presence-unavailable line/,
     );
     expect(seventeen).toMatch(/then run `pnpm run service:install` to restore/i);
     // The Setup order note no longer leans on item 16's state.
@@ -468,7 +468,7 @@ run("setup and safety (Test 5)", () => {
   it("checks the pin's icmt attribute only after an install, with no secret read (FIX12 m5)", () => {
     const eleven = flat(tests.find((test) => test.number === 11)?.expected ?? "");
     expect(eleven).toMatch(
-      /\(c\) `pnpm run service:install` once more[^]*security find-generic-password -a approval-presence-pin -s com\.claude-command-center` \(attribute-only; never add `-w` or `-g`\)[^]*"icmt"/,
+      /\(c\) `pnpm run service:install` once more[\s\S]*security find-generic-password -a approval-presence-pin -s com\.claude-command-center` \(attribute-only; never add `-w` or `-g`\)[\s\S]*"icmt"/,
     );
   });
 
