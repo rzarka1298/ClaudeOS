@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -760,6 +761,54 @@ run("merge-gate runbook (Tests 1 to 3 of Task 3)", () => {
     expect(gates).toContain("pnpm exec turbo run build typecheck test --concurrency=2");
     expect(gates).toContain("pnpm --filter @ccc/test-fixtures exec vitest run");
     expect(gates).toContain("pnpm --filter @ccc/e2e exec vitest run src/docs-wording.test.ts");
+  });
+
+  it("names every ADR the phase amended (FIX12 m4)", () => {
+    const nextFree = section(gates, "3\\. Next-free value re-checks");
+    const changed = execFileSync(
+      "git",
+      ["diff", "--name-only", "--diff-filter=M", "71d14e7a..HEAD", "--", "docs/adr"],
+      { cwd: REPO_ROOT, encoding: "utf8" },
+    )
+      .split("\n")
+      .map((file) => /^docs\/adr\/(\d{4})-/.exec(file)?.[1])
+      .filter((id): id is string => id !== undefined);
+    expect(changed.length).toBeGreaterThan(0);
+    const amended = /amendments to ADR ([0-9, and]+)/.exec(nextFree)?.[1] ?? "";
+    for (const id of changed) expect(amended, `ADR ${id} amended by the phase`).toContain(id);
+    expect(amended).toContain("0028");
+  });
+
+  it("checks the clean tree by the runner's own rule and says who owns the milestone lock (FIX12 m4)", () => {
+    const runs = section(gates, "6\\. Automated runs at the same final head");
+    expect(runs).toContain("`git status --short -- packages scripts`");
+    expect(runs).not.toMatch(/\(`git status --short` empty\)/);
+    expect(runs).toContain(".planning/milestone.lock");
+    expect(runs).toMatch(/orchestrator/);
+  });
+
+  it("holds the publish step to the owner's go-ahead and the privacy gate before any release or tag (FIX12 m4)", () => {
+    const publish = section(gates, "13\\. Merge and publish");
+    expect(publish).toMatch(/only after the owner's go-ahead/i);
+    expect(publish).toMatch(/`privacy-release-gate`[^.]*before any release or tag/);
+    expect(section(gates, "14\\. Closing checklist")).toMatch(
+      /published through the filtered script only, after the owner's go-ahead/,
+    );
+  });
+
+  it("lists the load flakes the 09-23 full run recorded, outside 09-WAVE-REVIEWS.md (FIX12 m4)", () => {
+    const flakes = section(gates, "2\\. Full unfiltered test run");
+    for (const name of [
+      "spawn-lint-selectors.audit",
+      "claude-hooks-installer",
+      "replay-and-resync",
+    ]) {
+      expect(flakes, name).toContain(name);
+      expect(read("09-23-SUMMARY.md"), `${name} in 09-23-SUMMARY.md`).toContain(
+        name.replace(".audit", ""),
+      );
+    }
+    expect(flakes).toMatch(/"a helper that cannot enrol[^"]*" case inside the full file/);
   });
 
   it("re-derives the next-free values: migration 0013 is the last, ADR 0032 the highest, the backstop checks 18 rules", () => {
