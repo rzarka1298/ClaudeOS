@@ -441,8 +441,35 @@ run("setup and safety (Test 5)", () => {
     expect([...numbers].sort((a, b) => a - b)).toEqual(OWNER);
     expect(numbers[numbers.length - 1]).toBe(10);
     expect(numbers[0]).toBe(9);
-    // Item 17 (c) uses the unenrolled state of item 16 step 4, so 16 comes before 17.
     expect(numbers.indexOf(16)).toBeLessThan(numbers.indexOf(17));
+  });
+
+  it("makes item 17 (c) unenrol for itself, because item 16 ends with a reinstall (FIX12 m2)", () => {
+    // Item 16 finishes with `pnpm run service:install`, so it leaves an enrolled helper.
+    const sixteen = flat(tests.find((test) => test.number === 16)?.expected ?? "");
+    expect(sixteen).toMatch(/Finish with `pnpm run service:install`/);
+    const seventeen = flat(tests.find((test) => test.number === 17)?.expected ?? "");
+    expect(seventeen).toMatch(
+      /\(c\) [^]*`~\/\.claude-command-center\/bin\/ccc-presence unenrol`[^]*Approve shows the presence-unavailable line/,
+    );
+    expect(seventeen).toMatch(/then run `pnpm run service:install` to restore/i);
+    // The Setup order note no longer leans on item 16's state.
+    expect(flat(setup)).not.toMatch(/item 17 \(c\) uses the unenrolled state/);
+    expect(flat(setup)).toMatch(/item 17 \(c\) unenrols for itself/);
+  });
+
+  it("tells the owner to replace the main checkout path, keeping the placeholder form (FIX12 m3)", () => {
+    expect(flat(text)).toMatch(
+      /replace `\/Users\/USERNAME\/ClaudeOS` with your main checkout path/,
+    );
+    expect(flat(setup)).toMatch(/replace `\/Users\/USERNAME\/ClaudeOS` with your main checkout/);
+  });
+
+  it("checks the pin's icmt attribute only after an install, with no secret read (FIX12 m5)", () => {
+    const eleven = flat(tests.find((test) => test.number === 11)?.expected ?? "");
+    expect(eleven).toMatch(
+      /\(c\) `pnpm run service:install` once more[^]*security find-generic-password -a approval-presence-pin -s com\.claude-command-center` \(attribute-only; never add `-w` or `-g`\)[^]*"icmt"/,
+    );
   });
 
   it("names the three re-installs of item 10 and the restore checks", () => {
