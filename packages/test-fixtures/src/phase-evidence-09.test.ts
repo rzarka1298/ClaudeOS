@@ -781,8 +781,26 @@ run("merge-gate runbook (Tests 1 to 3 of Task 3)", () => {
 
   it("checks the clean tree by the runner's own rule and says who owns the milestone lock (FIX12 m4)", () => {
     const runs = section(gates, "6\\. Automated runs at the same final head");
-    expect(runs).toContain("`git status --short -- packages scripts`");
+    // The two checks of the runner's readGitFacts (packages/e2e/src/git-facts.ts), written out: tracked
+    // changes anywhere but .planning, and untracked files under packages/ and scripts/. Both print nothing.
+    const tracked = "git status --porcelain --untracked-files=no -- . ':(exclude).planning'";
+    const untracked = "git ls-files --others --exclude-standard -- packages scripts";
+    expect(runs).toContain(`\`${tracked}\``);
+    expect(runs).toContain(`\`${untracked}\``);
+    expect(runs).not.toContain("git status --short -- packages scripts");
     expect(runs).not.toMatch(/\(`git status --short` empty\)/);
+    const facts = readFileSync(join(REPO_ROOT, "packages/e2e/src/git-facts.ts"), "utf8");
+    for (const piece of [
+      '"--porcelain"',
+      '"--untracked-files=no"',
+      '":(exclude).planning"',
+      '"--others"',
+      '"--exclude-standard"',
+      '"packages"',
+      '"scripts"',
+    ]) {
+      expect(facts, `git-facts.ts holds ${piece}`).toContain(piece);
+    }
     expect(runs).toContain(".planning/milestone.lock");
     expect(runs).toMatch(/orchestrator/);
   });
