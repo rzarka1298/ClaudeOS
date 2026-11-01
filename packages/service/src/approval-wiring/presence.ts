@@ -335,7 +335,7 @@ export function pinReaderFromEnv(
   env: Readonly<Record<string, string | undefined>>,
   read: (account: string) => Promise<string | null>,
 ): PinReader {
-  if (env.CCC_INSTALL_SECRET_ACCOUNT !== undefined) return async () => null;
+  if (isPresenceSandbox(env)) return async () => null;
   return async () => {
     try {
       return await read(PRESENCE_PIN_ACCOUNT);
