@@ -1326,6 +1326,68 @@ describe("FIX2A R2/R3: the bundle line is repeat-audible, safe after unmount and
     expect(bundleLine().textContent).toBe("");
   });
 
+  it("FIX15: a copy that completes after the preview was hidden announces nothing", async () => {
+    answered();
+    let release!: () => void;
+    const f = fixture(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderBlock(f);
+    showPreview();
+    pressCopy();
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Hide bundle preview" }));
+    await act(async () => {
+      release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(bundleLine().textContent).toBe("");
+    // Showing the preview again must not resurrect the old outcome either.
+    showPreview();
+    expect(bundleLine().textContent).toBe("");
+  });
+
+  it("FIX15: a copy that completes after the preview was rebuilt to different text announces nothing", async () => {
+    answered();
+    let release!: () => void;
+    const f = fixture(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderBlock(f);
+    showPreview();
+    pressCopy();
+    await flush();
+    await act(async () => {
+      claudeIntegration.value = {
+        hooks: "not-installed",
+        hookRuntimeMissing: false,
+        disableAllHooks: null,
+        lastEventAt: null,
+        telemetry: { kind: "ok" },
+        detectedClaudeVersion: null,
+        statusLine: "not-installed",
+        statusLineReported: false,
+        transcriptAnalysis: { enabled: true },
+        spoolDropCount: 0,
+        unknownEventCount: 0,
+        cleanupPeriodDays: 30,
+      };
+    });
+    await act(async () => {
+      release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(bundleLine().textContent).toBe("");
+  });
+
   it("R3c: a rebuild that yields the same text keeps the message", async () => {
     answered();
     renderBlock(fixture());

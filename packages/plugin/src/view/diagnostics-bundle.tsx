@@ -182,6 +182,10 @@ export function DiagnosticBundleBlock({
   // The bundle text a copy or save message described; null when the line holds nothing about a
   // bundle (empty, or a checks line). A rebuild to different text or hiding the preview clears it.
   const describedTextRef = useRef<string | null>(null);
+  // The preview's identity: bumped when the preview is hidden or its text changes, so a Copy or
+  // Save that finishes afterwards (FIX15) cannot describe a preview that is no longer on screen.
+  const previewEpochRef = useRef(0);
+  const shownTextRef = useRef<string | null>(null);
   const previewId = useId();
   const reasonId = useId();
   const saveReasonId = useId();
@@ -228,8 +232,8 @@ export function DiagnosticBundleBlock({
   }
 
   /** A copy or save outcome: announced, and remembered as describing this exact bundle text. */
-  function announceAbout(bundleText: string, message: string): void {
-    if (!mountedRef.current) return;
+  function announceAbout(epoch: number, bundleText: string, message: string): void {
+    if (!mountedRef.current || epoch !== previewEpochRef.current) return;
     announce(message);
     describedTextRef.current = bundleText;
   }
@@ -285,6 +289,9 @@ export function DiagnosticBundleBlock({
   useEffect(() => {
     if (!openRef.current) return;
     const next = build();
+    const nextText = next?.kind === "offered" ? next.text : null;
+    if (nextText !== shownTextRef.current) previewEpochRef.current += 1;
+    shownTextRef.current = nextText;
     setOutcome(next);
     // A copy or save message is about one string; once the preview shows a different one it is stale.
     const described = describedTextRef.current;
@@ -316,6 +323,8 @@ export function DiagnosticBundleBlock({
   }, [outcome]);
 
   function close(): void {
+    previewEpochRef.current += 1;
+    shownTextRef.current = null;
     setOpen(false);
     setOutcome(null);
     clearBundleLine();
@@ -326,17 +335,21 @@ export function DiagnosticBundleBlock({
       close();
       return;
     }
-    setOutcome(build());
+    const built = build();
+    shownTextRef.current = built?.kind === "offered" ? built.text : null;
+    setOutcome(built);
     setOpen(true);
   }
 
   async function copy(): Promise<void> {
     if (outcome?.kind !== "offered" || !copyGate.begin()) return;
+    const epoch = previewEpochRef.current;
     try {
       await host.copyText(outcome.text);
-      announceAbout(outcome.text, "Bundle copied.");
+      announceAbout(epoch, outcome.text, "Bundle copied.");
     } catch {
       announceAbout(
+        epoch,
         outcome.text,
         "Couldn't copy the bundle. Select the text in the preview and copy it by hand.",
       );
@@ -351,11 +364,12 @@ export function DiagnosticBundleBlock({
    */
   async function save(): Promise<void> {
     if (outcome?.kind !== "offered" || !saveAvailable || !saveGate.begin()) return;
+    const epoch = previewEpochRef.current;
     try {
       const result = await exporter.save(outcome.text, host.display.vaultBasePath, nowRef.current);
-      announceAbout(outcome.text, SAVE_NOTICES[result.kind]);
+      announceAbout(epoch, outcome.text, SAVE_NOTICES[result.kind]);
     } catch {
-      announceAbout(outcome.text, SAVE_FAILED);
+      announceAbout(epoch, outcome.text, SAVE_FAILED);
     } finally {
       saveGate.end();
     }
