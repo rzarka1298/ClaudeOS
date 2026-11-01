@@ -50,7 +50,6 @@ import {
   approvalDetailCache,
   approvalPages,
   approvalsFooterModel,
-  approvalsListSeenAtMount,
   approvalsLoadFailed,
   approvalsMissedSync,
   approvalsObservedAt,
@@ -255,7 +254,7 @@ export function ApprovalsSection({ now, onOpenRun, refreshOne }: ApprovalsSectio
       if (announce) announceApproval(REFRESHED_STATUS);
       return;
     }
-    if (approvalsHydrated.peek()) markApprovalsMissedSync(approvalsById.peek());
+    if (approvalsHydrated.peek()) markApprovalsMissedSync();
     else approvalsLoadFailed.value = true;
     if (announce) announceApproval(SECTION_ERROR_HEADING);
   }
@@ -272,11 +271,10 @@ export function ApprovalsSection({ now, onOpenRun, refreshOne }: ApprovalsSectio
   // A dropped stream means the list may have missed changes; a snapshot or an
   // event arriving while live means it has not.
   useEffect(() => {
-    if (hydrated && connection.kind !== "live") markApprovalsMissedSync(approvalsById.peek());
+    if (hydrated && connection.kind !== "live") markApprovalsMissedSync();
   }, [hydrated, connection.kind]);
-  // Starts from the list the stale mark was made against, so an arrival while this section was
-  // away is noticed by the effect below on mount, as it would have been had the section stayed.
-  const seenById = useRef(approvalsListSeenAtMount(byId));
+  // An arrival while this section was away is cleared where it lands (`approvals/events.ts`).
+  const seenById = useRef(byId);
   useEffect(() => {
     if (seenById.current === byId) return;
     seenById.current = byId;

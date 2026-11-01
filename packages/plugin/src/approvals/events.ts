@@ -1,5 +1,7 @@
 import type { ServiceEvent, SnapshotResponse } from "@ccc/domain";
 import { ApprovalsSnapshotSchema, ApprovalUpsertedPayloadSchema } from "@ccc/domain/approval.js";
+import { connectionState } from "../connection-state.js";
+import { approvalsMissedSync } from "../view/approvals-state.js";
 import { adoptApprovalsSnapshot, applyApprovalSummary } from "./signals.js";
 
 /**
@@ -9,12 +11,22 @@ import { adoptApprovalsSnapshot, applyApprovalSummary } from "./signals.js";
  * (Pitfall 17, T-05-23).
  */
 
+/**
+ * The stream delivered something while it is live, so the list has not missed a change since: the stale
+ * mark is cleared here, whether or not a section is showing (FIX15 m6). A change applied from the HTTP side
+ * (a decide response, a single-request refetch) while the stream was down is not an arrival and clears nothing.
+ */
+function noteStreamArrival(): void {
+  if (connectionState.peek().kind === "live") approvalsMissedSync.value = false;
+}
+
 /** Applies an `approval.upserted` event. Anything else, or a malformed payload, is ignored. */
 export function applyApprovalServiceEvent(event: ServiceEvent): void {
   if (event.type !== "approval.upserted") return;
   const parsed = ApprovalUpsertedPayloadSchema.safeParse(event.payload);
   if (!parsed.success) return;
   applyApprovalSummary(parsed.data.approval);
+  noteStreamArrival();
 }
 
 /**
@@ -29,4 +41,5 @@ export function adoptApprovalsFromSnapshot(snapshot: SnapshotResponse): void {
   const parsed = ApprovalsSnapshotSchema.safeParse(member);
   if (!parsed.success) return;
   adoptApprovalsSnapshot(parsed.data);
+  noteStreamArrival();
 }
