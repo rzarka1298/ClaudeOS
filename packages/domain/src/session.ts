@@ -258,6 +258,9 @@ function quietAgoText(ageMs: number): string {
   return `${Math.floor(minutes / 60)} h`;
 }
 
+/** How far ahead of the clock a last-event time may be before it is not believed. */
+const FUTURE_SKEW_TOLERANCE_MS = 60_000;
+
 /**
  * The one place a Claude session's state word is decided (D-05, R-04, SESS-19). The stored state
  * stays `running` (a live process at its prompt has not ended); presentation says what is true:
@@ -276,8 +279,12 @@ export function presentRunState(
   if (view.state !== "running") return { ...base, quiet: null };
   // With no event on record the age runs from the start, and the label must not claim an event
   // was seen (FIX3B Q3).
-  const sawEvent = view.lastActivityAt !== null;
-  const ageMs = nowMs - Date.parse(view.lastActivityAt ?? view.startedAt);
+  // A last event dated in the future beyond a small skew cannot be a real observation (clock skew or a bad
+  // record): it is not trusted as fresh, and the age runs from the start as if no event were on record (FIX15).
+  const lastMs = view.lastActivityAt === null ? Number.NaN : Date.parse(view.lastActivityAt);
+  const futureDated = Number.isFinite(lastMs) && lastMs - nowMs > FUTURE_SKEW_TOLERANCE_MS;
+  const sawEvent = view.lastActivityAt !== null && !futureDated;
+  const ageMs = nowMs - Date.parse(sawEvent ? (view.lastActivityAt as string) : view.startedAt);
   if (!Number.isFinite(ageMs) || ageMs < quietAfterMs) return { ...base, quiet: null };
   const ago = quietAgoText(ageMs);
   const silent = view.activity === "working";

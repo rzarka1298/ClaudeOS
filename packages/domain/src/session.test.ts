@@ -309,6 +309,21 @@ describe("presentRunState (Phase 9, D-05, R-04, SESS-19)", () => {
     expect(p.group).toBe("active");
   });
 
+  it("FIX15: a future-dated last event (clock skew) is not trusted as fresh; the age runs from the start", () => {
+    const p = presentRunState(
+      view({ lastActivityAt: new Date(NOW + 10 * MIN).toISOString(), startedAt: ago(300 * MIN) }),
+      NOW,
+    );
+    expect(p.quiet).toBe("idle");
+    expect(p.label).toBe("Idle — no events since start, 5 h");
+    // A small skew inside the tolerance is just now.
+    const near = presentRunState(
+      view({ lastActivityAt: new Date(NOW + 5_000).toISOString() }),
+      NOW,
+    );
+    expect(near.quiet).toBeNull();
+  });
+
   it("Test 2: exactly at the threshold flips from Running to quiet", () => {
     const q = 10 * MIN;
     const before = presentRunState(view({ lastActivityAt: ago(q - 1) }), NOW, q);
