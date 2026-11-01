@@ -56,6 +56,7 @@ import {
   decisionMacFields,
   type PresencePart,
   type ProofVerdict,
+  pinFingerprintOf,
   presenceMessage,
   signDecisionProof,
   verifyDecisionProof,
@@ -196,6 +197,19 @@ const PROOF_KEY_BYTES = 32;
 const PROOF_INVALID_FAILED: FinishDecision = {
   state: "failed",
   code: "proof-invalid",
+  note: null,
+  evidence: null,
+  reconciled: false,
+};
+
+/**
+ * An approved presence row signed under a pin an install has since replaced (FIX15 m5): it never runs, and it
+ * is recorded as that, not as the tampering `proof-invalid` means.
+ */
+const PIN_SUPERSEDED = "pin-superseded";
+const PIN_SUPERSEDED_FAILED: FinishDecision = {
+  state: "failed",
+  code: PIN_SUPERSEDED,
   note: null,
   evidence: null,
   reconciled: false,
@@ -930,7 +944,10 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       approvedAt,
     });
     return verifyPresenceSignature(pin, message, result.signature)
-      ? { kind: "ok", part: { scheme: "p256", sig: result.signature } }
+      ? {
+          kind: "ok",
+          part: { scheme: "p256", sig: result.signature, pinFp: pinFingerprintOf(pin) },
+        }
       : { kind: "bad" };
   }
 
@@ -1164,8 +1181,8 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       // A row whose proof is missing, malformed or not its own is never started (R-05): claimed so it
       // can be finished, and failed, never silently repaired.
       const verdict = await proofVerifies(approved);
-      if (verdict === "invalid") {
-        refuseUnproved(approved);
+      if (verdict === "invalid" || verdict === "pin-superseded") {
+        refuseUnproved(approved, verdict);
         return null;
       }
       if (verdict === "pin-unavailable") {
@@ -1213,12 +1230,18 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
    * Claims an approved row that has no valid proof and finishes it `failed` / `proof-invalid`; it never runs.
    * Returns true when the refusal was written. One implementation, used by the claim and by recovery.
    */
-  function refuseUnproved(approved: StoredProposal): boolean {
-    log.warn({ proposalId: approved.proposalId, code: "approval-proof-invalid" });
+  function refuseUnproved(approved: StoredProposal, verdict: ProofVerdict = "invalid"): boolean {
+    const superseded = verdict === "pin-superseded";
+    log.warn({
+      proposalId: approved.proposalId,
+      code: superseded ? "approval-pin-superseded" : "approval-proof-invalid",
+    });
     const claim = store.claim(approved.proposalId, {}, clock.now());
     if (claim.kind !== "claimed") return false;
     announce(claim.proposal);
-    return finishWith(claim.proposal, PROOF_INVALID_FAILED) !== null;
+    return (
+      finishWith(claim.proposal, superseded ? PIN_SUPERSEDED_FAILED : PROOF_INVALID_FAILED) !== null
+    );
   }
 
   function keyUnreadableDecision(claimed: StoredProposal): FinishDecision {
@@ -1329,8 +1352,12 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       return;
     }
     if (verdict !== "valid") {
-      log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
-      failBeforeExecute(proposal, "proof-invalid");
+      const superseded = verdict === "pin-superseded";
+      log.warn({
+        proposalId: proposal.proposalId,
+        code: superseded ? "approval-pin-superseded" : "approval-proof-invalid",
+      });
+      failBeforeExecute(proposal, superseded ? PIN_SUPERSEDED : "proof-invalid");
       return;
     }
     const definition = registry.lookup(proposal.operation);

@@ -1,4 +1,11 @@
-import { createHmac, createPublicKey, hkdfSync, timingSafeEqual, verify } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  createPublicKey,
+  hkdfSync,
+  timingSafeEqual,
+  verify,
+} from "node:crypto";
 import { canonicalJson, type DecidedVia, type StoredProposal } from "@ccc/domain";
 import { z } from "zod";
 
@@ -114,7 +121,21 @@ export function isCanonicalSignature(value: string): boolean {
 export const PresencePartSchema = z.strictObject({
   scheme: z.literal("p256"),
   sig: z.string().refine(isCanonicalSignature),
+  /**
+   * The short fingerprint of the pin the signature was made under (FIX15 m5). It lets a row signed under a pin
+   * that an install has since replaced be told apart from a forgery. Absent on rows from before it existed.
+   * Not secret, and not trusted: a mismatch still refuses the row.
+   */
+  pinFp: z
+    .string()
+    .regex(/^[0-9a-f]{16}$/)
+    .optional(),
 });
+
+/** The fingerprint stored beside a presence signature: the first 16 hex characters of the pin's SHA-256. */
+export function pinFingerprintOf(pin: string): string {
+  return createHash("sha256").update(pin, "utf8").digest("hex").slice(0, 16);
+}
 
 export type PresencePart = z.infer<typeof PresencePartSchema>;
 
@@ -214,9 +235,11 @@ export function signDecisionProof(
  * The three answers of a row check (09-FIX9): `valid`; `invalid` (a missing, malformed, copied or forged proof,
  * which is never repaired); and `pin-unavailable` (the row is sound in every way the pin is not needed to see, but
  * the pin could not be read, so the presence signature could not be checked). A caller leaves a
- * `pin-unavailable` row where it is and tries again later; it never treats it as a forgery.
+ * `pin-unavailable` row where it is and tries again later; it never treats it as a forgery. `pin-superseded`
+ * (FIX15 m5) is a presence row that is MAC-valid but was signed under a pin other than the current one (an install
+ * replaced it): it is refused exactly like `invalid` and never runs, but it is recorded under its own code.
  */
-export type ProofVerdict = "valid" | "invalid" | "pin-unavailable";
+export type ProofVerdict = "valid" | "invalid" | "pin-unavailable" | "pin-superseded";
 
 /** What the check needs to know about the row's operation and the pin the presence part is verified against. */
 export interface ProofCheckOptions {
@@ -260,6 +283,9 @@ export function verifyDecisionProof(
     if (part === null || fields.decidedVia !== "presence") return "invalid";
     // Everything the pin is not needed to see is sound: the row is neither good nor bad until a pin can be read.
     if (options.pin === null) return "pin-unavailable";
+    if (part.pinFp !== undefined && part.pinFp !== pinFingerprintOf(options.pin)) {
+      return "pin-superseded";
+    }
     return verifyPresenceSignature(options.pin, presenceMessage(fields), part.sig)
       ? "valid"
       : "invalid";

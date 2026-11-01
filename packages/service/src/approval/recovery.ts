@@ -98,7 +98,7 @@ export interface RecoveryHost {
    */
   verifyProof(proposal: StoredProposal): Promise<ProofVerdict>;
   /** Claims an approved request that has no valid proof and finishes it `failed` / `proof-invalid` (warns); true when written. */
-  refuseUnproved(approved: StoredProposal): boolean;
+  refuseUnproved(approved: StoredProposal, verdict: ProofVerdict): boolean;
   /** Records an executing request's outcome and publishes it. */
   finish(proposal: StoredProposal, decision: FinishDecision): StoredProposal | null;
   /** Runs one claimed attempt WITHOUT awaiting it; registered for `settled()`. */
@@ -171,8 +171,17 @@ export function createRecovery(host: RecoveryHost): Recovery {
       return;
     }
     if (verdict !== "valid") {
-      log.warn({ proposalId: proposal.proposalId, code: "approval-proof-invalid" });
-      if (host.finish(proposal, unknownDecision("proof-invalid", null)) !== null) {
+      const superseded = verdict === "pin-superseded";
+      log.warn({
+        proposalId: proposal.proposalId,
+        code: superseded ? "approval-pin-superseded" : "approval-proof-invalid",
+      });
+      if (
+        host.finish(
+          proposal,
+          unknownDecision(superseded ? "pin-superseded" : "proof-invalid", null),
+        ) !== null
+      ) {
         counts.proofInvalid += 1;
       }
       return;
@@ -254,7 +263,7 @@ export function createRecovery(host: RecoveryHost): Recovery {
             return;
           }
           if (verdict !== "valid") {
-            if (host.refuseUnproved(approved)) counts.proofInvalid += 1;
+            if (host.refuseUnproved(approved, verdict)) counts.proofInvalid += 1;
             return;
           }
           failUnexecutable(approved, counts);
@@ -274,7 +283,7 @@ export function createRecovery(host: RecoveryHost): Recovery {
           return;
         }
         if (verdict !== "valid") {
-          if (host.refuseUnproved(approved)) counts.proofInvalid += 1;
+          if (host.refuseUnproved(approved, verdict)) counts.proofInvalid += 1;
           return;
         }
         if (await host.claimAndStart(approved, definition)) counts.claimed += 1;

@@ -16,6 +16,7 @@ import {
   DecisionProofSchema,
   decisionMacFields,
   isCanonicalSignature,
+  pinFingerprintOf,
   presenceMessage,
   SIGNATURE_MAX_BYTES,
   SIGNATURE_MIN_BYTES,
@@ -482,6 +483,38 @@ describe("verifyDecisionProof with a presence part (09-18 Task 1)", () => {
     expect(verifyDecisionProof(KEY, bare, { presenceRequired: true, pin: pair.pin })).toBe(
       "invalid",
     );
+    expect(
+      verifyDecisionProof(KEY, rowWith(FIELDS, good), {
+        presenceRequired: true,
+        pin: keyPair().pin,
+      }),
+    ).toBe("invalid");
+  });
+
+  it("FIX15 m5: a row signed under a pin that was since replaced is pin-superseded, never plain invalid; a forged signature under the current pin stays invalid", () => {
+    const signed = signDecisionProof(KEY, FIELDS, {
+      scheme: "p256",
+      sig: pair.sign(msg),
+      pinFp: pinFingerprintOf(pair.pin),
+    });
+    const row = rowWith(FIELDS, signed);
+    expect(verifyDecisionProof(KEY, row, { presenceRequired: true, pin: pair.pin })).toBe("valid");
+    expect(verifyDecisionProof(KEY, row, { presenceRequired: true, pin: keyPair().pin })).toBe(
+      "pin-superseded",
+    );
+    // The same fingerprint with a signature that does not verify is a forgery.
+    const forged = rowWith(
+      FIELDS,
+      signDecisionProof(KEY, FIELDS, {
+        scheme: "p256",
+        sig: keyPair().sign(msg),
+        pinFp: pinFingerprintOf(pair.pin),
+      }),
+    );
+    expect(verifyDecisionProof(KEY, forged, { presenceRequired: true, pin: pair.pin })).toBe(
+      "invalid",
+    );
+    // A row from before the fingerprint existed cannot be told apart: it stays invalid.
     expect(
       verifyDecisionProof(KEY, rowWith(FIELDS, good), {
         presenceRequired: true,

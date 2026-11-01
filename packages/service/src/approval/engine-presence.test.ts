@@ -495,6 +495,24 @@ describe("a pin that cannot be read after the owner approved (09-FIX9, FIX15 M1)
   });
 });
 
+describe("a pin replaced after the owner approved (FIX15 m5)", () => {
+  it("finishes the row failed with pin-superseded, not proof-invalid, and runs nothing", async () => {
+    const other = generatePresenceKeys();
+    let reads = 0;
+    // Reads 1 and 2 (before the prompt, to verify) see the pin the owner signed under; the claim sees a new one.
+    const h = presenceHarness(createPresenceFake(), async () => {
+      reads += 1;
+      return reads <= 2 ? TEST_PIN : other.pin;
+    });
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    await approve(h, id, hashOf(h, id), "other");
+    await h.engine.settled();
+    expect(stored(h, id).state).toBe("failed");
+    expect(stored(h, id).outcomeCode).toBe("pin-superseded");
+    expect(h.log.lines.some((l) => l.fields.code === "approval-proof-invalid")).toBe(false);
+  });
+});
+
 describe("the proposal is re-checked after the pre-prompt pin lookup (09-FIX9, Codex)", () => {
   const tick = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
 
