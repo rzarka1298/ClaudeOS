@@ -201,6 +201,13 @@ const PROOF_INVALID_FAILED: FinishDecision = {
   reconciled: false,
 };
 
+/**
+ * What an approved row is finished as when the presence key could not be read at the claim or the last gate
+ * (FIX15 M1): nothing ran and the owner is told so, rather than the row sitting approved or executing until a
+ * restart. Distinct from `proof-invalid`, which means the row failed verification.
+ */
+const PRESENCE_KEY_UNREADABLE = "presence-key-unreadable";
+
 /** At most this many presence checks start per {@link PRESENCE_WINDOW_MS}, across all requests (T-09-26). */
 export const PRESENCE_PROMPTS_PER_MINUTE = 3;
 const PRESENCE_WINDOW_MS = 60_000;
@@ -1146,9 +1153,15 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
         return null;
       }
       if (verdict === "pin-unavailable") {
-        // Sound, but the pin could not be read now (09-FIX9): the owner's approval stands. The row stays
-        // approved and the next recovery tries again; it lapses in time like any approval nobody carried out.
+        // Sound, but the pin could not be read now (09-FIX9). Nothing runs without a verifying signature, and
+        // nothing waits for a restart either (FIX15 M1): the row is claimed so it can be finished `failed`
+        // with its own code, and the owner sees that nothing ran.
         log.warn({ proposalId: approved.proposalId, code: "approval-proof-pin-unavailable" });
+        const claim = store.claim(approved.proposalId, {}, clock.now());
+        if (claim.kind === "claimed") {
+          announce(claim.proposal);
+          finishWith(claim.proposal, keyUnreadableDecision(claim.proposal));
+        }
         return null;
       }
       // The pin read above took time; a shutdown that began meanwhile leaves the row approved for the next boot.
@@ -1190,6 +1203,18 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     if (claim.kind !== "claimed") return false;
     announce(claim.proposal);
     return finishWith(claim.proposal, PROOF_INVALID_FAILED) !== null;
+  }
+
+  function keyUnreadableDecision(claimed: StoredProposal): FinishDecision {
+    return claimed.attempts < 2
+      ? {
+          state: "failed",
+          code: PRESENCE_KEY_UNREADABLE,
+          note: null,
+          evidence: null,
+          reconciled: false,
+        }
+      : unknownDecision(PRESENCE_KEY_UNREADABLE, null);
   }
 
   /** Runs one claimed attempt without awaiting it; `settled()` waits for it. */
@@ -1281,9 +1306,10 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     // First attempt: nothing ran, `failed`; a retry: an earlier attempt may have run, `unknown`.
     const verdict = await proofVerifies(proposal);
     if (verdict === "pin-unavailable") {
-      // Nothing has run and nothing is finished (09-FIX9): the row stays `executing` and the next recovery
-      // checks it again, reconciling before any retry, exactly as for any row a restart finds executing.
+      // Nothing ran (FIX15 M1): the row is finished now, not left `executing` until a restart. First attempt:
+      // `failed`; a retry may follow an attempt that ran, so `unknown`.
       log.warn({ proposalId: proposal.proposalId, code: "approval-proof-pin-unavailable" });
+      failBeforeExecute(proposal, PRESENCE_KEY_UNREADABLE);
       return;
     }
     if (verdict !== "valid") {

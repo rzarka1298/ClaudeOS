@@ -443,38 +443,41 @@ describe("the helper's signature is verified against the pin (09-18 Task 1)", ()
   });
 });
 
-describe("a pin that cannot be read after the owner approved (09-FIX9)", () => {
-  it("leaves the approved row for the next recovery instead of failing it, and does not run it meanwhile", async () => {
+describe("a pin that cannot be read after the owner approved (09-FIX9, FIX15 M1)", () => {
+  function unreadableFrom(readNumber: number) {
     let reads = 0;
-    let pinBack = false;
     const port = createPresenceFake();
-    // Read 1 is before the prompt, read 2 verifies the signature; from the claim on the pin is unreadable.
     const h = presenceHarness(port, async () => {
       reads += 1;
-      return reads <= 2 || pinBack ? TEST_PIN : null;
+      return reads < readNumber ? TEST_PIN : null;
     });
+    return h;
+  }
+
+  it("read 3 (the claim): finishes the row failed with presence-key-unreadable, never leaves it approved, and runs nothing", async () => {
+    const h = unreadableFrom(3);
     const id = h.propose({ operation: WRITE, subject: "w" });
     const response = await approve(h, id, hashOf(h, id), "other");
     await h.engine.settled();
-    // The owner's Touch ID counted: the approval is recorded, and it has not been failed.
     expect(response.outcome).toBe("decided");
-    expect(stored(h, id).state).toBe("approved");
-    expect(stored(h, id).outcomeCode).toBeNull();
-    expect(h.store.calls).not.toContain("claim");
+    expect(stored(h, id).state).toBe("failed");
+    expect(stored(h, id).outcomeCode).toBe("presence-key-unreadable");
     expect(
       h.log.lines.some(
         (l) => l.level === "warn" && l.fields.code === "approval-proof-pin-unavailable",
       ),
     ).toBe(true);
     expect(h.log.lines.some((l) => l.fields.code === "approval-proof-invalid")).toBe(false);
+  });
 
-    pinBack = true;
-    const summary = await h.engine.recover();
+  it("read 4 (the last gate): finishes the row failed with presence-key-unreadable, never leaves it executing, and runs nothing", async () => {
+    const h = unreadableFrom(4);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    await approve(h, id, hashOf(h, id), "other");
     await h.engine.settled();
-    expect(summary.claimed).toBe(1);
-    expect(h.store.calls).toContain("claim");
-    expect(stored(h, id).state).not.toBe("approved");
-    expect(stored(h, id).outcomeCode).not.toBe("proof-invalid");
+    expect(stored(h, id).state).toBe("failed");
+    expect(stored(h, id).outcomeCode).toBe("presence-key-unreadable");
+    expect(h.log.lines.some((l) => l.fields.code === "approval-proof-invalid")).toBe(false);
   });
 });
 
