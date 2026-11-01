@@ -222,8 +222,8 @@ describe("testLauncher's client budget for the codex id (plan 05.1-31)", () => {
 });
 
 describe("the approval decide budget (09-14, Test 4)", () => {
-  it("exceeds the presence prompt ceiling by ten seconds and is what decide passes as its timeout", async () => {
-    expect(APPROVAL_DECIDE_CLIENT_TIMEOUT_MS).toBe(PRESENCE_PROMPT_TIMEOUT_MS + 10_000);
+  it("exceeds the presence prompt ceiling by 25 seconds (FIX15 m2) and is what decide passes as its timeout", async () => {
+    expect(APPROVAL_DECIDE_CLIENT_TIMEOUT_MS).toBe(PRESENCE_PROMPT_TIMEOUT_MS + 25_000);
     expect(APPROVAL_DECIDE_CLIENT_TIMEOUT_MS).toBeGreaterThan(PRESENCE_PROMPT_TIMEOUT_MS);
     const { client, seen } = recordingClient({ outcome: "not-found" });
     await createApprovalsClient(client).decide({

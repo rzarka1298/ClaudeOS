@@ -214,7 +214,7 @@ const PRESENCE_WINDOW_MS = 60_000;
 
 /**
  * How long the engine waits for the port before it gives up on it (m1): the helper's own prompt ceiling
- * plus a margin for its start and teardown, still inside the client's decide timeout (prompt + 10 s), so
+ * plus a margin for its start and teardown, still inside the client's decide timeout (prompt + 25 s), so
  * a port that never settles answers `presence-unavailable` instead of wedging the proposal's flight.
  */
 export const PRESENCE_ENGINE_TIMEOUT_MS = PRESENCE_PROMPT_TIMEOUT_MS + 5_000;

@@ -38,11 +38,12 @@ import { SocketUnreachableError } from "./socket-api-client.js";
 
 /**
  * How long a decide call may wait (APPR-11, research Pitfall 7). A presence-required approve can sit
- * at the owner's Touch ID or password prompt for up to {@link PRESENCE_PROMPT_TIMEOUT_MS}; ten more
- * seconds cover the engine's own work after it, so the plugin never reports a timeout while the
+ * at the owner's Touch ID or password prompt for up to {@link PRESENCE_PROMPT_TIMEOUT_MS}; twenty-five more
+ * seconds cover the engine's own work after it (FIX15 m2: three guarded key reads of 1.5 s and up
+ * to 5 s of claim facts come to about 9.5 s, plus the helper's launch), so the plugin never reports a timeout while the
  * prompt is still up and the service has not yet answered.
  */
-export const APPROVAL_DECIDE_CLIENT_TIMEOUT_MS = PRESENCE_PROMPT_TIMEOUT_MS + 10_000;
+export const APPROVAL_DECIDE_CLIENT_TIMEOUT_MS = PRESENCE_PROMPT_TIMEOUT_MS + 25_000;
 
 /** Every failure this client can report: the server's closed codes plus the three transport-side ones. */
 export type ApprovalClientErrorCode =
