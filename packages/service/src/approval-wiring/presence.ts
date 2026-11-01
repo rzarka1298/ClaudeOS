@@ -8,6 +8,7 @@ import {
   PROPOSAL_ID_PATTERN,
   type PresenceAvailability,
   type PresencePort,
+  type PresenceProveOptions,
   type PresenceRequest,
   type PresenceResult,
 } from "@ccc/domain";
@@ -185,11 +186,16 @@ export function createHelperPresencePort(
   const killMs = options.killMs ?? PRESENCE_HELPER_KILL_MS;
   const env = { HOME: homeDir } as const;
 
-  const run = (args: readonly string[], timeoutMs: number): Promise<CommandOutcome> =>
+  const run = (
+    args: readonly string[],
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<CommandOutcome> =>
     runner.run(helperPath, args, {
       timeoutMs,
       env,
       maxBufferBytes: PRESENCE_HELPER_MAX_OUTPUT_BYTES,
+      ...(signal === undefined ? {} : { signal }),
     });
 
   const inspect = async (): Promise<PresenceInspection> => {
@@ -213,7 +219,7 @@ export function createHelperPresencePort(
   };
 
   return {
-    async prove(request: PresenceRequest): Promise<PresenceResult> {
+    async prove(request: PresenceRequest, options?: PresenceProveOptions): Promise<PresenceResult> {
       if (!isValidRequest(request)) return UNAVAILABLE;
       if (!exists(helperPath)) return UNAVAILABLE;
       // The one canonical message builder is the verifier's (approval/proof.ts): what the helper signs is
@@ -227,6 +233,7 @@ export function createHelperPresencePort(
       const outcome = await run(
         ["prove", "--message", Buffer.from(message, "utf8").toString("base64")],
         killMs,
+        options?.signal,
       );
       if (!ranToCompletion(outcome)) return UNAVAILABLE;
       const line = singleJsonLine(outcome.stdout);

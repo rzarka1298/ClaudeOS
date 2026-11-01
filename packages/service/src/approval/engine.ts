@@ -884,12 +884,24 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
       timer = setTimeout(() => reject(new Error("timeout")), PRESENCE_ENGINE_TIMEOUT_MS);
     });
     let listener: (() => void) | undefined;
+    // Aborted at shutdown or at the cutoff, so the adapter kills the helper and its prompt (FIX15 m4).
+    const controller = new AbortController();
     const abandoned = new Promise<typeof ABANDONED>((resolve) => {
-      listener = () => resolve(ABANDONED);
+      listener = () => {
+        controller.abort();
+        resolve(ABANDONED);
+      };
       shutdownListeners.add(listener);
     });
     try {
-      return await Promise.race([presence.prove(request), cutoff, abandoned]);
+      return await Promise.race([
+        presence.prove(request, { signal: controller.signal }),
+        cutoff,
+        abandoned,
+      ]);
+    } catch (error) {
+      controller.abort();
+      throw error;
     } finally {
       clearTimeout(timer);
       if (listener !== undefined) shutdownListeners.delete(listener);

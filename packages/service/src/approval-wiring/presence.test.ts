@@ -198,6 +198,10 @@ describe("09-15 Task 1 (tracer): a helper run becomes one closed presence result
     });
     expect(seen[1]?.args).toEqual(["check"]);
     expect(seen[1]?.options).toEqual({ timeoutMs: 5000, env: { HOME }, maxBufferBytes: 4096 });
+    // FIX15 m4: an abort signal handed to prove reaches the runner, so shutdown can kill the helper.
+    const controller = new AbortController();
+    await p.prove(REQUEST, { signal: controller.signal });
+    expect(seen[2]?.options.signal).toBe(controller.signal);
   });
 
   it("refuses a relative helper path", () => {

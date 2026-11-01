@@ -18,6 +18,8 @@ export type PresenceScript =
 export interface PresenceFake extends PresencePort {
   /** Every request `prove` was called with, in order. */
   readonly requests: PresenceRequest[];
+  /** The abort signal each `prove` call was given, in order (undefined when none was passed). */
+  readonly signals: (AbortSignal | undefined)[];
   /** How many times `availability` was called. */
   availabilityCalls: number;
   /** Replaces what the next calls answer. */
@@ -68,14 +70,17 @@ function realProof(request: PresenceRequest): PresenceResult {
 export function createPresenceFake(initial: PresenceScript = PROVED): PresenceFake {
   let current = initial;
   const requests: PresenceRequest[] = [];
+  const signals: (AbortSignal | undefined)[] = [];
   const fake: PresenceFake = {
     requests,
+    signals,
     availabilityCalls: 0,
     script(next) {
       current = next;
     },
-    async prove(request) {
+    async prove(request, options) {
       requests.push(request);
+      signals.push(options?.signal);
       const answer = typeof current === "function" ? await current(request) : current;
       return answer === PROVED ? realProof(request) : answer;
     },

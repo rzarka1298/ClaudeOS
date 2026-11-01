@@ -286,8 +286,17 @@ export type PresenceResult =
 /** Whether the presence check could run at all, without asking the owner for anything. */
 export type PresenceAvailability = "available" | "unavailable";
 
+/** Optional controls for one presence check. */
+export interface PresenceProveOptions {
+  readonly signal?: AbortSignal;
+}
+
 /** The port the engine asks to verify the owner's presence. Types only; the helper adapter lives in the service. */
 export interface PresencePort {
-  prove(request: PresenceRequest): Promise<PresenceResult>;
+  /**
+   * Aborting `options.signal` ends the check at once: the adapter kills the helper and its prompt
+   * (FIX15 m4), so a shutdown does not leave a Touch ID sheet on screen.
+   */
+  prove(request: PresenceRequest, options?: PresenceProveOptions): Promise<PresenceResult>;
   availability(): Promise<PresenceAvailability>;
 }

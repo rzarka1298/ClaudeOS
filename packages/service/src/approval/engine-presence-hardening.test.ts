@@ -272,6 +272,21 @@ describe("an attacker cannot starve the owner's budget, and a budget refusal is 
     expect(port.requests).toHaveLength(3);
   });
 
+  it("FIX15 m4: shutdown aborts the signal handed to the in-flight presence check, so the helper is killed", async () => {
+    const pending = deferredPresence();
+    const port = createPresenceFake(pending.script);
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const inFlight = approve(h, id);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const signal = port.signals[0];
+    expect(signal).toBeDefined();
+    expect(signal?.aborted).toBe(false);
+    h.engine.beginShutdown();
+    expect(signal?.aborted).toBe(true);
+    expect(await inFlight).toEqual({ outcome: "operation-reserved" });
+  });
+
   it("asks again once the cooldown has passed", async () => {
     const port = createPresenceFake({ kind: "denied" });
     const h = presenceHarness(port);
