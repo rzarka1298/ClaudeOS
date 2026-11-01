@@ -495,13 +495,16 @@ export const PRESENCE_PROMPT_TIMEOUT_MS = 60_000;
  * trail records it. The first two are also what the client is told (`presence-denied`,
  * `presence-unavailable`); the other two are internal reasons that keep their client outcome (a
  * cooldown after a denial reads `presence-denied`, an exhausted prompt budget reads
- * `presence-unavailable`) but stay distinguishable on the record (09-FIX6A, m3).
+ * `presence-unavailable`) but stay distinguishable on the record (09-FIX6A, m3). `presence-timeout`
+ * (FIX15 m3) is a prompt the owner never answered: the client reads `presence-denied`, the record says
+ * what happened, and no cooldown follows.
  */
 export const PRESENCE_REFUSAL_DETAILS = [
   "presence-denied",
   "presence-unavailable",
   "presence-cooldown",
   "presence-budget",
+  "presence-timeout",
 ] as const;
 export type PresenceRefusalDetail = (typeof PRESENCE_REFUSAL_DETAILS)[number];
 

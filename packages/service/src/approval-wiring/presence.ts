@@ -240,7 +240,11 @@ export function createHelperPresencePort(
         return UNAVAILABLE;
       }
       if (outcome.exitCode === 4) {
-        return deniedLine.safeParse(line).success ? { kind: "denied" } : UNAVAILABLE;
+        const denied = deniedLine.safeParse(line);
+        if (!denied.success) return UNAVAILABLE;
+        return denied.data.cause === "timeout"
+          ? { kind: "denied", cause: "timeout" }
+          : { kind: "denied" };
       }
       return UNAVAILABLE;
     },

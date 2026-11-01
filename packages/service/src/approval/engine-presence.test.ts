@@ -92,6 +92,20 @@ describe("the presence gate (Task 1)", () => {
     expect(h.store.calls).not.toContain("decide");
   });
 
+  it("FIX15 m3: a prompt nobody answered is recorded as presence-timeout, reads presence-denied to the client and starts no cooldown", async () => {
+    const port = createPresenceFake({ kind: "denied", cause: "timeout" });
+    const h = presenceHarness(port);
+    const id = h.propose({ operation: WRITE, subject: "w" });
+    const response: DecideResponse = await approve(h, id);
+    expect(response).toEqual({ outcome: "presence-denied" });
+    expect(auditDetails(h, id).at(-1)).toEqual(["presence-refused", "presence-timeout"]);
+    // No cooldown: the owner who came back can be asked again at once.
+    const again: DecideResponse = await approve(h, id);
+    expect(again).toEqual({ outcome: "presence-denied" });
+    expect(port.requests).toHaveLength(2);
+    expect(auditDetails(h, id).some(([, code]) => code === "presence-cooldown")).toBe(false);
+  });
+
   it("Test 3: a proved presence check approves with decided_via presence and the instant the port vouched for", async () => {
     const port = createPresenceFake();
     const h = presenceHarness(port);

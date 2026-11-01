@@ -219,7 +219,8 @@ describe("09-15 Task 1 Test 2: every other helper outcome is closed", () => {
     fake.control({ exit: 4, stdout: '{"v":1,"result":"denied","error":-2}\n' });
     expect(await port(fake).prove(REQUEST)).toEqual({ kind: "denied" });
     fake.control({ exit: 4, stdout: '{"v":1,"result":"denied","error":-9,"cause":"timeout"}\n' });
-    expect(await port(fake).prove(REQUEST)).toEqual({ kind: "denied" });
+    // FIX15 m3: an unanswered prompt keeps its cause, so the engine does not treat it as an owner denial.
+    expect(await port(fake).prove(REQUEST)).toEqual({ kind: "denied", cause: "timeout" });
   });
 
   it("exit 4 without a strict denied line is unavailable, not a guess", async () => {

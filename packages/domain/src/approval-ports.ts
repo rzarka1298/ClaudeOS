@@ -276,7 +276,11 @@ export type PresenceResult =
   | { readonly kind: "proved"; readonly scheme: "p256"; readonly signature: string }
   /** The check alone, no key (custody K-SVC): there is no signature to carry. */
   | { readonly kind: "proved"; readonly scheme: "none"; readonly signature: null }
-  | { readonly kind: "denied" }
+  /**
+   * `cause: "timeout"` means the prompt went unanswered (FIX15 m3): no owner decision was made, so the
+   * engine records it as such and starts no denial cooldown.
+   */
+  | { readonly kind: "denied"; readonly cause?: "timeout" }
   | { readonly kind: "unavailable" };
 
 /** Whether the presence check could run at all, without asking the owner for anything. */

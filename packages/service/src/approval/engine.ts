@@ -1028,6 +1028,10 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
     if (answer === ABANDONED) return { outcome: "operation-reserved" };
     const result = presenceResultOf(answer);
     if (result.kind !== "proved") {
+      if (result.kind === "denied" && result.cause === "timeout") {
+        // A prompt nobody answered is not a decision (FIX15 m3): its own record, and no cooldown.
+        return refuseApprove(current, "presence-denied", "presence-timeout");
+      }
       if (result.kind === "denied") {
         // The cooldown runs from when the denial arrives, so an owner who deliberates before denying still
         // gets the full cooldown; a clock that stepped back is clamped to the ask, so it is never shorter
@@ -1086,7 +1090,7 @@ export function createApprovalEngine(deps: ApprovalEngineDeps): ApprovalEngine &
   function refuseApprove(
     current: StoredProposal,
     outcome: "presence-denied" | "presence-unavailable",
-    reason: "presence-cooldown" | "presence-budget" | undefined = undefined,
+    reason: "presence-cooldown" | "presence-budget" | "presence-timeout" | undefined = undefined,
     warnCode: "presence-proof-invalid" | "presence-pin-unavailable" | undefined = undefined,
   ): DecideResponse {
     const proposalId = current.proposalId;
