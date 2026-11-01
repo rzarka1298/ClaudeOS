@@ -35,8 +35,11 @@ export class UnsafeSecretInputError extends Error {
   }
 }
 
-/** account/service: identifier-shaped — letters, digits, dot, underscore, hyphen. */
-const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9._-]+$/;
+/**
+ * account/service: identifier-shaped — letters, digits, dot, underscore, hyphen, and never a leading hyphen
+ * (`security` would read it as an option).
+ */
+const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9._][A-Za-z0-9._-]*$/;
 /** value: base64 / base64url / hex output — letters, digits, +/=_- only. */
 const SAFE_SECRET_VALUE_PATTERN = /^[A-Za-z0-9+/=_-]+$/;
 
@@ -62,6 +65,7 @@ function assertSafeSecretValue(value: string, field: string): void {
  * larger token.
  */
 export async function getSecret(account: string): Promise<string | null> {
+  assertSafeIdentifier(account, "account");
   try {
     const { stdout } = await execa(SECURITY_BINARY, [
       "find-generic-password",
@@ -103,6 +107,7 @@ export async function setSecret(account: string, value: string): Promise<void> {
 
 /** Deletes `account`'s Keychain item. */
 export async function deleteSecret(account: string): Promise<void> {
+  assertSafeIdentifier(account, "account");
   await execa(SECURITY_BINARY, ["delete-generic-password", "-a", account, "-s", SERVICE_NAME]);
 }
 

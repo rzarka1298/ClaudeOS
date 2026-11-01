@@ -136,6 +136,15 @@ describe("security-cli", () => {
     expect(options?.input).toContain(value);
   });
 
+  it("FIX15: getSecret and deleteSecret refuse an unsafe or option-shaped account before any spawn", async () => {
+    execaMock.mockClear();
+    for (const account of ["-w", "-a x", 'a"b', "a b", "", "a;b"]) {
+      await expect(getSecret(account), account).rejects.toThrow();
+      await expect(deleteSecret(account), account).rejects.toThrow();
+    }
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
   it("calls execa with an argument array of separate strings for delete()", async () => {
     execaMock.mockResolvedValueOnce({ stdout: "" });
     await deleteSecret("my-account");
