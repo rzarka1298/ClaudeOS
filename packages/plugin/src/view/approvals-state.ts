@@ -202,6 +202,31 @@ export function pendingTerminateRequestFor(
  */
 export const approvalsMissedSync = signal(false);
 
+/**
+ * The inbox the list held when it was last marked stale, or `null`. Only a mounted section watches
+ * for the snapshot or event that clears the mark, so a section that comes back after being away
+ * starts from this list instead of from the current one, and notices an arrival it missed
+ * (live run 2f7075a9: the service restarted while Agent runs was open, its snapshot landed while
+ * another destination was showing, and Approve once stayed withheld on the next visit).
+ */
+let missedAtList: ReadonlyMap<string, ApprovalSummary> | null = null;
+
+/** Marks the list stale, noting which inbox it was marked against. */
+export function markApprovalsMissedSync(list: ReadonlyMap<string, ApprovalSummary>): void {
+  missedAtList = list;
+  approvalsMissedSync.value = true;
+}
+
+/**
+ * The inbox a section that mounts now should treat as already seen: the one the stale mark was made
+ * against while the mark stands, otherwise the current one.
+ */
+export function approvalsListSeenAtMount(
+  current: ReadonlyMap<string, ApprovalSummary>,
+): ReadonlyMap<string, ApprovalSummary> {
+  return approvalsMissedSync.peek() && missedAtList !== null ? missedAtList : current;
+}
+
 /** Set when the first load failed, so the section shows its error state. */
 export const approvalsLoadFailed = signal(false);
 
@@ -337,6 +362,7 @@ export function resetApprovalsView(): void {
   approvalsStatus.value = "";
   approvalsSectionVisible.value = false;
   approvalsMissedSync.value = false;
+  missedAtList = null;
   approvalsLoadFailed.value = false;
   approvalsObservedAt.value = null;
   approvalDetailCache.clear();
