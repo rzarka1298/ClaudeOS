@@ -2,6 +2,9 @@ import { toDisplayPath } from "@ccc/domain/display-path.js";
 
 const ELLIPSIS = "…";
 
+/** The most of a reason that is scanned and shown. */
+const MAX_REASON_CHARS = 2000;
+
 /** Characters that end a path run: whitespace, quotes, a backtick and `,;()<>`. */
 const STOP = "\\s\"'`,;()<>";
 /** A path character (anything but a stop character). */
@@ -22,10 +25,6 @@ const END_CHAR = `[^${STOP}.,:]`;
  * (a bare `/Users/USERNAME TWO` with nothing after it) is not followed; socket paths are always deeper.
  */
 const POSIX_RUN = `\\/${PATH_CHAR}*${END_CHAR}(?:(?: (?!\\/)${NAME_CHAR}+){0,4} (?!\\/)${NAME_CHAR}*\\/(?:${PATH_CHAR}*${END_CHAR})?)?`;
-
-/** A Windows drive path (`C:\Users\...`): macOS is the only supported platform, so this is cheap hygiene. */
-const WINDOWS_NAME = `[^${STOP}\\\\]`;
-const WINDOWS_RUN = `[A-Za-z]:\\\\(?:${WINDOWS_NAME}+(?: ${WINDOWS_NAME}+){0,4}\\\\)*(?:${WINDOWS_NAME}*[^${STOP}\\\\.,:])?`;
 
 /** Parent folders whose direct child is a user's folder. */
 const USER_PARENTS = new Set(["users", "home"]);
@@ -51,7 +50,7 @@ function literalHome(homeDir: string | null): string | null {
 }
 
 /**
- * The matcher for one reason: a `~user/...` path, a Windows drive path, or an absolute path with an
+ * The matcher for one reason: a `~user/...` path or an absolute path with an
  * optional `file://` scheme. The configured home folder is tried first and matched literally, so a
  * home folder with a space maps to `~` whole.
  */
@@ -64,7 +63,6 @@ function buildMatcher(homeDir: string | null): RegExp {
   const source =
     "(?<![\\w~./])(?:" +
     `(?<tilde>~${NAME_CHAR}+(?=\\/)${POSIX_RUN})` +
-    `|(?<windows>${WINDOWS_RUN})` +
     `|(?:file:\\/\\/)?(?<posix>${homeAlternative}${POSIX_RUN})` +
     ")";
   return new RegExp(source, "g");
@@ -122,14 +120,6 @@ function displayPosix(path: string, homeDir: string | null): string {
   return withoutUserSegment(normalisedSegments(path, "/"), "/", userNameOf(homeDir)) ?? shown;
 }
 
-function displayWindows(path: string, userName: string | null): string {
-  const segments = normalisedSegments(path.slice(2), "\\");
-  const hidden = withoutUserSegment(segments, "\\", userName);
-  if (hidden !== null) return hidden;
-  const last = segments.at(-1);
-  return last === undefined ? ELLIPSIS : `${ELLIPSIS}\\${maskUserName(last, userName)}`;
-}
-
 function displayTilde(path: string, userName: string | null): string {
   const last = normalisedSegments(path, "/").at(-1);
   return last === undefined || last === path
@@ -157,10 +147,13 @@ function decodeFileUrlPath(path: string): string {
  * Pure, and browser-safe: `toDisplayPath` is imported by its domain subpath, not a Node module.
  */
 export function displayReason(reason: string, homeDir: string | null): string {
-  return reason.replace(buildMatcher(homeDir), (match, ...rest) => {
-    const groups = rest.at(-1) as { tilde?: string; windows?: string; posix?: string };
+  // A disconnect reason is a short error line. Bounding what is scanned keeps the matcher's work small
+  // whatever the text (FIX15); anything past the bound is dropped, never shown unscrubbed.
+  const bounded =
+    reason.length > MAX_REASON_CHARS ? `${reason.slice(0, MAX_REASON_CHARS)}${ELLIPSIS}` : reason;
+  return bounded.replace(buildMatcher(homeDir), (match, ...rest) => {
+    const groups = rest.at(-1) as { tilde?: string; posix?: string };
     if (groups.tilde !== undefined) return displayTilde(groups.tilde, userNameOf(homeDir));
-    if (groups.windows !== undefined) return displayWindows(groups.windows, userNameOf(homeDir));
     const posix = groups.posix ?? match;
     const isFileUrl = match.startsWith("file://");
     return displayPosix(isFileUrl ? decodeFileUrlPath(posix) : posix, homeDir);

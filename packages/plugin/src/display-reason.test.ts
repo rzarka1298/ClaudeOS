@@ -137,12 +137,6 @@ describe("displayReason (D-11, DIAG-06)", () => {
       );
     });
 
-    it("scrubs a Windows user folder too", () => {
-      const shown = displayReason("ENOENT C:\\Users\\USERNAME TWO\\AppData\\x.sock", null);
-      expect(shown).toBe("ENOENT …\\x.sock");
-      expect(displayReason("ENOENT C:\\Users\\USERNAME", null)).toBe("ENOENT …");
-    });
-
     it("keeps unrelated words around a path that has no spaces", () => {
       expect(displayReason("tried /a/one.sock then /var/run/two.sock", null)).toBe(
         "tried …/a/one.sock then …/run/two.sock",
@@ -162,10 +156,6 @@ describe("displayReason (D-11, DIAG-06)", () => {
       );
     });
 
-    it("masks it in the Windows form too", () => {
-      expect(displayReason("ENOENT C:\\Users\\Public\\USERNAME.sock", HOME)).toBe("ENOENT …\\…");
-    });
-
     it("masks it in the ~user form too", () => {
       expect(displayReason("ENOENT ~other/USERNAME.sock", HOME)).toBe("ENOENT …/…");
     });
@@ -175,5 +165,20 @@ describe("displayReason (D-11, DIAG-06)", () => {
         "connect ENOENT …/svc.sock",
       );
     });
+  });
+});
+
+describe("FIX15: the scrub is bounded", () => {
+  it("handles a very long reason without scanning all of it, and keeps the front scrubbed", () => {
+    const long = `ENOENT /Users/USERNAME/s.sock ${"/a ".repeat(40_000)}`;
+    const started = Date.now();
+    const shown = displayReason(long, null);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(shown.length).toBeLessThanOrEqual(4_000);
+    expect(shown).not.toContain("USERNAME");
+  });
+
+  it("does not treat a Windows drive path specially (macOS only)", () => {
+    expect(displayReason("see C:\\Users\\x", null)).toBe("see C:\\Users\\x");
   });
 });
