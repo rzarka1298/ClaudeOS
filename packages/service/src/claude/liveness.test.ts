@@ -716,6 +716,24 @@ describe("D-08 reproduction: an idle session with a live process", () => {
       expect(stateOf(run.runId)).toBe("running");
     });
 
+    it("FIX15 m1: a waiting-for-approval Run staled by an unknown identity revives to waiting-for-approval, not running", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        state: "waiting-for-approval",
+        lastActivityAt: new Date(T0 - QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      expect(stateOf(run.runId)).toBe("stale");
+      table.spawn(PID, LSTART);
+      nowMs += SWEEP;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout", "pid-alive"]);
+      expect(stateOf(run.runId)).toBe("waiting-for-approval");
+    });
+
     it("a matched identity idle past the threshold is still left running (D-05)", async () => {
       table.spawn(PID, LSTART);
       const run = seedRun({

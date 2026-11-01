@@ -245,6 +245,10 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
    * or when the Run leaves the candidate set. In memory only (FIX3A L2).
    */
   const firstSeenUnknown = new Map<RunId, number>();
+  // Runs this sweeper staled while they were waiting for approval (FIX15 m1): a revival returns them to
+  // that state, since the permission dialog is still the last thing known. In memory only: after a
+  // service restart a revived Run reads running, as before.
+  const staledWhileWaiting = new Set<RunId>();
   let running = false;
   let stopped = false;
   let cancelTimer: (() => void) | null = null;
@@ -361,7 +365,14 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
         firstSeenGone.delete(run.runId);
         firstSeenUnknown.delete(run.runId);
         if (run.state === "stale") {
-          await pipeline.apply({ kind: "pid-alive", runId: run.runId, observedAt });
+          const resumeAs = staledWhileWaiting.delete(run.runId)
+            ? ("waiting-for-approval" as const)
+            : undefined;
+          await pipeline.apply(
+            resumeAs === undefined
+              ? { kind: "pid-alive", runId: run.runId, observedAt }
+              : { kind: "pid-alive", runId: run.runId, observedAt, resumeAs },
+          );
           revived += 1;
         }
         continue;
@@ -399,6 +410,8 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
             nowMs - Date.parse(current.lastActivityAt ?? current.startedAt) >= config.quietAfterMs
           ) {
             firstSeenUnknown.delete(run.runId);
+            if (current.state === "waiting-for-approval") staledWhileWaiting.add(run.runId);
+            else staledWhileWaiting.delete(run.runId);
             // The checks above are a cheap filter over the database row; the cutoff
             // is the decision. The pipeline's reducer re-judges the Run, coalesced
             // activity included, atomically with the write (FIX3C).
@@ -428,6 +441,8 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
       }
       if (nowMs - first >= config.graceMs) {
         firstSeenGone.delete(run.runId);
+        if (run.state === "waiting-for-approval") staledWhileWaiting.add(run.runId);
+        else staledWhileWaiting.delete(run.runId);
         await pipeline.apply({ kind: "pid-gone", runId: run.runId, observedAt });
         gone += 1;
       }
@@ -435,6 +450,9 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
     // A Run that ended (or left the candidate set) during its grace is forgotten.
     for (const runId of [...firstSeenGone.keys()]) {
       if (!seen.has(runId)) firstSeenGone.delete(runId);
+    }
+    for (const runId of [...staledWhileWaiting]) {
+      if (!seen.has(runId)) staledWhileWaiting.delete(runId);
     }
     for (const runId of [...firstSeenUnknown.keys()]) {
       if (!seen.has(runId)) firstSeenUnknown.delete(runId);

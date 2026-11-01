@@ -62,9 +62,20 @@ export interface SessionFacts {
 export type Evidence =
   | { readonly kind: "hook"; readonly record: KnownHookRecord; readonly facts: SessionFacts }
   | {
-      readonly kind: "pid-gone" | "pid-alive" | "start-timeout" | "inactivity-timeout";
+      readonly kind: "pid-gone" | "start-timeout" | "inactivity-timeout";
       readonly runId: RunId;
       readonly observedAt: string;
+    }
+  | {
+      readonly kind: "pid-alive";
+      readonly runId: RunId;
+      readonly observedAt: string;
+      /**
+       * Set by the sweeper when it staled the Run while it was waiting for approval (FIX15 m1): the
+       * permission dialog is still the last thing known, so the revival returns to it, never to
+       * `running` (which would read as Idle once the last event is old).
+       */
+      readonly resumeAs?: "waiting-for-approval";
     }
   | {
       readonly kind: "identity-unknown-timeout";
@@ -346,7 +357,9 @@ export function reduce(
 
     case "pid-alive":
       return onRun(index, evidence.runId, evidence.kind, (run) =>
-        run.state === "stale" ? upserted(write(run, { state: "running" })) : NOTHING,
+        run.state === "stale"
+          ? upserted(write(run, { state: evidence.resumeAs ?? "running" }))
+          : NOTHING,
       );
 
     case "start-timeout":
