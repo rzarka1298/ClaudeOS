@@ -1100,6 +1100,44 @@ export async function waitForPane(
 }
 
 /**
+ * Presses the Deny or Approve once control, but only once the control is on screen and not withheld.
+ * The product withholds Approve once with a visible reason (loading, a stale list, an expired
+ * request) and a press on a withheld control does nothing, so a bare press reports success and the
+ * run then waits for an outcome that can never come (live run 2f7075a9, UAT 09 item 6: a 30 second
+ * timeout reading `null`). A control that stays withheld fails here, naming the reasons the pane gave.
+ * It never presses Refresh: a list that stays stale is a finding, not something to work around.
+ */
+export async function pressDecisionWhenEnabled(
+  browser: SupportBrowser,
+  kind: "deny" | "approve",
+  options: { timeoutMs?: number; clock?: Pick<PollOptions, "now" | "sleep"> } = {},
+): Promise<void> {
+  let last: PaneSnapshot | undefined;
+  try {
+    await pollUntil(
+      async () => {
+        last = await readPane(browser);
+        const present = kind === "approve" ? last.approvePresent : last.denyPresent;
+        const withheld = kind === "approve" ? last.approveDisabled : last.denyDisabled;
+        return last.present && present && !withheld ? true : null;
+      },
+      {
+        ...uiWait(`the ${kind} control to be enabled`, options.timeoutMs),
+        ...options.clock,
+      },
+    );
+  } catch (error) {
+    const reasons = last === undefined ? [] : last.decisionReasons;
+    const said = reasons.length > 0 ? reasons.join(" | ") : "none given";
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`${reason}; the pane's reasons: ${said}`);
+  }
+  if ((await browser.execute(clickDecision, kind, 1)) !== 1) {
+    throw new Error(`The ${kind} control was not on the page when it was pressed.`);
+  }
+}
+
+/**
  * With exactly one pending request, opens the inbox, selects that request's row and waits for
  * the full pane (decision controls present). Returns the pane.
  */

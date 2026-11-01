@@ -5,14 +5,19 @@ import {
   type ChipStep,
   checkChipTranscript,
   checkDeniedAudit,
+  clickDecision,
   containsInOrder,
   expiredWithinBound,
   findNewestMirrorNote,
   findNewNotification,
   isExactlyOneNavigation,
+  type PaneSnapshot,
   parseCountChip,
   parseRebuildStatus,
+  pressDecisionWhenEnabled,
+  readPaneSnapshot,
   readScheduledPress,
+  type SupportBrowser,
   scheduleDecisionClick,
   settledWithinGrace,
   squashDeep,
@@ -287,5 +292,93 @@ describe("approvalStatusReached (Wave 3 IN-01)", () => {
 
   it("rejects an outcome that a later status overrode", () => {
     expect(approvalStatusReached([carriedOut, "Error."], approved, carriedOut)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FIX14 (live run 2f7075a9, UAT 09 item 6): a press on a withheld control does nothing
+
+describe("pressDecisionWhenEnabled", () => {
+  const pane = (over: Partial<PaneSnapshot>): PaneSnapshot => ({
+    present: true,
+    state: "pending",
+    heading: "Test approval",
+    blocks: {},
+    fields: {},
+    history: [],
+    captions: [],
+    countdown: "",
+    explanation: "",
+    reason: "",
+    risks: [],
+    status: "",
+    denyPresent: true,
+    approvePresent: true,
+    denyDisabled: false,
+    approveDisabled: false,
+    decisionReasons: [],
+    focus: "heading",
+    relocated: "",
+    ...over,
+  });
+
+  /** A browser that answers the pane reads from `reads` (the last one repeats) and counts presses. */
+  function rig(reads: readonly PaneSnapshot[]) {
+    let read = 0;
+    const presses: string[] = [];
+    let now = 0;
+    const browser = {
+      execute: async (fn: unknown, ...args: unknown[]) => {
+        if (fn === readPaneSnapshot) return reads[Math.min(read++, reads.length - 1)];
+        if (fn === clickDecision) {
+          presses.push(String(args[0]));
+          return 1;
+        }
+        throw new Error("unexpected script");
+      },
+    } as unknown as SupportBrowser;
+    const clock = {
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+    };
+    return { browser, presses, clock, reads: () => read };
+  }
+
+  it("presses at once when the control is enabled", async () => {
+    const r = rig([pane({})]);
+    await pressDecisionWhenEnabled(r.browser, "approve", { clock: r.clock });
+    expect(r.presses).toEqual(["approve"]);
+  });
+
+  it("waits through a withheld control and presses once it is enabled, never before", async () => {
+    const withheld = pane({
+      approveDisabled: true,
+      decisionReasons: ["Loading the full request…"],
+    });
+    const r = rig([withheld, withheld, pane({})]);
+    await pressDecisionWhenEnabled(r.browser, "approve", { clock: r.clock });
+    expect(r.presses).toEqual(["approve"]);
+    expect(r.reads()).toBe(3);
+  });
+
+  it("does not press a control that stays withheld, and says why in its failure", async () => {
+    const r = rig([
+      pane({
+        approveDisabled: true,
+        decisionReasons: ["This list may be out of date. Refresh, then decide."],
+      }),
+    ]);
+    await expect(
+      pressDecisionWhenEnabled(r.browser, "approve", { timeoutMs: 2_000, clock: r.clock }),
+    ).rejects.toThrow(/This list may be out of date\. Refresh, then decide\./);
+    expect(r.presses).toEqual([]);
+  });
+
+  it("looks at the control it was asked for: a withheld Approve does not hold up Deny", async () => {
+    const r = rig([pane({ approveDisabled: true })]);
+    await pressDecisionWhenEnabled(r.browser, "deny", { clock: r.clock });
+    expect(r.presses).toEqual(["deny"]);
   });
 });

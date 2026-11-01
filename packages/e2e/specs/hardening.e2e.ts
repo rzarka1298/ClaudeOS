@@ -25,6 +25,7 @@ import { installConsoleCapture } from "../src/renderer-spies.js";
 import { loadRunContext, type RunContext, serviceFixtureFor } from "../src/spec-context.js";
 import {
   clearPending,
+  pressDecisionWhenEnabled,
   selectOnlyPendingRequest,
   supportBrowser,
   waitForPane,
@@ -383,14 +384,9 @@ describe("hardening: settings, approvals and research", function () {
       describe: "a pending test approval",
     });
     await selectOnlyPendingRequest(ab);
-    expect(
-      await browser.execute(() => {
-        const button = document.querySelector("[data-decision='approve']") as HTMLElement | null;
-        if (button === null) return false;
-        button.click();
-        return true;
-      }),
-    ).toBe(true);
+    // A press on a withheld Approve once does nothing, so wait for it to be enabled; if it never
+    // is, the failure names the reason the pane gives instead of timing out on an outcome.
+    await pressDecisionWhenEnabled(ab, "approve");
     const done = await waitForPane(
       ab,
       (pane) => pane.state === "executed",
