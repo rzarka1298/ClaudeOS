@@ -51,7 +51,7 @@ output and a deadline, exactly as it runs `/usr/bin/security` (stack §7).
 The prompt is `LAPolicyDeviceOwnerAuthentication`: Touch ID, with the login password as the fallback on a Mac without Touch
 ID. Its text is built inside the helper from the validated fields of the approval (operation, proposal id, payload hash,
 instant) and never from caller-supplied text. The helper's exit codes are a closed set (0 ok, 2 usage, 3 unavailable, 4
-denied, 5 internal); a prompt left unanswered for 60 seconds is a denial. The service accepts a presence answer only as one
+denied, 5 internal); a prompt left unanswered for 60 seconds ends as `denied` with the cause `timeout`: the service records it as `presence-timeout`, tells the client `presence-denied`, and starts no denial cooldown, because no decision was made. The service accepts a presence answer only as one
 strict JSON line from the expected exit code; anything else is `presence-unavailable`, and with no helper wired every
 presence-required approval fails closed.
 
@@ -201,9 +201,10 @@ Roadmap success criterion 2 is partially met: an approval of a connector-class r
 
 What a process running as the owner can still do:
 
-- **Cause a prompt, not answer it.** A process that holds the token can submit a request and ask to approve it, and so can
-  cause a prompt to appear but cannot answer it: the answer is the owner's Touch ID or password at the keyboard, and the
-  helper signs only after it. If the owner approves a prompt that an attacker caused for a request the attacker made, that
+- **Cause a prompt, not answer it.** A process that holds the token, or that runs the helper directly (`ccc-presence prove
+  --message` authenticates no caller, so such a prompt is outside the service's budget and cooldown), can submit a request
+  and ask to approve it, and so can cause a prompt to appear but cannot answer it: the answer is the owner's Touch ID or
+  password at the keyboard, and the helper signs only after it. If the owner approves a prompt that an attacker caused for a request the attacker made, that
   is a real approval of that request, which is why the prompt shows the operation and the owner reads it.
 - **Spend the prompt budget.** The global budget of 3 per minute can be spent by an attacker across several pending requests,
   so that the owner's own approve is refused for a while. The audit row says `presence-budget`. This costs the owner time; it
