@@ -3,10 +3,10 @@ import { parseClaudeStream } from "./stream.js";
 
 /**
  * Synthetic stream-json transcripts. The shapes follow what the 10-RESEARCH.md experiments saw on
- * CLI 2.1.316; every value is made up (plugin sources are `example.invalid`, never a real email).
+ * CLI 2.1.316; every value is made up (plugin sources use the reserved example.com domain, never a real email).
  */
 const MODEL = "claude-haiku-5-5";
-const SYNTH_PLUGIN_SOURCE = "synthetic-owner@example.invalid";
+const SYNTH_PLUGIN_SOURCE = "synthetic-owner@example.com";
 const SYNTH_ORG_ID = "org-00000000-synthetic";
 const REPLY = '{"summaries":[{"sourceId":"s1","text":"A synthetic reply fragment."}]}';
 
@@ -520,7 +520,7 @@ describe("parseClaudeStream carries nothing out (Test 3)", () => {
   it.each(ALL)("the outcome for %s holds no stream text", (_name, stdout) => {
     const planted = stdout.replaceAll(
       '"type":"system","subtype":"init"',
-      '"type":"system","subtype":"init","account_email":"synthetic-owner@example.invalid","note":"synthetic-secret-token"',
+      '"type":"system","subtype":"init","account_email":"synthetic-owner@example.com","note":"synthetic-secret-token"',
     );
     for (const text of [stdout, planted]) {
       const outcome = parseClaudeStream(text, { model: MODEL });

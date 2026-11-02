@@ -160,7 +160,7 @@ describe("buildClaudeChildEnv (Test 2)", () => {
     expect(buildClaudeChildEnv({ ...PARENT, HOME: "relative/home" })).toBeNull();
     expect(buildClaudeChildEnv({ ...PARENT, HOME: "" })).toBeNull();
     expect(buildClaudeChildEnv({ ...PARENT, HOME: "/Users/USERNAME\n" })).toBeNull();
-    expect(buildClaudeChildEnv({ ...PARENT, HOME: "/Users/USER\0NAME" })).toBeNull();
+    expect(buildClaudeChildEnv({ ...PARENT, HOME: "/Users/USERNAME/x\0y" })).toBeNull();
     expect(buildClaudeChildEnv({ ...PARENT, USER: "" })).toBeNull();
     expect(buildClaudeChildEnv({ ...PARENT, USER: "a b" })).toBeNull();
     expect(buildClaudeChildEnv({ ...PARENT, USER: "/Users/USERNAME" })).toBeNull();
