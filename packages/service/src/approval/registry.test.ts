@@ -66,7 +66,12 @@ describe("buildOperationRegistry (Test 1: fails closed)", () => {
       /connector\.fake-send/,
     );
     const registry = buildOperationRegistry(
-      [diagnostic(), terminate(), definitionNamed("connector.fake-send")],
+      [
+        diagnostic(),
+        terminate(),
+        definitionNamed("connector.fake-send"),
+        definitionNamed("connector.fake-write"),
+      ],
       EXTENDED_TABLE,
     );
     expect(registry.lookup("connector.fake-send")).toBeDefined();

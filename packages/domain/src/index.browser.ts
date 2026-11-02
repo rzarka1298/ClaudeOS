@@ -44,6 +44,7 @@ export * from "./codex-usage.js";
 export * from "./diagnostic-bundle.js";
 export * from "./diagnostics.js";
 export * from "./display-path.js";
+export * from "./errno.js";
 export * from "./events.js";
 export * from "./freshness.js";
 export * from "./ids.js";

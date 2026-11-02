@@ -789,6 +789,43 @@ export const KEYCHAIN_PRESENCES = ["present", "absent", "unknown"] as const;
 export const KeychainPresenceSchema = z.enum(KEYCHAIN_PRESENCES);
 
 /**
+ * Whether the owner-presence check (Touch ID or password) can happen right now (09-19, D-04): `available` only
+ * when the helper's own non-prompting check just said so, `unavailable` when the mechanism is absent or cannot
+ * evaluate, `unknown` when it has not been checked. An older service without the member reads `unknown` in the
+ * plugin, never `available`.
+ */
+export const APPROVAL_PRESENCE_STATES = ["available", "unavailable", "unknown"] as const;
+export const ApprovalPresenceStateSchema = z.enum(APPROVAL_PRESENCE_STATES);
+export type ApprovalPresenceState = z.infer<typeof ApprovalPresenceStateSchema>;
+
+/**
+ * Why the presence check is `unavailable` (closed codes, no free text; 09-19, wave 5/6/9 reviews):
+ * `helper-missing` the helper program is not built, `not-enrolled` it has no key yet, `pin-stale` the key was
+ * enrolled by a different build of the helper, `pin-changed` the stored key differs from the one the service
+ * trusted (a swap outside an install), `cannot-evaluate` the Mac cannot ask for Touch ID or a password,
+ * `check-failed` the helper's check failed or did not answer in time, `sandbox` a test or sandbox service that
+ * never starts the helper.
+ */
+export const APPROVAL_PRESENCE_REASONS = [
+  "helper-missing",
+  "not-enrolled",
+  "pin-stale",
+  "pin-changed",
+  "cannot-evaluate",
+  "check-failed",
+  "sandbox",
+] as const;
+export const ApprovalPresenceReasonSchema = z.enum(APPROVAL_PRESENCE_REASONS);
+export type ApprovalPresenceReason = z.infer<typeof ApprovalPresenceReasonSchema>;
+
+/**
+ * A short, non-secret fingerprint of the pinned presence public key: the first eight lowercase hex characters of
+ * the SHA-256 of the pin (09-PRESENCE-SPIKE.md, "Residual"). The pin is a public key, and eight characters
+ * identify a change without disclosing anything usable.
+ */
+export const ApprovalPresencePinSchema = z.string().regex(/^[0-9a-f]{8}$/);
+
+/**
  * The salted fingerprint of the managed vault path (D-36). Both sides hash the
  * input `salt + ":" + path` (the service with `node:crypto`, the plugin with
  * WebCrypto) and compare the first 16 lowercase hex characters of the SHA-256
@@ -825,6 +862,14 @@ export const DiagnosticsHealthResponseSchema = z.strictObject({
     installSecret: KeychainPresenceSchema,
     researchKey: KeychainPresenceSchema,
   }),
+  /**
+   * 09-19 (D-04): whether connector-class approvals can ask for the owner's presence. Optional, so an older
+   * service reads `unknown` in the plugin. The reason (only meaningful with `unavailable`) and the pin
+   * fingerprint are closed, optional siblings; none of the three is a subsystem or a row (D-41 kept).
+   */
+  approvalPresence: ApprovalPresenceStateSchema.optional(),
+  approvalPresenceReason: ApprovalPresenceReasonSchema.optional(),
+  approvalPresencePin: ApprovalPresencePinSchema.optional(),
   paths: z.strictObject({
     vault: DisplayPathSchema.nullable(),
     runtimeDir: DisplayPathSchema,

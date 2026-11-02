@@ -1,7 +1,12 @@
 import { MIN_SUPPORTED_CLAUDE_VERSION } from "@ccc/collectors";
-import type { ResearchStatusResponse } from "@ccc/domain";
+import type { ApprovalPresenceReason, ResearchStatusResponse } from "@ccc/domain";
+import type { ObservedPin, PresenceInspection } from "./approval-wiring/presence.js";
 import type { UsageServices } from "./claude/usage-services.js";
 import type { CodexIntegrationService } from "./codex/integration-routes.js";
+import type {
+  ApprovalPresenceCheck,
+  ApprovalPresencePort,
+} from "./diagnostics/approval-presence.js";
 import type { CollectorsProbePorts } from "./diagnostics/collectors-probe.js";
 import { type CountDb, readHealthCounts } from "./diagnostics/counts.js";
 import type { HooksProbePorts } from "./diagnostics/hooks-probe.js";
@@ -63,13 +68,24 @@ export interface DiagnosticsWiringDeps {
   readonly isExecutableFile: (path: string) => Promise<boolean>;
   /** Whether the service's own startup read of the install secret found it (it cannot answer without). */
   readonly installSecretPresent: boolean;
+  /**
+   * The approval presence port (09-19, D-04), built by {@link createApprovalPresenceDiagnosticsPort}. Absent:
+   * the health response carries no `approvalPresence` member.
+   */
+  readonly approvalPresence?: ApprovalPresencePort | undefined;
   readonly db: CountDb;
   readonly now: () => Date;
 }
 
 export type DiagnosticsPortSets = Pick<
   DiagnosticsPorts,
-  "hooksPorts" | "collectorsPorts" | "schedulerPorts" | "launchersPorts" | "keychain" | "counts"
+  | "hooksPorts"
+  | "collectorsPorts"
+  | "schedulerPorts"
+  | "launchersPorts"
+  | "keychain"
+  | "counts"
+  | "approvalPresence"
 >;
 
 export function createDiagnosticsPortSets(deps: DiagnosticsWiringDeps): DiagnosticsPortSets {
@@ -118,5 +134,93 @@ export function createDiagnosticsPortSets(deps: DiagnosticsWiringDeps): Diagnost
     launchersPorts,
     keychain: { installSecret: deps.installSecretPresent ? "present" : "unknown" },
     counts: () => readHealthCounts(deps.db),
+    ...(deps.approvalPresence === undefined ? {} : { approvalPresence: deps.approvalPresence }),
+  };
+}
+
+export interface ApprovalPresenceDiagnosticsDeps {
+  /** True under any test or sandbox environment (`CCC_INSTALL_SECRET_ACCOUNT` set): nothing is started or read. */
+  readonly sandbox: boolean;
+  /** Whether the built helper exists at its absolute path; a file-existence check, never a spawn. */
+  readonly helperPresent: () => boolean;
+  /** The helper port's non-prompting `check`, with the closed reason when unavailable. */
+  readonly inspect: () => Promise<PresenceInspection>;
+  /**
+   * The GUARDED pin reader, returning the pin AND the conclusion of this very read: an attribute-only Keychain
+   * read. There is no shared "latest observation" state, so a concurrent approval read cannot change what this
+   * check reports (09-FIX10A).
+   */
+  readonly readPin: () => Promise<ObservedPin>;
+}
+
+const CHECK_FAILED: ApprovalPresenceCheck = {
+  state: "unavailable",
+  reason: "check-failed",
+  fingerprint: null,
+};
+
+/** The reasons for which the helper's own check already settled the answer: no pin read is needed. */
+const SETTLED_BY_HELPER: readonly ApprovalPresenceReason[] = [
+  "helper-missing",
+  "cannot-evaluate",
+  "check-failed",
+];
+
+/**
+ * The port Diagnostics asks whether connector-class approvals can ask for the owner's presence (09-19, D-04,
+ * T-09-42, T-09-43). It lives here, outside `src/diagnostics/`, because it reaches the helper and the Keychain
+ * (rule 18); the services call it only on an owner gesture and keep its answer for a reconnect.
+ *
+ * It folds two reads into one closed answer: the helper's non-prompting `check` and the guarded, attribute-only
+ * pin read. `available` needs BOTH: the helper says it can evaluate and holds a current key, and the service
+ * can read a pin it trusts (`trusted` or `adopted`). A pin the guard refused (`changed`) is `unavailable` with
+ * `pin-changed` whatever the helper says, and the fingerprint shown is that of the pin now in the Keychain, so
+ * the owner can compare it across installs. A pin the service cannot read, or an observation the guard did not
+ * make, is `check-failed`: never `available`, never invented.
+ */
+export function createApprovalPresenceDiagnosticsPort(
+  deps: ApprovalPresenceDiagnosticsDeps,
+): ApprovalPresencePort {
+  return {
+    precheck() {
+      if (deps.sandbox) return "sandbox";
+      return deps.helperPresent() ? null : "helper-missing";
+    },
+    async check(signal) {
+      if (deps.sandbox) return { state: "unavailable", reason: "sandbox", fingerprint: null };
+      if (!deps.helperPresent()) {
+        return { state: "unavailable", reason: "helper-missing", fingerprint: null };
+      }
+      let inspection: PresenceInspection;
+      try {
+        inspection = await deps.inspect();
+      } catch {
+        return CHECK_FAILED;
+      }
+      if (signal.aborted) return CHECK_FAILED;
+      if (inspection.reason !== null && SETTLED_BY_HELPER.includes(inspection.reason)) {
+        return { state: "unavailable", reason: inspection.reason, fingerprint: null };
+      }
+      let observed: ObservedPin["observation"];
+      try {
+        observed = (await deps.readPin()).observation;
+      } catch {
+        return CHECK_FAILED;
+      }
+      if (signal.aborted) return CHECK_FAILED;
+      if (typeof observed !== "object" || observed === null) return CHECK_FAILED;
+      if (observed.verdict === "changed") {
+        return { state: "unavailable", reason: "pin-changed", fingerprint: observed.fingerprint };
+      }
+      if (inspection.state === "unavailable") {
+        return {
+          state: "unavailable",
+          reason: inspection.reason ?? "check-failed",
+          fingerprint: observed.fingerprint,
+        };
+      }
+      if (observed.verdict === "none") return CHECK_FAILED;
+      return { state: "available", reason: null, fingerprint: observed.fingerprint };
+    },
   };
 }

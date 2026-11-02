@@ -10,7 +10,12 @@
 // wildcard subpath to make this a supported import shape.
 
 import type { RunState } from "@ccc/domain/run.js";
-import { RUN_STATE_DISPLAY, type SessionView, sessionDisplayName } from "@ccc/domain/session.js";
+import {
+  presentRunState,
+  SESSION_QUIET_AFTER_MS,
+  type SessionView,
+  sessionDisplayName,
+} from "@ccc/domain/session.js";
 import type { VNode } from "preact";
 import type {
   HeroMetric,
@@ -38,6 +43,8 @@ import { formatRelativeTime } from "./relative-time.js";
 export interface ActiveSessionsData {
   readonly sessions: readonly SessionView[];
   readonly nowMs: number;
+  /** The quiet threshold (snapshot-fed); absent reads as {@link SESSION_QUIET_AFTER_MS}. */
+  readonly quietAfterMs?: number;
 }
 
 /**
@@ -52,8 +59,13 @@ export function activeSessionsMetric(data: ActiveSessionsData): HeroMetric {
   let waiting = 0;
   let unknown = 0;
   let starting = 0;
+  let quiet = 0;
+  const quietAfterMs = data.quietAfterMs ?? SESSION_QUIET_AFTER_MS;
   for (const session of data.sessions) {
-    if (session.state === "running" || session.state === "waiting-for-approval") {
+    // A quiet session is still `running` in the store but is not counted as active (R-04).
+    if (presentRunState(session, data.nowMs, quietAfterMs).quiet !== null) {
+      quiet += 1;
+    } else if (session.state === "running" || session.state === "waiting-for-approval") {
       runningOrWaiting += 1;
     }
     if (session.state === "waiting-for-approval") waiting += 1;
@@ -63,9 +75,9 @@ export function activeSessionsMetric(data: ActiveSessionsData): HeroMetric {
   return {
     value: runningOrWaiting,
     // A launch still starting is not counted in the numeral; say so in text when there is one.
-    caption: `${waiting} waiting for approval · ${unknown} unknown${starting > 0 ? ` · ${starting} starting` : ""}`,
+    caption: `${waiting} waiting for approval${quiet > 0 ? ` · ${quiet} quiet` : ""} · ${unknown} unknown${starting > 0 ? ` · ${starting} starting` : ""}`,
     share: runningOrWaiting === 0 ? null : { value: waiting, max: runningOrWaiting },
-    srLabel: `${runningOrWaiting} active sessions, running or waiting for approval`,
+    srLabel: `${runningOrWaiting} active sessions, running or waiting for approval${quiet > 0 ? `, and ${quiet} quiet` : ""}`,
   };
 }
 
@@ -86,12 +98,15 @@ function elapsedText(row: SessionView, nowMs: number): string {
 }
 
 /** `{glyph} {label} · {model, when reported} · {elapsed} · active {relative}` (UI-SPEC "Row list"). */
-function rowMeta(row: SessionView, nowMs: number): string {
-  const display = RUN_STATE_DISPLAY[row.state];
+function rowMeta(row: SessionView, nowMs: number, quietAfterMs: number): string {
+  const display = presentRunState(row, nowMs, quietAfterMs);
   const parts = [`${display.glyph} ${display.label}`];
   if (row.model !== null && row.model.trim().length > 0) parts.push(row.model);
   parts.push(elapsedText(row, nowMs));
-  parts.push(`active ${formatRelativeTime(row.lastActivityAt ?? row.startedAt, nowMs)}`);
+  // A quiet label already carries the age of the last signal, so it is not repeated (FIX3B Q3).
+  if (display.quiet === null) {
+    parts.push(`active ${formatRelativeTime(row.lastActivityAt ?? row.startedAt, nowMs)}`);
+  }
   return parts.join(" · ");
 }
 
@@ -157,7 +172,7 @@ function ActiveSessionsBody({
       size={size}
       keyOf={(row) => row.runId}
       renderPrimary={(row) => `${row.projectName ?? "Unclassified"} · ${sessionDisplayName(row)}`}
-      renderMeta={(row) => rowMeta(row, data.nowMs)}
+      renderMeta={(row) => rowMeta(row, data.nowMs, data.quietAfterMs ?? SESSION_QUIET_AFTER_MS)}
       moreDestination="agent-runs"
       onMore={onNavigate}
       renderAction={rowActionDescriptor}

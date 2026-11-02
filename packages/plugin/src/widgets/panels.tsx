@@ -98,6 +98,11 @@ export interface TodayTask {
   /** The task's title: owner- or agent-authored vault text, rendered as text only. */
   readonly title: string;
   readonly meta: string;
+  /**
+   * Whether the feed listed this row as overdue. Structural, set where the row is built, so the
+   * card's heading never depends on the wording of `meta`.
+   */
+  readonly overdue: boolean;
 }
 
 /**
@@ -226,11 +231,15 @@ function AutomationLines({
 
 function TodayBody({ data, size, onNavigate }: WidgetBodyProps<TodayData>): VNode {
   const tasks = data.tasks;
+  // The list's heading says "and overdue" only when an overdue row is in it (folded p8 item 2).
+  const dueHeading = tasks?.rows.some((task) => task.overdue)
+    ? "Due today and overdue"
+    : "Due today";
   // The next open task shows only when nothing is due or overdue (D-21, UI-SPEC R-13).
   const nextOpen = tasks !== null && tasks.rows.length === 0 ? tasks.nextOpen : null;
   return (
     <>
-      <TodayHeading focal={nextOpen === null}>Due today</TodayHeading>
+      <TodayHeading focal={nextOpen === null}>{dueHeading}</TodayHeading>
       {tasks === null ? (
         <p className="ccc-state-body">Due tasks unavailable.</p>
       ) : tasks.rows.length === 0 ? (

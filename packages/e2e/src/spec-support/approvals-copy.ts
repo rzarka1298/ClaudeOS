@@ -94,6 +94,16 @@ export const APPROVALS_COPY = Object.freeze({
   requestIdTerm: mirror("requestIdTerm", COPY, "Request ID"),
   decidedThroughTerm: mirror("decidedThroughTerm", COPY, "Decided through"),
   decidedThroughPlugin: mirror("decidedThroughPlugin", COPY, "The command center"),
+  decidedThroughPresence: mirror(
+    "decidedThroughPresence",
+    COPY,
+    "The command center, confirmed with your Touch ID or password",
+  ),
+  historyPresenceRefused: mirror(
+    "historyPresenceRefused",
+    COPY,
+    "Approval refused: your Touch ID or password wasn't confirmed",
+  ),
   recordHeading: mirror("recordHeading", COPY, "Record"),
   historyHeading: mirror("historyHeading", COPY, "History"),
 

@@ -13,6 +13,8 @@ import {
   ServiceEventSchema,
   SessionUpsertedPayloadSchema,
   type SessionView,
+  SNAPSHOT_PATH,
+  type SnapshotResponse,
 } from "@ccc/domain";
 import { getSessionRun, openStore } from "@ccc/operational-store";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -164,17 +166,20 @@ async function killAndReap(child: ChildProcess): Promise<void> {
   await exited;
 }
 
-/** Runs the compiled hook once, exactly as Claude Code spawns it, with CLAUDE_PID = `pid`. */
+/**
+ * Runs the compiled hook once, exactly as Claude Code spawns it, with CLAUDE_PID = `pid`
+ * (`null` leaves CLAUDE_PID out: the Run it opens has no pid).
+ */
 async function runHook(
   runtimeDir: string,
-  pid: number,
+  pid: number | null,
   record: Record<string, unknown>,
 ): Promise<void> {
   const child = spawn(process.execPath, [COMPILED_HOOK, "--runtime-dir", runtimeDir], {
     env: {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       HOME: process.env.HOME ?? "/",
-      CLAUDE_PID: String(pid),
+      ...(pid === null ? {} : { CLAUDE_PID: String(pid) }),
     },
     stdio: ["pipe", "ignore", "ignore"],
   });
@@ -316,6 +321,103 @@ describe("SESS-07/08: two concurrent sessions under two projects (Task 3, Test 5
         } finally {
           read.close();
         }
+      } finally {
+        stream.close();
+        await service.stop();
+      }
+    });
+  }, 40_000);
+});
+
+describe("D-08: an idle pid-bearing session is never timed out by the PID-less rule", () => {
+  // The knob is shrunk for this describe only and restored after it, so no
+  // other test in the file sees a 1 s PID-less timeout.
+  let previousPidlessTimeout: string | undefined;
+  beforeEach(() => {
+    previousPidlessTimeout = process.env.CCC_PIDLESS_INACTIVITY_MS;
+    process.env.CCC_PIDLESS_INACTIVITY_MS = "1000";
+  });
+  afterEach(() => {
+    if (previousPidlessTimeout === undefined) delete process.env.CCC_PIDLESS_INACTIVITY_MS;
+    else process.env.CCC_PIDLESS_INACTIVITY_MS = previousPidlessTimeout;
+  });
+
+  it("still reads running, idle and carries its pid after the PID-less timeout has passed twice over, while a PID-less control goes stale", async () => {
+    await withTempSocketDir(async ({ dir, socketPath }) => {
+      process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
+      mkdirSync(join(dir, "claude", "projects"), { recursive: true });
+      const dbPath = join(dir, "operational.db");
+      const service = await startServiceForTest({ socketPath, dbPath });
+      const token = await handshake(socketPath);
+      const stream = collectEvents(socketPath, token);
+      try {
+        const claude = await spawnFakeClaude();
+        const pid = claude.pid as number;
+        const sessionId = `idle-${randomUUID().slice(0, 8)}`;
+        await runHook(dir, pid, sessionStart(sessionId, join(dir, "code", "demo")));
+        await stream.waitFor(
+          (event) =>
+            sessionOf(event)?.claudeSessionId === sessionId &&
+            sessionOf(event)?.state === "running",
+          10_000,
+        );
+        await runHook(dir, pid, {
+          session_id: sessionId,
+          cwd: join(dir, "code", "demo"),
+          hook_event_name: "Stop",
+        });
+        const idle = await stream.waitFor(
+          (event) =>
+            sessionOf(event)?.claudeSessionId === sessionId &&
+            sessionOf(event)?.activity === "idle",
+          10_000,
+        );
+        const runId = sessionOf(idle)?.runId;
+        const idleAt = Date.now();
+
+        // Control in the same service and world: a Run with no pid that goes quiet. It must
+        // be timed out by the shrunken 1 s PID-less rule, which proves the sweeper really ran
+        // (and applied `inactivity-timeout`) while the pid-bearing Run sat idle.
+        const controlId = `control-${randomUUID().slice(0, 8)}`;
+        await runHook(dir, null, sessionStart(controlId, join(dir, "code", "control")));
+        const controlRunning = await stream.waitFor(
+          (event) =>
+            sessionOf(event)?.claudeSessionId === controlId &&
+            sessionOf(event)?.state === "running",
+          10_000,
+        );
+        const controlRunId = sessionOf(controlRunning)?.runId;
+        expect(controlRunId).toBeDefined();
+        await stream.waitFor(
+          (event) =>
+            sessionOf(event)?.runId === controlRunId && sessionOf(event)?.state === "stale",
+          20_000,
+        );
+
+        // The pid-bearing Run has now been idle across at least twice the PID-less timeout.
+        const remaining = 2_000 - (Date.now() - idleAt);
+        if (remaining > 0) await new Promise((resolveWait) => setTimeout(resolveWait, remaining));
+
+        const snapshot = await requestOverSocket<SnapshotResponse>(socketPath, {
+          method: "GET",
+          path: SNAPSHOT_PATH,
+          headers: { [AUTH_HEADER]: `Bearer ${await handshake(socketPath)}` },
+        });
+        const view = snapshot.body.state.sessions?.find((session) => session.runId === runId);
+        expect(view?.state).toBe("running");
+        expect(view?.activity).toBe("idle");
+
+        const read = openStore(dbPath);
+        try {
+          expect(getSessionRun(read.db, runId as never)?.pid).toBe(pid);
+        } finally {
+          read.close();
+        }
+        const states = stream.events
+          .map(sessionOf)
+          .filter((session) => session?.runId === runId)
+          .map((session) => session?.state);
+        expect(states).not.toContain("stale");
       } finally {
         stream.close();
         await service.stop();

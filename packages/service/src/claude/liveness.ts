@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
-import type { RunId, SessionRun } from "@ccc/domain";
 import {
+  type RunId,
+  SESSION_QUIET_AFTER_MAX_MS,
+  SESSION_QUIET_AFTER_MS,
+  type SessionRun,
+} from "@ccc/domain";
+import {
+  getSessionRun,
   listRegisteredProjects,
   listRevivableRuns,
   listSessionRunsForView,
@@ -25,7 +31,15 @@ import { type ProcessFacts, startInstantMs } from "./process-facts.js";
  *   SessionEnd has ended the Run meanwhile, does the sweep apply `pid-gone`.
  * - A pid alive with exactly the stored `lstart` applies `pid-alive` to a
  *   stale Run (revival). An unknown read `lstart` proves nothing either
- *   way, so it neither revives nor ends a Run.
+ *   way, so it neither revives nor ends a Run. Left unknown for the whole
+ *   quiet threshold (continuously unknown for `quietAfterMs`, tracked from
+ *   the sweep that first saw it unknown, AND no event for `quietAfterMs`),
+ *   a running or waiting-for-approval Run applies
+ *   `identity-unknown-timeout` and reads `stale` (D-06): unknown by
+ *   evidence, never an ending. One failed `ps` therefore changes nothing.
+ *   The evidence carries the cutoff (`now - quietAfterMs`) and the pipeline's
+ *   reducer re-checks it against the Run as the pipeline sees it, coalesced
+ *   activity included, so a hook that landed meanwhile always wins (FIX3C).
  * - A Run with a pid but no stored start (hooks installed mid-session, or
  *   a failed SessionStart `ps`) is judged by the read start against its
  *   last hook activity (wave 4): a process that started no later than that
@@ -58,6 +72,13 @@ export interface LivenessConfig {
   readonly startTimeoutMs: number;
   /** A PID-less Run idle this long goes stale (`CCC_PIDLESS_INACTIVITY_MS`, 30 min). */
   readonly pidlessInactivityMs: number;
+  /**
+   * A pid-bearing Run whose process identity has stayed uncheckable for this
+   * long, with no event for this long either, goes stale
+   * (`CCC_QUIET_THRESHOLD_MS`, 30 min, D-06). The same value reaches the plugin
+   * as `state.sessionQuietAfterMs` (D-07).
+   */
+  readonly quietAfterMs: number;
 }
 
 export const DEFAULT_LIVENESS_CONFIG: LivenessConfig = {
@@ -65,11 +86,28 @@ export const DEFAULT_LIVENESS_CONFIG: LivenessConfig = {
   graceMs: 10_000,
   startTimeoutMs: 60_000,
   pidlessInactivityMs: 30 * 60 * 1000,
+  quietAfterMs: SESSION_QUIET_AFTER_MS,
 };
 
 function positiveMs(raw: string | undefined, fallback: number): number {
   const value = Number(raw);
   return raw !== undefined && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * The quiet threshold is also published as `state.sessionQuietAfterMs`, whose schema accepts only
+ * a positive integer of at most {@link SESSION_QUIET_AFTER_MAX_MS}. A knob value outside that
+ * would pass `positiveMs`, then fail the plugin's snapshot parse and drop the whole snapshot,
+ * so anything else falls back to the default (FIX3A L1).
+ */
+function quietThresholdMs(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return raw !== undefined &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= SESSION_QUIET_AFTER_MAX_MS
+    ? value
+    : fallback;
 }
 
 /** The sweeper's timings, each overridable by its env knob (tests shrink them). */
@@ -81,6 +119,10 @@ export function livenessConfigFromEnv(env: NodeJS.ProcessEnv): LivenessConfig {
     pidlessInactivityMs: positiveMs(
       env.CCC_PIDLESS_INACTIVITY_MS,
       DEFAULT_LIVENESS_CONFIG.pidlessInactivityMs,
+    ),
+    quietAfterMs: quietThresholdMs(
+      env.CCC_QUIET_THRESHOLD_MS,
+      DEFAULT_LIVENESS_CONFIG.quietAfterMs,
     ),
   };
 }
@@ -99,6 +141,8 @@ export interface SweepReport {
   readonly startTimeouts: number;
   /** `inactivity-timeout` evidence applied this sweep. */
   readonly inactivityTimeouts: number;
+  /** `identity-unknown-timeout` evidence submitted this sweep (D-06); the reducer may still find activity newer than its cutoff and change nothing. */
+  readonly identityUnknownTimeouts: number;
   /** Unclassified Runs given a project after a project-set change. */
   readonly reattributed: number;
   /** Runs whose missing process start was backfilled this sweep (wave 4). */
@@ -178,6 +222,7 @@ const START_PENDING_STATES: ReadonlySet<SessionRun["state"]> = new Set<SessionRu
   "starting",
 ]);
 
+/** The states a quiet Run can be moved off: PID-less inactivity and unknown-identity timeouts both start here. */
 const PIDLESS_ACTIVE_STATES: ReadonlySet<SessionRun["state"]> = new Set<SessionRun["state"]>([
   "running",
   "waiting-for-approval",
@@ -194,6 +239,16 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
   const schedule = deps.schedule ?? defaultSchedule;
   /** When each Run's pid was first seen gone (ms, by `deps.now()`). In memory only. */
   const firstSeenGone = new Map<RunId, number>();
+  /**
+   * When each active Run's identity was first seen unknown, in an unbroken run
+   * of unknown sweeps (ms, by `deps.now()`). Cleared on same, gone, backfill,
+   * or when the Run leaves the candidate set. In memory only (FIX3A L2).
+   */
+  const firstSeenUnknown = new Map<RunId, number>();
+  // Runs this sweeper staled while they were waiting for approval (FIX15 m1): a revival returns them to
+  // that state, since the permission dialog is still the last thing known. In memory only: after a
+  // service restart a revived Run reads running, as before.
+  const staledWhileWaiting = new Set<RunId>();
   let running = false;
   let stopped = false;
   let cancelTimer: (() => void) | null = null;
@@ -296,6 +351,7 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
     let gone = 0;
     let revived = 0;
     let backfilled = 0;
+    let identityUnknownTimeouts = 0;
     for (const run of withPid) {
       seen.add(run.runId);
       const lstart = starts.get(run.pid);
@@ -307,16 +363,71 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
       }
       if (identity === "same") {
         firstSeenGone.delete(run.runId);
+        firstSeenUnknown.delete(run.runId);
         if (run.state === "stale") {
-          await pipeline.apply({ kind: "pid-alive", runId: run.runId, observedAt });
+          const resumeAs = staledWhileWaiting.delete(run.runId)
+            ? ("waiting-for-approval" as const)
+            : undefined;
+          await pipeline.apply(
+            resumeAs === undefined
+              ? { kind: "pid-alive", runId: run.runId, observedAt }
+              : { kind: "pid-alive", runId: run.runId, observedAt, resumeAs },
+          );
           revived += 1;
         }
         continue;
       }
       if (identity === "unknown") {
         firstSeenGone.delete(run.runId);
+        // D-06: an identity that cannot be checked proves nothing either way,
+        // but a Run left unverifiable for the whole quiet threshold must not
+        // keep reading as plain running. It becomes stale (unknown), never an
+        // ending; a later `same` revives it through `pid-alive`. "Whole
+        // threshold" means CONTINUOUSLY unknown: one failed `ps` (which makes
+        // every pid unknown at once) starts the clock and ends nothing, and a
+        // later same reading restarts it (FIX3A L2).
+        if (!PIDLESS_ACTIVE_STATES.has(run.state)) {
+          firstSeenUnknown.delete(run.runId);
+          continue;
+        }
+        const unknownSince = firstSeenUnknown.get(run.runId);
+        if (unknownSince === undefined) {
+          firstSeenUnknown.set(run.runId, nowMs);
+          continue;
+        }
+        if (
+          nowMs - unknownSince >= config.quietAfterMs &&
+          nowMs - Date.parse(run.lastActivityAt ?? run.startedAt) >= config.quietAfterMs
+        ) {
+          // The candidates were read before the batched `ps` (up to 2 s), so a hook
+          // event may have refreshed the Run meanwhile: judge the evidence against
+          // the Run as it is now, not as the sweep started (FIX3A L3).
+          const current = getSessionRun(db, run.runId);
+          if (
+            current !== null &&
+            current.pid === run.pid &&
+            PIDLESS_ACTIVE_STATES.has(current.state) &&
+            nowMs - Date.parse(current.lastActivityAt ?? current.startedAt) >= config.quietAfterMs
+          ) {
+            firstSeenUnknown.delete(run.runId);
+            if (current.state === "waiting-for-approval") staledWhileWaiting.add(run.runId);
+            else staledWhileWaiting.delete(run.runId);
+            // The checks above are a cheap filter over the database row; the cutoff
+            // is the decision. The pipeline's reducer re-judges the Run, coalesced
+            // activity included, atomically with the write (FIX3C).
+            await pipeline.apply({
+              kind: "identity-unknown-timeout",
+              runId: run.runId,
+              observedAt,
+              quietBefore: new Date(nowMs - config.quietAfterMs).toISOString(),
+            });
+            identityUnknownTimeouts += 1;
+          }
+        }
         continue;
       }
+      // The identity read gone: an unknown streak is over.
+      firstSeenUnknown.delete(run.runId);
       // A stale Run is already unknown; only a pending terminate still has
       // an ending (cancelled) for its vanished process to prove.
       if (run.state === "stale" && run.terminateRequestedAt === null) {
@@ -330,6 +441,8 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
       }
       if (nowMs - first >= config.graceMs) {
         firstSeenGone.delete(run.runId);
+        if (run.state === "waiting-for-approval") staledWhileWaiting.add(run.runId);
+        else staledWhileWaiting.delete(run.runId);
         await pipeline.apply({ kind: "pid-gone", runId: run.runId, observedAt });
         gone += 1;
       }
@@ -337,6 +450,12 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
     // A Run that ended (or left the candidate set) during its grace is forgotten.
     for (const runId of [...firstSeenGone.keys()]) {
       if (!seen.has(runId)) firstSeenGone.delete(runId);
+    }
+    for (const runId of [...staledWhileWaiting]) {
+      if (!seen.has(runId)) staledWhileWaiting.delete(runId);
+    }
+    for (const runId of [...firstSeenUnknown.keys()]) {
+      if (!seen.has(runId)) firstSeenUnknown.delete(runId);
     }
 
     const reattributed = await watchProjects(nowMs);
@@ -348,10 +467,20 @@ export function createLivenessSweeper(deps: LivenessSweeperDeps): LivenessSweepe
       pendingGone: firstSeenGone.size,
       startTimeouts,
       inactivityTimeouts,
+      identityUnknownTimeouts,
       reattributed,
       backfilled,
     };
-    if (gone + revived + startTimeouts + inactivityTimeouts + reattributed + backfilled > 0) {
+    if (
+      gone +
+        revived +
+        startTimeouts +
+        inactivityTimeouts +
+        identityUnknownTimeouts +
+        reattributed +
+        backfilled >
+      0
+    ) {
       logger.info(report, "liveness sweep applied evidence");
     }
     return report;

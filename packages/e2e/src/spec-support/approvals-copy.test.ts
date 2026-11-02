@@ -92,6 +92,15 @@ describe("approvals copy mirror (Test 1)", () => {
     expect(APPROVALS_COPY.decidedThroughPlugin).toBe("The command center");
   });
 
+  it("mirrors the verified channel and the presence refusal (09-13)", () => {
+    expect(APPROVALS_COPY.decidedThroughPresence).toBe(
+      "The command center, confirmed with your Touch ID or password",
+    );
+    expect(APPROVALS_COPY.historyPresenceRefused).toBe(
+      "Approval refused: your Touch ID or password wasn't confirmed",
+    );
+  });
+
   it("registers every literal with the plugin source file that owns it", () => {
     const entries = mirroredEntries();
     expect(entries.length).toBeGreaterThanOrEqual(25);

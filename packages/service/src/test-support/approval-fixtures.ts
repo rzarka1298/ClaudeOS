@@ -75,7 +75,7 @@ export interface DecideCall {
   readonly proposalId: string;
   readonly decision: ApprovalDecision;
   readonly payloadHash: string;
-  readonly via: "plugin" | "other";
+  readonly channelHint: "plugin" | "other";
 }
 
 /** The shape the route layer talks to; mirrored from `approval-wiring/types.ts` structurally. */

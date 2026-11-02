@@ -1,7 +1,8 @@
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import { realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { type Clock, DEFAULT_HEARTBEAT_INTERVAL_MS, type ProjectId, type RunId } from "@ccc/domain";
-import { createSecurityCliSecretStore, hasSecret } from "@ccc/keychain";
+import { createSecurityCliSecretStore, hasSecret, readItemComment } from "@ccc/keychain";
 import {
   applyMigrations,
   createDiagnosticEffects,
@@ -13,6 +14,18 @@ import {
   openStore,
   readSchemaVersion,
 } from "@ccc/operational-store";
+import { approvalProofKey } from "./approval/index.js";
+import {
+  createInstallMarker,
+  guardPinReader,
+  isPresenceSandbox,
+  PRESENCE_PIN_INSTALL_MARKER,
+  PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS,
+  PRESENCE_PIN_META_KEY,
+  pinReaderFromEnv,
+  presenceHelperPath,
+  presencePortFromEnv,
+} from "./approval-wiring/presence.js";
 import { createProposeForceTerminate } from "./approval-wiring/proposer.js";
 import { createProcessNamer, createRunInspector } from "./approval-wiring/run-inspector.js";
 import { createServiceApprovalLog, startApprovalServices } from "./approval-wiring/services.js";
@@ -27,7 +40,10 @@ import {
 } from "./codex/detection.js";
 import { type CodexServices, startCodexServices } from "./codex/services.js";
 import { createDiagnosticsServices } from "./diagnostics/services.js";
-import { createDiagnosticsPortSets } from "./diagnostics-wiring.js";
+import {
+  createApprovalPresenceDiagnosticsPort,
+  createDiagnosticsPortSets,
+} from "./diagnostics-wiring.js";
 import { createEventBus } from "./events/event-bus.js";
 // The composition root is the ONLY importer of the executors folder (APPR-01,
 // T-06-02): effect code is reachable only through the engine's definitions.
@@ -209,6 +225,10 @@ async function main(): Promise<void> {
 
   const secretStore = createSecurityCliSecretStore();
   const installSecret = await getInstallSecret(secretStore);
+  // The approval decision-proof key (09-17, D-03): derived once, handed to the approval services alone,
+  // never logged, stored or returned by a route. A secret under 32 bytes throws a RangeError here, which
+  // the fatal-startup handler reports: the service does not start with a guessable proof key.
+  const approvalDecisionProofKey = approvalProofKey(installSecret);
 
   const heartbeatIntervalMs = Number(
     process.env.CCC_HEARTBEAT_INTERVAL_MS ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
@@ -353,6 +373,38 @@ async function main(): Promise<void> {
     db: store.db,
     processFacts: claudeServices.processFacts,
   });
+  // The owner-presence check (09-18, D-01, R-02): the real helper port and the pin reader, each built once.
+  // Under any test or sandbox environment (CCC_INSTALL_SECRET_ACCOUNT set) the port is the fail-closed one
+  // and the reader answers null without touching the Keychain. The pin reader is guarded: it records the
+  // SHA-256 of the first pin it sees and refuses a changed one outside an install (presence-pin-changed).
+  const presencePort = presencePortFromEnv(process.env, runtimeDir, {
+    runner: commandRunner,
+    exists: existsSync,
+    homeDir,
+  });
+  // Diagnostics reads the pin through `presencePinReader.observed`, which returns the conclusion of that very read
+  // (a verdict and a short non-secret fingerprint, never the pin): no shared "latest" state (09-FIX10A).
+  const presencePinReader = guardPinReader({
+    read: pinReaderFromEnv(process.env, readItemComment),
+    recorded: {
+      get: () => store.readServiceMeta(PRESENCE_PIN_META_KEY),
+      set: (sha256Hex) => store.writeServiceMeta(PRESENCE_PIN_META_KEY, sha256Hex),
+    },
+    // The install's marker counts only as a plain file written within the last few minutes (09-FIX9).
+    installMarker: createInstallMarker({
+      path: join(runtimeDir, PRESENCE_PIN_INSTALL_MARKER),
+      now: () => Date.now(),
+      lstat: (path) => lstatSync(path),
+      unlink: (path) => unlinkSync(path),
+      maxAgeMs: PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS,
+    }),
+    log: approvalLog,
+  });
+  // One guarded read of the pin as the service starts (09-FIX9, after the store has opened): boot is the
+  // trust-on-first-use point, and the install that restarted this service has its marker used up inside its
+  // window rather than left lying about. The read is attribute-only (no Keychain prompt), bounded, and fails
+  // closed; under a test or sandbox environment it answers null without touching the Keychain.
+  await presencePinReader();
   const approvals = startApprovalServices({
     db: store.db,
     definitions: [
@@ -370,6 +422,9 @@ async function main(): Promise<void> {
     getVaultRoot: readVaultRoot,
     log: approvalLog,
     env: process.env,
+    proofKey: approvalDecisionProofKey,
+    presence: presencePort,
+    readPin: presencePinReader,
     projectName: (projectId) => getProject(store.db, projectId as ProjectId)?.displayName ?? null,
   });
   const recovered = await approvals.recover();
@@ -469,6 +524,15 @@ async function main(): Promise<void> {
       probeBundle: (bundleId, options) => launchers.detector.probeBundle(bundleId, options),
       isExecutableFile,
       installSecretPresent: installSecret.length > 0,
+      // 09-19 (D-04): the presence check Diagnostics reports, on an owner gesture only. Under a test or sandbox
+      // environment it starts nothing and reads nothing; otherwise it asks the helper's non-prompting `check`
+      // and makes one guarded, attribute-only pin read.
+      approvalPresence: createApprovalPresenceDiagnosticsPort({
+        sandbox: isPresenceSandbox(process.env),
+        helperPresent: () => existsSync(presenceHelperPath(runtimeDir)),
+        inspect: () => presencePort.inspect(),
+        readPin: presencePinReader.observed,
+      }),
       db: store.db,
       now: () => new Date(),
     }),

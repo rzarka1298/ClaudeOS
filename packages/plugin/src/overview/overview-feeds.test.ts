@@ -188,7 +188,7 @@ describe("todayStateFor: tasks only (Task 1)", () => {
     // Dated by the newest answer: the automation feed arrived 500 ms ago, the task feed 1000 ms ago.
     expect(state.observedAt).toBe(new Date(NOW - 500).toISOString());
     expect(state.data.tasks?.rows).toEqual([
-      { taskId: REVIEW.taskId, title: REVIEW.title, meta: "Due 5:00 PM" },
+      { taskId: REVIEW.taskId, title: REVIEW.title, meta: "Due 5:00 PM", overdue: false },
     ]);
   });
 
@@ -215,6 +215,8 @@ describe("todayStateFor: tasks only (Task 1)", () => {
       "Due Oct 22",
       "Due 5:00 PM",
     ]);
+    // The overdue flag is structural (FIX2A R5): set by the feed's kind, not read back from the words.
+    expect(state.data.tasks?.rows.map((task) => task.overdue)).toEqual([true, false, false]);
   });
 
   it("orders the displayed rows by the owner's zone, not by the service's text key (FIX1A)", () => {
@@ -490,6 +492,7 @@ describe("Task 2, Test 1: the next open task", () => {
       taskId: NEXT.taskId,
       title: NEXT.title,
       meta: "Next due Oct 25",
+      overdue: false,
     });
   });
 

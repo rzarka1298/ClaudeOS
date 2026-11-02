@@ -329,10 +329,11 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
     expect(createHash("sha256").update(project).digest("hex")).toBe(
       "58debbc453883df848bbb45fd66f923e06eec8bdc4ae40f20d05d71e30a0c0f1",
     );
-    const glossary = read("CONTEXT.md").replace(
-      /\*\*Antigravity terminal\*\*:[\s\S]*?(?=### Knowledge)/,
-      "",
-    );
+    // 09-07 added the Job run and Probe entries; strip them so the pin still covers every earlier entry.
+    const glossary = read("CONTEXT.md")
+      .replace(/\*\*Antigravity terminal\*\*:[\s\S]*?(?=### Knowledge)/, "")
+      .replace(/\*\*Job run\*\*:[\s\S]*?(?=\*\*Stale\*\*:)/, "")
+      .replace(/\*\*Probe\*\*:[\s\S]*?(?=\*\*Launcher\*\*:)/, "");
     expect(createHash("sha256").update(glossary).digest("hex")).toBe(
       "b9f4a399811cb78ca935086df0cf7bb05a1faf3de924ae64a7b29d2faeb8e81b",
     );
@@ -399,7 +400,10 @@ planningDescribe("Phase 05.1 planning contract (task 2)", () => {
     // Phases 9 and 10, added 2026-10-27 to close milestone 1 (list lines, progress rows, sections).
     roadmapRemainder = roadmapRemainder.replace(/^- \[[ x]\] \*\*Phase (?:9|10):[^\n]*\n/gm, "");
     roadmapRemainder = roadmapRemainder.replace(/^\| (?:9|10)\. [^\n]*\n/gm, "");
-    roadmapRemainder = roadmapRemainder.replace(/\n\n### Phase (?:9|10):[\s\S]*?(?=\n\n### Phase |\n\n---\n)/g, "");
+    roadmapRemainder = roadmapRemainder.replace(
+      /\n\n### Phase (?:9|10):[\s\S]*?(?=\n\n### Phase |\n\n---\n)/g,
+      "",
+    );
     roadmapRemainder = roadmapRemainder.replace(/Phases (?:execute|merge) [^\n]+/gm, "MERGE-ORDER");
     roadmapRemainder = roadmapRemainder.replace(
       /\| 05\.1\. Codex Co-Work & Usage \(INSERTED\).*/gm,

@@ -223,6 +223,8 @@ describe("decide response parsing (task 2 test 8)", () => {
     "already-decided": { outcome: "already-decided", state: "denied" },
     "not-found": { outcome: "not-found" },
     "operation-reserved": { outcome: "operation-reserved" },
+    "presence-denied": { outcome: "presence-denied" },
+    "presence-unavailable": { outcome: "presence-unavailable" },
   };
 
   it("parses each outcome", async () => {
@@ -239,6 +241,7 @@ describe("decide response parsing (task 2 test 8)", () => {
     for (const body of [
       { outcome: "approved-forever" },
       { outcome: "expired", note: "x" },
+      { outcome: "presence-denied", reason: "x" },
       { outcome: "decided" },
     ]) {
       const { client } = recording(200, body);

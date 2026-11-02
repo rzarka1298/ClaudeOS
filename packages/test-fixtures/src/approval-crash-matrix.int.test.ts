@@ -14,6 +14,7 @@ import {
   failRecording,
   logViolations,
   type OpenedEngine,
+  PROVING_PRESENCE,
   type Rigs,
   readAudit,
   readExecutions,
@@ -470,7 +471,11 @@ const SCENARIOS: Scenario[] = [
     name: "an operation that is never retried: absent evidence ends unknown after one execution",
     run: async (rigs) => {
       const connector = createFakeConnector();
-      const rig = rigs.start({ extraOperations: [connector.operation], table: connector.table });
+      const rig = rigs.start({
+        extraOperations: [connector.operation],
+        table: connector.table,
+        presence: PROVING_PRESENCE,
+      });
       const restore = addProductionRow(FAKE_CONNECTOR, connector.row);
       try {
         const id = await crashAt(rig, connector.operation, "after-claim", () =>

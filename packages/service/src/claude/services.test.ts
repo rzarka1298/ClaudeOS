@@ -79,7 +79,11 @@ describe("startClaudeServices: the proposer slot (Task 2, Tests 1 and 3)", () =>
   it("keeps the terminator and the process facts out of the route dependencies", async () => {
     const { store, services } = await start();
     try {
-      expect(Object.keys(services.routeDeps).sort()).toEqual(["actions", "pipeline"]);
+      expect(Object.keys(services.routeDeps).sort()).toEqual([
+        "actions",
+        "pipeline",
+        "quietAfterMs",
+      ]);
       const reachable = JSON.stringify(Object.keys(actionsOf(services)));
       expect(reachable).not.toMatch(/terminator|terminate\b|processFacts/);
       expect("terminator" in actionsOf(services)).toBe(false);

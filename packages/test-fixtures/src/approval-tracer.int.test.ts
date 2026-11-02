@@ -22,6 +22,8 @@ import {
   authedRequest,
   collectEvents,
   handshake,
+  independentDecisionProof,
+  readThrowawayInstallSecret,
   setUpServiceEnvironment,
   tearDownServiceEnvironment,
 } from "./approval-int-support.js";
@@ -356,14 +358,27 @@ describe("recovery on boot over the real service (Task 3, Test 3, APPR-07, T-06-
         await first.kill();
 
         // The service died between the approval and the claim: record the approval alone.
+        // The approval the service would have recorded carries its decision proof (09-17): the row is
+        // made as the engine makes it, with the proof computed here from the throwaway secret.
         const seed = openStore(dbPath);
         try {
+          const now = new Date().toISOString();
+          const stored = createApprovalStore(seed.db).get(proposalId as never);
+          if (stored === null) throw new Error("expected the raised request");
           const result = createApprovalStore(seed.db).decide({
             proposalId: proposalId as never,
             decision: "approve",
             expectedHash: detail.payloadHash,
-            now: new Date().toISOString(),
+            now,
+            approvedAt: now,
             via: "other",
+            decisionProof: independentDecisionProof(readThrowawayInstallSecret(account), {
+              proposalId,
+              operation: stored.operation,
+              payloadHash: stored.payloadHash,
+              approvedAt: now,
+              decidedVia: "other",
+            }),
           });
           expect(result.kind).toBe("approved");
         } finally {

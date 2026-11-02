@@ -9,6 +9,7 @@ import {
   APPROVAL_RESPONSE_BUDGET_BYTES,
   APPROVAL_TEST_PATH,
   ApprovalDetailResponseSchema,
+  type ApprovalItemDraft,
   type ApprovalSummary,
   type ApprovalsSnapshot,
   ApprovalTestRequestSchema,
@@ -16,12 +17,15 @@ import {
   DECIDED_VIA_HEADER,
   DECIDED_VIA_PLUGIN,
   DecideResponseSchema,
+  type EnabledOperation,
   fitApprovalsSnapshotToBudget,
   HANDSHAKE_PATH,
   markReviewability,
+  type OperationDefinition,
 } from "@ccc/domain";
 import { applyMigrations, type OperationalStore, openStore } from "@ccc/operational-store";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { logger } from "../logging.js";
 import {
   approvalView,
@@ -35,7 +39,52 @@ import {
   summary,
 } from "../test-support/approval-fixtures.js";
 import { approvalRoutes } from "./routes.js";
+import { startApprovalServices } from "./services.js";
 import type { ApprovalServices } from "./types.js";
+
+const OPERATION_DRAFT: ApprovalItemDraft = {
+  title: "Test approval",
+  destructive: false,
+  effect: null,
+  action: "The command center will do nothing.",
+  runName: null,
+  target: [],
+  change: { type: "none" },
+  changeFromRequester: false,
+  risks: ["This test changes nothing."],
+  checkHint: null,
+};
+
+/** Package-local fakes of the two enabled operations: the executors folder is main.ts's alone. */
+function diagnosticDefinition(): OperationDefinition<EnabledOperation, unknown> {
+  return {
+    operation: "diagnostic.test",
+    payload: z.strictObject({}),
+    subjectOf: () => "diagnostic",
+    async execute() {
+      return { kind: "executed" };
+    },
+    async reconcile() {
+      return { kind: "effect-absent" };
+    },
+    render: () => OPERATION_DRAFT,
+  };
+}
+
+function terminateDefinition(): OperationDefinition<EnabledOperation, unknown> {
+  return {
+    operation: "session.force-terminate",
+    payload: z.strictObject({ runId: z.string().min(1) }),
+    subjectOf: (payload) => (payload as { runId: string }).runId,
+    async execute() {
+      return { kind: "failed", reason: "execution-failed" };
+    },
+    async reconcile() {
+      return { kind: "unknown", reason: "none" };
+    },
+    render: () => OPERATION_DRAFT,
+  };
+}
 
 const UNAUTHENTICATED = { error: "authentication required" };
 const INVALID_BODY = { error: "invalid request body" };
@@ -284,6 +333,8 @@ describe("decide outcomes (tracer test 6)", () => {
       { outcome: "already-decided", state: "denied" },
       { outcome: "not-found" },
       { outcome: "operation-reserved" },
+      { outcome: "presence-denied" },
+      { outcome: "presence-unavailable" },
     ] as const;
     expect(results.map((r) => r.outcome).sort()).toEqual([...APPROVAL_DECIDE_OUTCOMES].sort());
     for (const result of results) {
@@ -301,7 +352,7 @@ describe("decide outcomes (tracer test 6)", () => {
       body: { proposalId: proposalId(7), decision: "deny", payloadHash: HASH },
     });
     expect(fake.decideCalls).toEqual([
-      { proposalId: proposalId(7), decision: "deny", payloadHash: HASH, via: "other" },
+      { proposalId: proposalId(7), decision: "deny", payloadHash: HASH, channelHint: "other" },
     ]);
   });
 });
@@ -314,7 +365,7 @@ describe("decided via (tracer test 7)", () => {
       body,
       headers: { [DECIDED_VIA_HEADER]: DECIDED_VIA_PLUGIN },
     });
-    expect(fake.decideCalls.at(-1)?.via).toBe("plugin");
+    expect(fake.decideCalls.at(-1)?.channelHint).toBe("plugin");
   });
 
   it("derives other for no header, another value, a doubled header or a smuggled value", async () => {
@@ -327,6 +378,9 @@ describe("decided via (tracer test 7)", () => {
       { [DECIDED_VIA_HEADER]: "plugin; admin=1" },
       { [DECIDED_VIA_HEADER]: [DECIDED_VIA_PLUGIN, DECIDED_VIA_PLUGIN] },
       { [DECIDED_VIA_HEADER]: "" },
+      // The verified channel can never be claimed from outside (D-03, T-09-25).
+      { [DECIDED_VIA_HEADER]: "presence" },
+      { [DECIDED_VIA_HEADER]: "Presence" },
     ];
     for (const headers of cases) {
       fake.decideCalls.length = 0;
@@ -336,8 +390,59 @@ describe("decided via (tracer test 7)", () => {
       });
       expect(reply.status).toBe(200);
       expect(fake.decideCalls).toHaveLength(1);
-      expect(fake.decideCalls[0]?.via).toBe("other");
+      expect(fake.decideCalls[0]?.channelHint).toBe("other");
     }
+  });
+});
+
+describe("the decided-via header is a hint, end to end (09-14, Test 2)", () => {
+  async function decideDiagnostic(headers?: Record<string, string>): Promise<string | null> {
+    const runtime = startApprovalServices({
+      db: store.db,
+      definitions: [diagnosticDefinition(), terminateDefinition()],
+      clock: { now: () => new Date().toISOString() },
+      eventBus: { publish: () => ({}) as never },
+      getVaultRoot: () => null,
+      log: { info() {}, warn() {}, error() {} },
+      env: {},
+      proofKey: Buffer.alloc(32, 5),
+    });
+    await runtime.recover();
+    const real = await startRouteHarness(store, { approvals: runtime.services });
+    try {
+      const raised = runtime.services.test({}) as { proposalId: string };
+      const found = runtime.services.get(raised.proposalId);
+      if (found.kind !== "found") throw new Error("expected found");
+      const reply = await requestOverSocket<{ outcome: string }>(real.socketPath, {
+        method: "POST",
+        path: APPROVAL_DECIDE_PATH,
+        body: {
+          proposalId: raised.proposalId,
+          decision: "approve",
+          payloadHash: found.payloadHash,
+        },
+        token: real.token,
+        ...(headers === undefined ? {} : { headers }),
+      });
+      expect(reply.body.outcome).toBe("decided");
+      await runtime.settled();
+      const row = store.db
+        .prepare("SELECT decided_via FROM proposals WHERE proposal_id = ?")
+        .get(raised.proposalId) as { decided_via: string | null };
+      return row.decided_via;
+    } finally {
+      await real.close();
+      await runtime.stop();
+    }
+  }
+
+  it("records plugin for the exact plugin header on an operation that needs no presence", async () => {
+    expect(await decideDiagnostic({ [DECIDED_VIA_HEADER]: DECIDED_VIA_PLUGIN })).toBe("plugin");
+  });
+
+  it("records other, never presence, for a header that claims presence or none", async () => {
+    expect(await decideDiagnostic({ [DECIDED_VIA_HEADER]: "presence" })).toBe("other");
+    expect(await decideDiagnostic()).toBe("other");
   });
 });
 

@@ -6,6 +6,7 @@ import {
   connectionState,
   lastEvent,
 } from "./connection-state.js";
+import { displayReason } from "./display-reason.js";
 import { applySnapshot, routeServiceEvent } from "./service-event-router.js";
 
 /**
@@ -16,6 +17,16 @@ import { applySnapshot, routeServiceEvent } from "./service-event-router.js";
  * formed a runtime import cycle (wave-3 review).
  */
 
+/**
+ * The home folder disconnect reasons are shown against (D-11). Set once at plugin load and
+ * reset on unload (no stale home across a hot reload); `null` means the outside-home rule.
+ */
+let displayHome: string | null = null;
+
+export function configureConnectionDisplayHome(homeDir: string | null): void {
+  displayHome = homeDir;
+}
+
 function mapClientState(state: EventClientState): ConnectionState {
   switch (state.kind) {
     case "connecting":
@@ -23,7 +34,7 @@ function mapClientState(state: EventClientState): ConnectionState {
     case "live":
       return { kind: "live" };
     case "disconnected":
-      return { kind: "disconnected", reason: state.reason };
+      return { kind: "disconnected", reason: displayReason(state.reason, displayHome) };
   }
 }
 

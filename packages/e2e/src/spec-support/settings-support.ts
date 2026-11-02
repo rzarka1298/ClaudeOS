@@ -1718,6 +1718,7 @@ const SECURITY_FACTS: readonly string[] = [
   SETTINGS_TEXT.factConnectionTokens,
   SETTINGS_TEXT.factInstallSecret,
   SETTINGS_TEXT.factResearchKey,
+  SETTINGS_TEXT.factApprovalPresence,
   SETTINGS_TEXT.factAlwaysAllow,
 ];
 
@@ -1757,6 +1758,17 @@ export function checkSecurityFacts(read: SettingsRead): string[] {
       SETTINGS_TEXT.chipUnknown,
     ];
     if (!honest.includes(word)) problems.push(`the Research key chip reads "${word}"`);
+  }
+  // 09-19 (D-04): whichever the service said, but only the three closed words (never Present, never blank).
+  const presence = byName(SETTINGS_TEXT.factApprovalPresence);
+  if (presence !== undefined) {
+    const word = presence.loading ? "loading" : (presence.chips[0]?.word ?? "no chip");
+    const honest: readonly string[] = [
+      SETTINGS_TEXT.chipAvailable,
+      SETTINGS_TEXT.chipUnavailable,
+      SETTINGS_TEXT.chipUnknown,
+    ];
+    if (!honest.includes(word)) problems.push(`the Approval presence check chip reads "${word}"`);
   }
   return problems;
 }
@@ -2032,7 +2044,11 @@ export function checkServiceAway(id: SettingsSectionKey, read: SettingsRead): st
       break;
     }
     case "security": {
-      for (const name of [SETTINGS_TEXT.factInstallSecret, SETTINGS_TEXT.factResearchKey]) {
+      for (const name of [
+        SETTINGS_TEXT.factInstallSecret,
+        SETTINGS_TEXT.factResearchKey,
+        SETTINGS_TEXT.factApprovalPresence,
+      ]) {
         const entry = factOf(read, name);
         if (entry === undefined) {
           problems.push(`the ${name} fact is missing`);
@@ -2040,6 +2056,9 @@ export function checkServiceAway(id: SettingsSectionKey, read: SettingsRead): st
         }
         if (entry.chips.some((chip) => chip.word === SETTINGS_TEXT.chipPresent)) {
           problems.push(`${name} still reads Present`);
+        }
+        if (entry.chips.some((chip) => chip.word === SETTINGS_TEXT.chipAvailable)) {
+          problems.push(`${name} still reads Available`);
         }
         if (entry.chips[0]?.word !== SETTINGS_TEXT.chipUnknown) {
           problems.push(`${name} does not read Unknown`);

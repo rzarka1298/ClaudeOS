@@ -202,6 +202,15 @@ export function pendingTerminateRequestFor(
  */
 export const approvalsMissedSync = signal(false);
 
+/**
+ * Marks the list stale. The mark is cleared by the stream's own snapshot or event while it is live,
+ * wherever the section is (`approvals/events.ts`, live run 2f7075a9 and FIX15 m6), so a section that
+ * comes back after being away needs no memory of the list the mark was made against.
+ */
+export function markApprovalsMissedSync(): void {
+  approvalsMissedSync.value = true;
+}
+
 /** Set when the first load failed, so the section shows its error state. */
 export const approvalsLoadFailed = signal(false);
 

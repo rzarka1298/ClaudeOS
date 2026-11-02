@@ -210,3 +210,89 @@ describe("main.ts research wiring (plan 07-14)", () => {
     expect(order[2]).toBeGreaterThan(order[1] as number);
   });
 });
+
+/**
+ * Audit (09-FIX8, M6, D-03, T-09-37): the approval decision-proof key is derived exactly once, right after the
+ * install secret is read, unguarded (so a secret under 32 bytes stops startup with the RangeError), and the
+ * derived key reaches only `startApprovalServices`.
+ */
+describe("main.ts approval proof key derivation (D-03)", () => {
+  const src = readFileSync(fileURLToPath(new URL("./main.ts", import.meta.url)), "utf8");
+
+  it("derives the key once, directly after getInstallSecret, outside any try block", () => {
+    const calls = src.match(/approvalProofKey\(/g) ?? [];
+    expect(calls).toHaveLength(1);
+    const secretAt = src.indexOf("await getInstallSecret(");
+    const keyAt = src.indexOf("approvalProofKey(installSecret)");
+    expect(secretAt).toBeGreaterThan(-1);
+    expect(keyAt).toBeGreaterThan(secretAt);
+    // Nothing but comments and blank lines between the two statements.
+    const between = src
+      .slice(src.indexOf("\n", secretAt), src.lastIndexOf("\n", keyAt))
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.startsWith("//"));
+    expect(between).toEqual([]);
+    // Not wrapped in a try/catch that could swallow the RangeError.
+    const lineStart = src.lastIndexOf("\n", keyAt) + 1;
+    expect(src.slice(lineStart, keyAt)).toMatch(/^\s*const approvalDecisionProofKey = $/);
+  });
+
+  it("hands the derived key to startApprovalServices and to nothing else", () => {
+    const uses = src.match(/approvalDecisionProofKey/g) ?? [];
+    // The declaration and the one `proofKey:` property of startApprovalServices.
+    expect(uses).toHaveLength(2);
+    expect(src).toMatch(/proofKey: approvalDecisionProofKey,/);
+    const startAt = src.indexOf("startApprovalServices({");
+    const keyUse = src.indexOf("proofKey: approvalDecisionProofKey,");
+    expect(keyUse).toBeGreaterThan(startAt);
+    expect(keyUse).toBeLessThan(src.indexOf("await approvals.recover()"));
+  });
+});
+
+describe("main.ts wires the presence helper and the pin reader (09-18 Task 3)", () => {
+  const src = readFileSync(fileURLToPath(new URL("./main.ts", import.meta.url)), "utf8");
+
+  it("builds the port from the environment and the pin reader from the environment, once each, and hands both to the approval services", () => {
+    expect(src.match(/presencePortFromEnv\(/g) ?? []).toHaveLength(1);
+    expect(src.match(/pinReaderFromEnv\(/g) ?? []).toHaveLength(1);
+    expect(src.match(/guardPinReader\(/g) ?? []).toHaveLength(1);
+    // The port gets process.env, so a sandbox service (CCC_INSTALL_SECRET_ACCOUNT) is fail-closed.
+    expect(src).toMatch(/presencePortFromEnv\(process\.env, runtimeDir,/);
+    expect(src).toMatch(/read: pinReaderFromEnv\(process\.env, readItemComment\),/);
+    const startAt = src.indexOf("startApprovalServices({");
+    const recoverAt = src.indexOf("await approvals.recover()");
+    for (const needle of ["presence: presencePort,", "readPin: presencePinReader,"]) {
+      const at = src.indexOf(needle);
+      expect(at, needle).toBeGreaterThan(startAt);
+      expect(at, needle).toBeLessThan(recoverAt);
+    }
+    // Built before the approval services, never after them.
+    expect(src.indexOf("presencePortFromEnv(")).toBeLessThan(startAt);
+    expect(src.indexOf("guardPinReader(")).toBeLessThan(startAt);
+  });
+
+  it("09-FIX9: one guarded pin read at service start, after the store opens and before recovery, makes boot the trust-on-first-use point and the install window", () => {
+    const openAt = src.indexOf("openStore(");
+    const readAt = src.indexOf("await presencePinReader()");
+    const startAt = src.indexOf("startApprovalServices({");
+    const recoverAt = src.indexOf("await approvals.recover()");
+    expect(src.match(/await presencePinReader\(\)/g) ?? []).toHaveLength(1);
+    expect(readAt).toBeGreaterThan(openAt);
+    expect(readAt).toBeGreaterThan(src.indexOf("guardPinReader("));
+    expect(readAt).toBeLessThan(startAt);
+    expect(readAt).toBeLessThan(recoverAt);
+  });
+
+  it("09-FIX9: the install marker is the time-bound, regular-file-only one", () => {
+    expect(src).toMatch(/installMarker: createInstallMarker\(\{/);
+    expect(src).toMatch(/maxAgeMs: PRESENCE_PIN_INSTALL_MARKER_MAX_AGE_MS/);
+    expect(src).not.toMatch(/present: \(\) => existsSync/);
+  });
+
+  it("reads the pin item only through the guarded reader: no other call of readItemComment", () => {
+    const calls = (src.match(/readItemComment\b/g) ?? []).length;
+    // The import and the one argument to pinReaderFromEnv.
+    expect(calls).toBe(2);
+  });
+});

@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   ApprovalUpsertedPayload,
   DecidedVia,
+  PresenceRefusalDetail,
   ProposalId,
   ProposalState,
   Requester,
@@ -54,6 +55,14 @@ export interface StoredProposal {
   readonly mirrorNoteId: NoteId;
   /** The earlier request this one replaces after an expiry, or null. */
   readonly supersedes: ProposalId | null;
+  /**
+   * The decision proof written when the request was approved (09-16, D-03): strict JSON
+   * `{ v: 1, mac, presence }`, or null for every row that was not approved with one. Both stores always
+   * set it (a string after a signed approve, `null` otherwise); it is optional in the type only so older
+   * row factories keep compiling. An absent value is treated exactly like `null`: it fails verification
+   * (fail closed). The service verifies it; the domain only carries it.
+   */
+  readonly decisionProof?: string | null;
 }
 
 /** What the engine hands the store to create a proposal. State and revision are the store's. */
@@ -91,6 +100,29 @@ export interface DecideInput {
   readonly expectedHash: string;
   readonly now: string;
   readonly via: DecidedVia;
+  /**
+   * The instant the owner vouched for the approval (D-01): fixed before a presence prompt, so it can be
+   * earlier than `now`. Absent, the store records `now` as before. Never later than `now`. The expiry
+   * check still runs against `now`, so a request that lapsed while the prompt was up is expired.
+   */
+  readonly approvedAt?: string;
+  /**
+   * The decision proof for an approving decision (09-16, D-03), made by the service for exactly this
+   * row, instant and channel. Written only when approving and only in the update that moves the row to
+   * approved; ignored on a deny. Absent, an approved row is stored with no proof and fails verification.
+   * The store treats it as opaque text of 1 to 2048 characters and validates nothing else; the service
+   * checks its shape and MAC.
+   */
+  readonly decisionProof?: string;
+}
+
+/** What the engine hands the store to put a presence refusal on the record. */
+export interface DecisionRefusalInput {
+  readonly proposalId: ProposalId;
+  readonly at: string;
+  /** The payload hash the owner was asked to approve. */
+  readonly payloadHash: string;
+  readonly detail: PresenceRefusalDetail;
 }
 
 export type DecideResult =
@@ -141,7 +173,8 @@ export type ApprovalBucket = "pending" | "decided" | "expired";
  * The persistence port. Synchronous: it is implemented over better-sqlite3 in
  * the operational store. Every method is ONE transaction that includes its own
  * audit row, and there is deliberately no method that writes an audit row on
- * its own, so "state and audit disagree" is unrepresentable (D-13, Pitfall 2).
+ * its own, so "state and audit disagree" is unrepresentable (D-13, Pitfall 2). The one
+ * exception, `recordDecisionRefusal`, records a refusal that changes no state (09-14).
  * Every state change is a compare-and-set on the source state; losing the race
  * returns a result, never an exception.
  */
@@ -151,6 +184,14 @@ export interface ApprovalStorePort {
   list(bucket: ApprovalBucket, limit: number): StoredProposal[];
   counts(): { readonly pending: number; readonly decided: number; readonly expired: number };
   decide(input: DecideInput): DecideResult;
+  /**
+   * Puts a refused presence-required approve on the record: one `presence-refused` audit row with the
+   * refusal as its detail, no state or revision change. `not-pending` (and nothing written) when the
+   * request is no longer pending; `suppressed` (nothing written) when the refusal repeats one already
+   * on the record inside the window or the proposal's refusal rows are at their cap, so a caller
+   * looping on a pending request cannot grow the append-only trail (see `presenceRefusalIsRecordable`).
+   */
+  recordDecisionRefusal(input: DecisionRefusalInput): "recorded" | "suppressed" | "not-pending";
   /** `approved` to `executing`: the single-use claim, recording the facts gathered beforehand. */
   claim(proposalId: ProposalId, facts: ClaimFacts, now: string): ClaimResult;
   /** The one retry after a restart: attempt 2, with the same idempotency key. */
@@ -210,4 +251,52 @@ export interface ApprovalLog {
 /** Announces a changed request to connected clients. Carries a summary only, never a payload (D-28). */
 export interface ApprovalPublisher {
   publish(event: "approval.upserted", payload: ApprovalUpsertedPayload): void;
+}
+
+// ---------------------------------------------------------------------------
+// Presence (D-01, D-02, R-02): the owner's verified presence at an approval
+
+/** What the presence check is asked to vouch for: one proposal, one operation, one payload, one approval instant. */
+export interface PresenceRequest {
+  readonly proposalId: ProposalId;
+  readonly operation: string;
+  /** The payload hash the owner approved, lowercase hex. */
+  readonly payloadHash: string;
+  /** When the approval was given, ISO 8601 UTC. */
+  readonly approvedAt: string;
+}
+
+/**
+ * The closed answer of a presence check. `proved` carries the proof scheme and its signature (null
+ * under the `none` scheme); `denied` means the owner did not give the gesture; `unavailable` means
+ * the check cannot run on this machine right now. Nothing here is a standing choice.
+ */
+export type PresenceResult =
+  /** The owner's gesture produced a P-256 signature over the exact approval message (custody K-SE / K-ATTR). */
+  | { readonly kind: "proved"; readonly scheme: "p256"; readonly signature: string }
+  /** The check alone, no key (custody K-SVC): there is no signature to carry. */
+  | { readonly kind: "proved"; readonly scheme: "none"; readonly signature: null }
+  /**
+   * `cause: "timeout"` means the prompt went unanswered (FIX15 m3): no owner decision was made, so the
+   * engine records it as such and starts no denial cooldown.
+   */
+  | { readonly kind: "denied"; readonly cause?: "timeout" }
+  | { readonly kind: "unavailable" };
+
+/** Whether the presence check could run at all, without asking the owner for anything. */
+export type PresenceAvailability = "available" | "unavailable";
+
+/** Optional controls for one presence check. */
+export interface PresenceProveOptions {
+  readonly signal?: AbortSignal;
+}
+
+/** The port the engine asks to verify the owner's presence. Types only; the helper adapter lives in the service. */
+export interface PresencePort {
+  /**
+   * Aborting `options.signal` ends the check at once: the adapter kills the helper and its prompt
+   * (FIX15 m4), so a shutdown does not leave a Touch ID sheet on screen.
+   */
+  prove(request: PresenceRequest, options?: PresenceProveOptions): Promise<PresenceResult>;
+  availability(): Promise<PresenceAvailability>;
 }

@@ -335,6 +335,45 @@ describe("outcomes (Test 7)", () => {
     }
   });
 
+  it.each([
+    { response: { outcome: "presence-denied" }, line: APPROVAL_STATUS.presenceDenied },
+    { response: { outcome: "presence-unavailable" }, line: APPROVAL_STATUS.presenceUnavailable },
+  ] as const)(
+    "09-13: $response.outcome posts its own fixed words, leaves the request pending and does not refetch",
+    async ({ response, line }) => {
+      const { announce, notify, onFollowUp, refetch } = setup({ decide: async () => response });
+      fireEvent.click(buttons().approve);
+      await waitFor(() => expect(announce).toHaveBeenCalledWith(line));
+      expect(notify).toHaveBeenCalledWith(line);
+      await waitFor(() => expect(buttons().approve.getAttribute("aria-busy")).toBeNull());
+      expect(refetch).not.toHaveBeenCalled();
+      expect(onFollowUp).not.toHaveBeenCalled();
+      expect(announce).not.toHaveBeenCalledWith(APPROVAL_STATUS.confirmFailed);
+      // The request is still pending: the decision can be pressed again.
+      expect(buttons().approve.getAttribute("aria-disabled")).not.toBe("true");
+    },
+  );
+
+  it.each([{ outcome: "presence-denied" }, { outcome: "presence-unavailable" }] as const)(
+    "09-18: a $outcome answer to a DENY never shows the approval wording; the service is asked what happened",
+    async (response) => {
+      // A deny never needs presence (R-03), so this answer is unexpected: the owner must not be told that
+      // approving needs Touch ID. The pane asks the service and acts on that alone.
+      const refetch = vi.fn(async () => ({
+        kind: "ok" as const,
+        detail: approvalDetail(approvalView()),
+      }));
+      const { announce, notify, onFollowUp } = setup({ decide: async () => response, refetch });
+      fireEvent.click(buttons().deny);
+      await waitFor(() => expect(onFollowUp).toHaveBeenCalled());
+      expect(refetch).toHaveBeenCalled();
+      for (const line of [APPROVAL_STATUS.presenceDenied, APPROVAL_STATUS.presenceUnavailable]) {
+        expect(announce).not.toHaveBeenCalledWith(line);
+        expect(notify).not.toHaveBeenCalledWith(line);
+      }
+    },
+  );
+
   describe("a transport failure is UNCONFIRMED", () => {
     it("keeps both buttons disabled and busy while the refetch is outstanding, then restores them if still pending", async () => {
       const check = deferred<RefetchResult>();

@@ -302,21 +302,33 @@ export const APPROVAL_AUDIT_EVENTS = [
   "retried-after-restart",
   "reconciled-executed",
   "lapsed",
+  // A connector-class approval refused for want of a verified presence proof (D-03). The request stays pending.
+  "presence-refused",
 ] as const;
 export type ApprovalAuditEvent = (typeof APPROVAL_AUDIT_EVENTS)[number];
 
 // ---------------------------------------------------------------------------
 // Decided-through channel (D-47)
 
-/** Which client made a decision: the plugin's own UI, or anything else on this machine. */
-export const DECIDED_VIA = ["plugin", "other"] as const;
+/**
+ * Which channel made a decision. `plugin` (the plugin's own UI) and `other` (anything else on this
+ * machine) are an unverified hint taken from a request header. `presence` means the engine verified
+ * a presence proof (D-03): only the engine writes it, after the proof checks out, and
+ * `normaliseDecidedVia` can never produce it.
+ */
+export const DECIDED_VIA = ["plugin", "other", "presence"] as const;
 export type DecidedVia = (typeof DECIDED_VIA)[number];
+/**
+ * The channels a client can claim: everything except the verified one. The route and the engine take
+ * this narrower type, so passing `presence` as a hint is a compile error (D-03, T-09-22).
+ */
+export type UnverifiedDecidedVia = Exclude<DecidedVia, "presence">;
 /** The request header the plugin sets on a decision. A hint for the audit trail, never an authority. */
 export const DECIDED_VIA_HEADER = "X-Ccc-Decided-Via";
 export const DECIDED_VIA_PLUGIN: DecidedVia = "plugin";
 
 /** Anything other than the exact plugin value is `other`, so a decision from outside is visible. */
-export function normaliseDecidedVia(value: string | undefined): DecidedVia {
+export function normaliseDecidedVia(value: string | undefined): UnverifiedDecidedVia {
   return value === DECIDED_VIA_PLUGIN ? "plugin" : "other";
 }
 
@@ -470,6 +482,55 @@ export function fitApprovalsSnapshotToBudget(
 // ---------------------------------------------------------------------------
 // Decide response and errors
 
+/**
+ * How long the presence helper may show its Touch ID or password prompt, in milliseconds
+ * (D-01, APPR-11). The single source: the helper adapter's prompt ceiling and the client's
+ * decide timeout both derive from it, so a decide call is never cut off while the owner is
+ * still at the prompt.
+ */
+export const PRESENCE_PROMPT_TIMEOUT_MS = 60_000;
+
+/**
+ * Why a presence-required approve was refused without deciding the request (D-01), as the audit
+ * trail records it. The first two are also what the client is told (`presence-denied`,
+ * `presence-unavailable`); the other two are internal reasons that keep their client outcome (a
+ * cooldown after a denial reads `presence-denied`, an exhausted prompt budget reads
+ * `presence-unavailable`) but stay distinguishable on the record (09-FIX6A, m3). `presence-timeout`
+ * (FIX15 m3) is a prompt the owner never answered: the client reads `presence-denied`, the record says
+ * what happened, and no cooldown follows.
+ */
+export const PRESENCE_REFUSAL_DETAILS = [
+  "presence-denied",
+  "presence-unavailable",
+  "presence-cooldown",
+  "presence-budget",
+  "presence-timeout",
+] as const;
+export type PresenceRefusalDetail = (typeof PRESENCE_REFUSAL_DETAILS)[number];
+
+/**
+ * How a presence refusal reaches the append-only audit trail without becoming a way to flood it
+ * (09-FIX6A, M1): at most one row per proposal per reason per window, and at most a fixed number of
+ * refusal rows per proposal whatever the spacing. A suppressed refusal still gets its answer; it just
+ * adds no row. Both stores apply {@link presenceRefusalIsRecordable}, so they cannot drift.
+ */
+export const PRESENCE_REFUSAL_AUDIT_WINDOW_MS = 60_000;
+export const PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL = 8;
+
+/**
+ * True when a presence refusal at `at` should get an audit row, given the proposal's refusal history:
+ * how many refusal rows it already has and when the latest one with the SAME reason was written.
+ * A refusal whose time is earlier than the latest (a stepped-back clock) counts as inside the window.
+ */
+export function presenceRefusalIsRecordable(
+  history: { readonly total: number; readonly lastSameReasonAt: string | null },
+  at: string,
+): boolean {
+  if (history.total >= PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL) return false;
+  if (history.lastSameReasonAt === null) return true;
+  return Date.parse(at) - Date.parse(history.lastSameReasonAt) >= PRESENCE_REFUSAL_AUDIT_WINDOW_MS;
+}
+
 /** Every way a decision can end, as the service reports it. */
 export const APPROVAL_DECIDE_OUTCOMES = [
   "decided",
@@ -478,6 +539,8 @@ export const APPROVAL_DECIDE_OUTCOMES = [
   "already-decided",
   "not-found",
   "operation-reserved",
+  "presence-denied",
+  "presence-unavailable",
 ] as const;
 export type ApprovalDecideOutcome = (typeof APPROVAL_DECIDE_OUTCOMES)[number];
 
@@ -488,6 +551,10 @@ export const DecideResponseSchema = z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("already-decided"), state: ProposalStateSchema }),
   z.strictObject({ outcome: z.literal("not-found") }),
   z.strictObject({ outcome: z.literal("operation-reserved") }),
+  // A connector-class approval whose presence check was not passed (D-01, D-03). The request
+  // stays pending, nothing ran. Neither carries a member: the plugin owns the words.
+  z.strictObject({ outcome: z.literal("presence-denied") }),
+  z.strictObject({ outcome: z.literal("presence-unavailable") }),
 ]);
 export type DecideResponse = z.infer<typeof DecideResponseSchema>;
 

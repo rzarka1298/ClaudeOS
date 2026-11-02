@@ -224,11 +224,10 @@ export function LaunchersSettings({
 
   return (
     <section className="ccc-settings-section ccc-projects-section">
-      <div className="ccc-card-header">
-        <h3 ref={headingRef} tabIndex={-1} className="ccc-settings-section-title">
-          Launchers
-        </h3>
-      </div>
+      {/* Not inside a `.ccc-card-header`: that wrapper's `h3` rule uppercases card labels (folded p8 item 1). */}
+      <h3 ref={headingRef} tabIndex={-1} className="ccc-settings-section-title">
+        Launchers
+      </h3>
       <p className="ccc-state-body">
         Choose which apps open your projects, then test each one. Nothing is saved until you choose
         Save launcher.

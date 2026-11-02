@@ -62,9 +62,31 @@ export interface SessionFacts {
 export type Evidence =
   | { readonly kind: "hook"; readonly record: KnownHookRecord; readonly facts: SessionFacts }
   | {
-      readonly kind: "pid-gone" | "pid-alive" | "start-timeout" | "inactivity-timeout";
+      readonly kind: "pid-gone" | "start-timeout" | "inactivity-timeout";
       readonly runId: RunId;
       readonly observedAt: string;
+    }
+  | {
+      readonly kind: "pid-alive";
+      readonly runId: RunId;
+      readonly observedAt: string;
+      /**
+       * Set by the sweeper when it staled the Run while it was waiting for approval (FIX15 m1): the
+       * permission dialog is still the last thing known, so the revival returns to it, never to
+       * `running` (which would read as Idle once the last event is old).
+       */
+      readonly resumeAs?: "waiting-for-approval";
+    }
+  | {
+      readonly kind: "identity-unknown-timeout";
+      readonly runId: RunId;
+      readonly observedAt: string;
+      /**
+       * The instant the sweeper judged the Run quiet at (`now - quietAfterMs`, ISO).
+       * The Run is staled only if its last activity, as the reducer sees it, is at or
+       * before this instant: activity the sweeper's snapshot never saw wins (FIX3C).
+       */
+      readonly quietBefore: string;
     }
   | {
       readonly kind: "launch-registered";
@@ -335,7 +357,9 @@ export function reduce(
 
     case "pid-alive":
       return onRun(index, evidence.runId, evidence.kind, (run) =>
-        run.state === "stale" ? upserted(write(run, { state: "running" })) : NOTHING,
+        run.state === "stale"
+          ? upserted(write(run, { state: evidence.resumeAs ?? "running" }))
+          : NOTHING,
       );
 
     case "start-timeout":
@@ -351,7 +375,32 @@ export function reduce(
           ? upserted(write(run, { state: "stale" }))
           : NOTHING,
       );
+
+    // 09-10 (D-06): a pid-bearing Run whose process identity could not be
+    // checked for the whole quiet threshold. Separate from the PID-less
+    // `inactivity-timeout` above, which it never touches. Absence of
+    // evidence is `stale` (unknown) and nothing else (SESS-06): never an
+    // ending, so a later `pid-alive` revives it.
+    //
+    // The cutoff makes the judgement atomic with the write (FIX3C): the sweeper
+    // read the Run before an awaited `ps`, and the pipeline may hold newer
+    // activity it has not flushed, so only the reducer, running on the
+    // pipeline's serialized chain over the Run with its overlay, can say the
+    // Run is still quiet. Newer activity is a no-op, never an error; an
+    // unparsable cutoff or activity time fails closed (no change).
+    case "identity-unknown-timeout":
+      return onRun(index, evidence.runId, evidence.kind, (run) =>
+        (run.state === "running" || run.state === "waiting-for-approval") &&
+        quietAtOrBefore(run, evidence.quietBefore)
+          ? upserted(write(run, { state: "stale" }))
+          : NOTHING,
+      );
   }
+}
+
+/** Whether the Run's last activity (else its start) is at or before `cutoff`; false when either is unparsable. */
+function quietAtOrBefore(run: SessionRun, cutoff: string): boolean {
+  return Date.parse(run.lastActivityAt ?? run.startedAt) <= Date.parse(cutoff);
 }
 
 /** Applies `apply` to a known, non-terminal Run; otherwise a rejected edge. */

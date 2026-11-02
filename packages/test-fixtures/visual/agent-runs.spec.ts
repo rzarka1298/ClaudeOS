@@ -43,9 +43,10 @@ function harnessUrl(params: Readonly<Record<string, string>>): string {
 }
 
 /**
- * The four fixed cells (UI-SPEC "Visual regression" S3): a selected waiting
+ * The fixed cells (UI-SPEC "Visual regression" S3): a selected waiting
  * Run and a selected stale Run at full width (master/detail); the narrow
- * stacked detail; the disconnected state. Each name matches the harness's
+ * stacked detail; the disconnected state; and (Phase 9, 09-22) a selected quiet
+ * idle Run. Each name matches the harness's
  * own `case` query parameter and the committed baseline filename.
  */
 const CASES = [
@@ -53,6 +54,8 @@ const CASES = [
   { agentRunsCase: "selected-stale", snapshot: "agent-runs-selected-stale.png" },
   { agentRunsCase: "narrow-detail", snapshot: "agent-runs-narrow-detail.png" },
   { agentRunsCase: "disconnected", snapshot: "agent-runs-disconnected.png" },
+  // Phase 9 (09-22; D-05, R-04): a running session with no event for 41 minutes reads as quiet.
+  { agentRunsCase: "quiet-idle", snapshot: "agent-runs-quiet-idle.png" },
 ] as const;
 
 /**
@@ -78,10 +81,25 @@ async function fitViewportToContent(page: Page): Promise<void> {
   }
 }
 
+/**
+ * The quiet cell must show the words before it is baselined (D-05, R-04): the row and the detail
+ * heading read `Idle — last event 41 min ago`, the group heading and caption count the session
+ * as quiet, and the detail field is `Last signal`, never `Activity`. A pixel baseline alone could
+ * bless a plain `Running`.
+ */
+async function expectQuietLabels(page: Page): Promise<void> {
+  const view = page.locator(".ccc-agent-runs");
+  await expect(view).toContainText("Idle — last event 41 min ago");
+  await expect(view).toContainText("1 quiet");
+  await expect(view.locator("dt", { hasText: "Last signal" })).toHaveCount(1);
+  await expect(view.locator("dt", { hasText: /^Activity$/ })).toHaveCount(0);
+}
+
 for (const { agentRunsCase, snapshot } of CASES) {
   cell(`agent-runs — ${agentRunsCase}`, snapshot, async (page, snapshotName) => {
     await page.goto(harnessUrl({ view: "agent-runs", case: agentRunsCase, motion: "full" }));
     await fitViewportToContent(page);
+    if (agentRunsCase === "quiet-idle") await expectQuietLabels(page);
     await expect(page.locator(".ccc-agent-runs")).toHaveScreenshot(snapshotName);
   });
 }

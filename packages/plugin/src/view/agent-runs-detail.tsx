@@ -8,7 +8,7 @@
 // `loadSessionUsage` prop — never a client constructed here.
 import {
   NOT_REPORTED,
-  RUN_STATE_DISPLAY,
+  presentRunState,
   type RunLinkKind,
   type SessionView,
   STALE_RUN_EXPLANATION,
@@ -27,7 +27,11 @@ import { connectionState } from "../connection-state.js";
 import type { QuickActionDescriptor } from "../widgets/contract.js";
 import { formatDuration } from "../widgets/duration.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
-import { claudeIntegration, sessionsById } from "../widgets/session-signals.js";
+import {
+  claudeIntegration,
+  sessionQuietAfterMs,
+  sessionsById,
+} from "../widgets/session-signals.js";
 import {
   formatExactTokens,
   formatMonthDay,
@@ -305,7 +309,7 @@ function DetailFields({
   readonly session: SessionView;
   readonly nowMs: number;
 }): VNode {
-  const display = RUN_STATE_DISPLAY[session.state];
+  const display = presentRunState(session, nowMs, sessionQuietAfterMs.value);
   const lastActivityIso = session.lastActivityAt ?? session.startedAt;
 
   return (
@@ -313,7 +317,7 @@ function DetailFields({
       <Field term="Project" value={session.projectName ?? "Unclassified"} />
       <Field term="State" value={`${display.glyph} ${display.label}`} />
       <Field
-        term="Activity"
+        term={display.quiet === null ? "Activity" : "Last signal"}
         value={
           session.activity === null
             ? NOT_REPORTED
@@ -599,7 +603,7 @@ export function DetailPane({
   loadSessionUsage,
   headingRef,
 }: DetailPaneProps): VNode {
-  const display = RUN_STATE_DISPLAY[session.state];
+  const display = presentRunState(session, nowMs, sessionQuietAfterMs.value);
 
   // A Run leaving this detail pane (a new selection, or a status outcome
   // fully shown) clears its own status line rather than leaking a stale

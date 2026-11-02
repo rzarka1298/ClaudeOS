@@ -8,6 +8,8 @@ import type { Evidence } from "@ccc/collectors";
 import {
   newRunId,
   type RunId,
+  SESSION_QUIET_AFTER_MAX_MS,
+  SESSION_QUIET_AFTER_MS,
   type SessionRun,
   SessionUpsertedPayloadSchema,
   type SessionView,
@@ -31,6 +33,7 @@ import {
   DEFAULT_LIVENESS_CONFIG,
   type LivenessConfig,
   type LivenessSweeper,
+  livenessConfigFromEnv,
 } from "./liveness.js";
 import {
   type ClaudePipeline,
@@ -78,6 +81,11 @@ function fakeProcessTable() {
       alive.add(pid);
       starts.set(pid, lstart);
     },
+    /** Answers kill(0) but its `ps` start time cannot be read (a failed or empty `ps`). */
+    spawnUnreadable(pid: number) {
+      alive.add(pid);
+      starts.delete(pid);
+    },
     kill(pid: number) {
       alive.delete(pid);
       starts.delete(pid);
@@ -92,6 +100,8 @@ let applied: Evidence[];
 let pipeline: ClaudePipeline;
 let bus: EventBus;
 let table: ReturnType<typeof fakeProcessTable>;
+/** Runs, un-awaited, just before the sweeper hands evidence to the pipeline (FIX3C race seam). */
+let beforeApply: (() => Promise<unknown>) | null;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "ccc-liveness-"));
@@ -99,6 +109,7 @@ beforeEach(() => {
   applyMigrations(store.db);
   nowMs = T0;
   applied = [];
+  beforeApply = null;
   table = fakeProcessTable();
   bus = createEventBus();
   pipeline = createClaudePipeline({
@@ -154,11 +165,17 @@ function seedRun(patch: Partial<SessionRun> = {}): SessionRun {
   return run;
 }
 
-function sweeperWith(config: Partial<LivenessConfig> = {}): LivenessSweeper {
+function sweeperWith(
+  config: Partial<LivenessConfig> = {},
+  processFacts: Pick<ProcessFacts, "isAlive" | "readStartTimes"> = table.facts,
+): LivenessSweeper {
   const spied: Pick<ClaudePipeline, "apply" | "reattribute" | "backfillPidStart"> = {
-    apply: (evidence) => {
+    apply: async (evidence) => {
       applied.push(evidence);
-      return pipeline.apply(evidence);
+      // The racer is queued on the pipeline's chain first, so it is reduced before the evidence.
+      const racer = beforeApply?.();
+      await pipeline.apply(evidence);
+      await racer;
     },
     reattribute: (runId, attribution) => pipeline.reattribute(runId, attribution),
     backfillPidStart: (runId, pidStartedAt) => pipeline.backfillPidStart(runId, pidStartedAt),
@@ -166,7 +183,7 @@ function sweeperWith(config: Partial<LivenessConfig> = {}): LivenessSweeper {
   return createLivenessSweeper({
     db: store.db,
     pipeline: spied,
-    processFacts: table.facts,
+    processFacts,
     logger: pino({ level: "silent" }),
     now: () => new Date(nowMs),
     config: { ...DEFAULT_LIVENESS_CONFIG, ...config },
@@ -367,6 +384,416 @@ function publishedFor(runId: RunId): SessionView[] {
     .map((event) => SessionUpsertedPayloadSchema.parse(event.payload).session)
     .filter((session) => session.runId === runId);
 }
+
+describe("D-08 reproduction: an idle session with a live process", () => {
+  const IDLE_MS = 41 * 60 * 1000;
+
+  it("an idle Run whose pid is alive and identity matches is left running after 41 idle minutes", async () => {
+    table.spawn(PID, LSTART);
+    const run = seedRun({
+      activity: "idle",
+      lastActivityAt: new Date(T0 - IDLE_MS).toISOString(),
+    });
+    const sweeper = sweeperWith();
+    await sweeper.sweepNow();
+    // Past the grace and a whole sweep interval too: still nothing.
+    nowMs = T0 + DEFAULT_LIVENESS_CONFIG.graceMs + DEFAULT_LIVENESS_CONFIG.sweepMs;
+    await sweeper.sweepNow();
+    expect(appliedKinds(run.runId)).toEqual([]);
+    expect(stateOf(run.runId)).toBe("running");
+    expect(getSessionRun(store.db, run.runId)?.activity).toBe("idle");
+  });
+
+  it("a working Run whose pid is alive and identity matches is also left alone after 41 minutes", async () => {
+    table.spawn(PID, LSTART);
+    const run = seedRun({
+      activity: "working",
+      lastActivityAt: new Date(T0 - IDLE_MS).toISOString(),
+    });
+    await sweeperWith().sweepNow();
+    expect(appliedKinds(run.runId)).toEqual([]);
+    expect(stateOf(run.runId)).toBe("running");
+  });
+
+  // 09-10 (D-06): an unchecked identity stops reading as plain running once it has stayed
+  // unchecked for the whole quiet threshold. It is sweeper evidence (the plugin never sees
+  // process identity), and it only ever yields `stale`, never an ending. FIX3A L2: the timeout
+  // needs the identity to be CONTINUOUSLY unknown for the threshold (a firstSeenUnknown clock,
+  // like firstSeenGone), not just unknown on the sweep that happens to find an old last event;
+  // one transient failed `ps` therefore stales nothing.
+  describe("identity unknown beyond the quiet threshold (09-10, D-06, SESS-06, FIX3A L2)", () => {
+    const QUIET = DEFAULT_LIVENESS_CONFIG.quietAfterMs;
+    const SWEEP = DEFAULT_LIVENESS_CONFIG.sweepMs;
+
+    it("a single unknown-identity sweep stales nothing, however old the last event", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      await sweeperWith().sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("identity continuously unknown for the whole threshold: identity-unknown-timeout applied, Run stale", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET - 1;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(stateOf(run.runId)).toBe("stale");
+    });
+
+    it("an event inside the unknown window keeps the Run running until the last event is old enough too", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      // A hook event lands half a threshold in: the identity has now been unknown for the
+      // whole threshold, but the last event is only half a threshold old.
+      upsertSessionRun(store.db, {
+        ...(getSessionRun(store.db, run.runId) as SessionRun),
+        lastActivityAt: new Date(T0 + QUIET / 2).toISOString(),
+      });
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+      nowMs = T0 + 1.5 * QUIET;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+    });
+
+    // FIX3A L3: candidates are read at sweep start, then the sweep awaits the batched `ps`
+    // (up to 2 s). A hook event that lands in that window refreshes lastActivityAt; the
+    // timeout evidence built from the stale snapshot must not be applied over it.
+    it("a hook event landing during the ps await keeps the Run running (stale-snapshot race)", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      let eventDuringRead = false;
+      const racing: Pick<ProcessFacts, "isAlive" | "readStartTimes"> = {
+        isAlive: table.facts.isAlive,
+        readStartTimes: async (pids) => {
+          if (eventDuringRead) {
+            upsertSessionRun(store.db, {
+              ...(getSessionRun(store.db, run.runId) as SessionRun),
+              revision: 2,
+              lastActivityAt: new Date(nowMs).toISOString(),
+            });
+          }
+          return table.facts.readStartTimes(pids);
+        },
+      };
+      const sweeper = sweeperWith({}, racing);
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      eventDuringRead = true;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("a Run that ended during the ps await is not staled by the old snapshot", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      let endDuringRead = false;
+      const racing: Pick<ProcessFacts, "isAlive" | "readStartTimes"> = {
+        isAlive: table.facts.isAlive,
+        readStartTimes: async (pids) => {
+          if (endDuringRead) {
+            upsertSessionRun(store.db, {
+              ...(getSessionRun(store.db, run.runId) as SessionRun),
+              revision: 2,
+              state: "completed",
+              endedAt: new Date(nowMs).toISOString(),
+            });
+          }
+          return table.facts.readStartTimes(pids);
+        },
+      };
+      const sweeper = sweeperWith({}, racing);
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      endDuringRead = true;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("completed");
+    });
+
+    // FIX3C: the sweeper's database re-read cannot see activity the pipeline is still
+    // coalescing in memory, and a hook can land between that re-read and the apply. The
+    // guard that decides is the cutoff carried by the evidence, checked inside the
+    // pipeline's serialized apply against the Run as the pipeline sees it.
+    function hookRecord(event: string, observedAt: number, extra: Record<string, unknown> = {}) {
+      return {
+        eventId: randomUUID(),
+        observedAt: new Date(observedAt).toISOString(),
+        hook_event_name: event,
+        session_id: SESSION,
+        env: { CLAUDE_PID: String(PID) },
+        ...extra,
+      };
+    }
+
+    it("held coalesced activity from just now keeps a persisted-quiet Run running (FIX3C)", async () => {
+      table.spawnUnreadable(PID);
+      const quietAt = new Date(T0 - 40 * 60 * 1000).toISOString();
+      const run = seedRun({ activity: "working", lastActivityAt: quietAt });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      // The unknown clock has now run for the whole threshold. A first hook (stamped old, so
+      // it adds no activity) is written at once and opens the 5 s coalescing window; the
+      // hook one second later is activity-only, so the pipeline holds it in memory.
+      nowMs = T0 + QUIET - 2_000;
+      await pipeline.ingest(
+        hookRecord("PostToolUse", T0 - 40 * 60 * 1000, { tool_name: "Read" }),
+        "socket",
+      );
+      nowMs = T0 + QUIET - 1_000;
+      await pipeline.ingest(hookRecord("PostToolUse", nowMs, { tool_name: "Read" }), "socket");
+      expect(getSessionRun(store.db, run.runId)?.lastActivityAt).toBe(quietAt);
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      expect(stateOf(run.runId)).toBe("running");
+      // Once the held activity is flushed the Run is persisted fresh; still running.
+      await pipeline.stop();
+      expect(getSessionRun(store.db, run.runId)?.lastActivityAt).toBe(
+        new Date(T0 + QUIET - 1_000).toISOString(),
+      );
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("a hook ingested between the sweeper's re-read and its apply wins (FIX3C)", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        activity: "working",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      beforeApply = () =>
+        pipeline.ingest(hookRecord("PostToolUse", nowMs, { tool_name: "Read" }), "socket");
+      await sweeper.sweepNow();
+      // The sweeper judged the Run quiet and tried to apply; the racing hook was reduced first.
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(stateOf(run.runId)).toBe("running");
+      expect(getSessionRun(store.db, run.runId)?.lastActivityAt).toBe(
+        new Date(nowMs).toISOString(),
+      );
+    });
+
+    it("evidence carries the cutoff instant: now minus the quiet threshold (FIX3C)", async () => {
+      table.spawnUnreadable(PID);
+      seedRun({ activity: "idle", lastActivityAt: new Date(T0 - 10 * QUIET).toISOString() });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      const evidence = applied.find((item) => item.kind === "identity-unknown-timeout");
+      expect(evidence).toMatchObject({ quietBefore: new Date(nowMs - QUIET).toISOString() });
+    });
+
+    it("alternating unknown and same never stales and never flaps", async () => {
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      for (let sweep = 0; sweep < 12; sweep += 1) {
+        if (sweep % 2 === 0) table.spawnUnreadable(PID);
+        else table.spawn(PID, LSTART);
+        await sweeper.sweepNow();
+        expect(stateOf(run.runId)).toBe("running");
+        nowMs += QUIET / 3;
+      }
+      expect(appliedKinds(run.runId)).toEqual([]);
+    });
+
+    it("a same reading in the middle restarts the continuous-unknown clock", async () => {
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 10 * QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      table.spawnUnreadable(PID);
+      await sweeper.sweepNow();
+      nowMs = T0 + 0.6 * QUIET;
+      table.spawn(PID, LSTART);
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      table.spawnUnreadable(PID);
+      await sweeper.sweepNow();
+      nowMs = T0 + 1.5 * QUIET;
+      await sweeper.sweepNow();
+      // Continuously unknown for only 0.5 * QUIET since the same reading.
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+      nowMs = T0 + 2 * QUIET;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(stateOf(run.runId)).toBe("stale");
+    });
+
+    it("a waiting-for-approval Run is not staled, nor reverted to running, by one transient ps failure", async () => {
+      table.spawn(PID, LSTART);
+      const run = seedRun({
+        state: "waiting-for-approval",
+        activity: null,
+        lastActivityAt: new Date(T0 - 2 * QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      table.spawnUnreadable(PID);
+      nowMs += SWEEP;
+      await sweeper.sweepNow();
+      table.spawn(PID, LSTART);
+      nowMs += SWEEP;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("waiting-for-approval");
+    });
+
+    it("a waiting-for-approval Run with an unknown identity for the whole threshold goes stale", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        state: "waiting-for-approval",
+        activity: null,
+        lastActivityAt: new Date(T0 - QUIET - 1_000).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(stateOf(run.runId)).toBe("stale");
+    });
+
+    it("never writes completed or failed, however long the identity stays unknown", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({ lastActivityAt: new Date(T0 - 10 * QUIET).toISOString() });
+      const sweeper = sweeperWith();
+      for (let sweep = 0; sweep < 6; sweep += 1) {
+        await sweeper.sweepNow();
+        nowMs += QUIET / 2;
+      }
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+      expect(["completed", "failed"]).not.toContain(stateOf(run.runId));
+      expect(stateOf(run.runId)).toBe("stale");
+    });
+
+    it("a stale Run whose identity reads same again revives through pid-alive", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({ lastActivityAt: new Date(T0 - QUIET).toISOString() });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      expect(stateOf(run.runId)).toBe("stale");
+      table.spawn(PID, LSTART);
+      nowMs += SWEEP;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout", "pid-alive"]);
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("FIX15 m1: a waiting-for-approval Run staled by an unknown identity revives to waiting-for-approval, not running", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({
+        state: "waiting-for-approval",
+        lastActivityAt: new Date(T0 - QUIET).toISOString(),
+      });
+      const sweeper = sweeperWith();
+      await sweeper.sweepNow();
+      nowMs = T0 + QUIET;
+      await sweeper.sweepNow();
+      expect(stateOf(run.runId)).toBe("stale");
+      table.spawn(PID, LSTART);
+      nowMs += SWEEP;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout", "pid-alive"]);
+      expect(stateOf(run.runId)).toBe("waiting-for-approval");
+    });
+
+    it("a matched identity idle past the threshold is still left running (D-05)", async () => {
+      table.spawn(PID, LSTART);
+      const run = seedRun({
+        activity: "idle",
+        lastActivityAt: new Date(T0 - 41 * 60 * 1000).toISOString(),
+      });
+      await sweeperWith().sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      expect(stateOf(run.runId)).toBe("running");
+    });
+
+    it("the threshold is quietAfterMs from the config, not a constant", async () => {
+      table.spawnUnreadable(PID);
+      const run = seedRun({ lastActivityAt: new Date(T0 - 120_000).toISOString() });
+      const sweeper = sweeperWith({ quietAfterMs: 120_000 });
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual([]);
+      nowMs = T0 + 120_000;
+      await sweeper.sweepNow();
+      expect(appliedKinds(run.runId)).toEqual(["identity-unknown-timeout"]);
+    });
+  });
+});
+
+describe("CCC_QUIET_THRESHOLD_MS (09-10, D-07, T-09-17)", () => {
+  it("reads a positive value", () => {
+    expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: "120000" }).quietAfterMs).toBe(120_000);
+  });
+
+  it("falls back to SESSION_QUIET_AFTER_MS for absent, zero, negative and non-numeric values", () => {
+    expect(livenessConfigFromEnv({}).quietAfterMs).toBe(SESSION_QUIET_AFTER_MS);
+    for (const raw of ["0", "-5", "abc", ""]) {
+      expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: raw }).quietAfterMs).toBe(
+        SESSION_QUIET_AFTER_MS,
+      );
+    }
+  });
+
+  // L1 (FIX3A): the snapshot schema takes only a positive integer of at most 86_400_000 ms.
+  // A knob value outside that would pass the sweeper's guard, then fail the plugin's
+  // SnapshotResponseSchema.safeParse and drop the WHOLE snapshot.
+  it("falls back to the default for a fractional, oversized or non-finite quiet threshold", () => {
+    for (const raw of ["1500.5", "1500.7", "0.5", "86400001", "172800000", "1e300", "Infinity"]) {
+      expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: raw }).quietAfterMs).toBe(
+        SESSION_QUIET_AFTER_MS,
+      );
+    }
+  });
+
+  it("accepts the integer bounds: 1 ms and the 86_400_000 ms maximum", () => {
+    expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: "1" }).quietAfterMs).toBe(1);
+    expect(livenessConfigFromEnv({ CCC_QUIET_THRESHOLD_MS: "86400000" }).quietAfterMs).toBe(
+      86_400_000,
+    );
+  });
+
+  it("shares its maximum with the snapshot schema's constant", () => {
+    expect(SESSION_QUIET_AFTER_MAX_MS).toBe(86_400_000);
+  });
+});
 
 describe("restart revival (Task 3 Test 2, D-22, PR-12)", () => {
   const saved = {

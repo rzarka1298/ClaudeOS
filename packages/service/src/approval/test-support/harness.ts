@@ -7,7 +7,9 @@ import {
   type ApprovalLog,
   type ApprovalUpsertedPayload,
   CLASSIFICATION,
+  type ClassificationTable,
   type NoteId,
+  type PresencePort,
   type ProposalId,
   type Requester,
   type StoredProposal,
@@ -24,6 +26,7 @@ import { buildOperationRegistry } from "../registry.js";
 import { createTestClock, type TestClock } from "./clock.js";
 import { createFakeOperation, type FakeOperation, type FakePayload } from "./fake-operation.js";
 import { createMemoryApprovalStore, type MemoryApprovalStore } from "./memory-store.js";
+import { readTestPin } from "./presence-fake.js";
 
 export type LogLevel = "info" | "warn" | "error";
 
@@ -59,6 +62,9 @@ export function defaultRegistry(fakes: readonly FakeOperation[]): OperationRegis
   return buildOperationRegistry(fakes.map((fake) => fake.definition));
 }
 
+/** A fixed 32-byte proof key every harness engine signs with (09-17); tests verify proofs under it. */
+export const TEST_PROOF_KEY: Buffer = Buffer.alloc(32, 7);
+
 export const REQUESTER: Requester = { kind: "dashboard", label: "Test dashboard" };
 
 export interface Harness {
@@ -86,10 +92,16 @@ export interface HarnessOptions {
   readonly mirrorRejects?: boolean;
   readonly projectName?: ApprovalEngineDeps["projectName"];
   readonly claimFactsTimeoutMs?: number;
+  /** The classification the memory store decides against (default: production). Pair with a registry built over the same table. */
+  readonly table?: ClassificationTable;
+  /** The presence port the engine asks for presence-required approvals (default: the engine's unavailable port). */
+  readonly presence?: PresencePort;
+  /** Reads the pin presence signatures are verified against (default: the test pin; null fails closed). */
+  readonly readPin?: () => Promise<string | null>;
 }
 
 export function createHarness(options: HarnessOptions = {}): Harness {
-  const store = createMemoryApprovalStore();
+  const store = createMemoryApprovalStore(options.table);
   const clock = createTestClock();
   const diagnostic = createFakeOperation("diagnostic.test");
   const terminate = createFakeOperation("session.force-terminate");
@@ -106,6 +118,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     registry,
     clock,
     log,
+    proofKey: TEST_PROOF_KEY,
     ids: {
       proposalId: () => {
         counter += 1;
@@ -130,6 +143,8 @@ export function createHarness(options: HarnessOptions = {}): Harness {
       },
     },
     ...(options.projectName === undefined ? {} : { projectName: options.projectName }),
+    ...(options.presence === undefined ? {} : { presence: options.presence }),
+    readPin: options.readPin ?? readTestPin,
     ...(options.claimFactsTimeoutMs === undefined
       ? {}
       : { claimFactsTimeoutMs: options.claimFactsTimeoutMs }),

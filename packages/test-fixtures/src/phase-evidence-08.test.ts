@@ -980,10 +980,87 @@ run("validation map (Task 3, Test 4)", () => {
   });
 });
 
+/** The exceptions and phase rows of an audit record, read from its tables. */
+function auditTables(text: string): {
+  readonly phases: { phase: string; status: string }[];
+  readonly exceptions: string[][];
+} {
+  const phases: { phase: string; status: string }[] = [];
+  for (const line of section(text, "Phases").split("\n")) {
+    const cells = cellsOf(line);
+    if (/^\d\d(\.\d)?$/.test(cells[1] ?? "")) {
+      phases.push({ phase: cells[1] as string, status: cells[4] ?? "" });
+    }
+  }
+  const exceptions = section(text, "Exceptions")
+    .split("\n")
+    .map(cellsOf)
+    .filter((cells) => /^\d\d(\.\d)?-/.test(cells[1] ?? ""));
+  return { phases, exceptions };
+}
+
+/** Exactly a date, or `accepted <date>`: the audit's own reading of a dated acceptance. */
+const DATED = /^(?:accepted )?\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * What an audit record's exception and strict-clean claims must satisfy (FIX12 C2). The nine
+ * historical OD-7 exceptions (phases 01 to 08) are validated apart from Phase 9's: Phase 9 may add
+ * only `09-uat-17`, the owner's "accepted - not walked" decision on item 17, which is a pending
+ * exception until the owner dates it and holds `strict-clean: false` until then. Returns one short
+ * sentence per problem; an empty list means the record is consistent.
+ */
+function auditExceptionProblems(text: string): string[] {
+  const problems: string[] = [];
+  const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
+  const num = (key: string): number => Number(new RegExp(`^${key}: (\\d+)$`, "m").exec(front)?.[1]);
+  const { phases, exceptions } = auditTables(text);
+  const closed = ["07", "08"].every((phase) =>
+    (phases.find((row) => row.phase === phase)?.status ?? "").startsWith("recorded"),
+  );
+  const historical = exceptions.filter((cells) => /^0[1-8](\.\d)?-/.test(cells[1] ?? ""));
+  const ninth = exceptions.filter((cells) => /^09-/.test(cells[1] ?? ""));
+  if (historical.length + ninth.length !== exceptions.length) {
+    problems.push("an exception belongs to neither the historical phases nor Phase 9");
+  }
+  if (exceptions.length !== num("exceptions")) {
+    problems.push("the exceptions count differs from the table");
+  }
+  if (historical.length !== 9) problems.push("the historical exceptions are not the nine");
+  for (const cells of ninth) {
+    if (cells[1] !== "09-uat-17") problems.push(`unexpected Phase 9 exception ${cells[1]}`);
+  }
+  for (const cells of exceptions) {
+    if (cells[4] !== "OD-7") problems.push(`${cells[1]}: the pointer is not OD-7`);
+    const acceptance = cells[5] ?? "";
+    const historic = historical.includes(cells);
+    if (historic && closed) {
+      if (!/\d{4}-\d{2}-\d{2}/.test(acceptance)) problems.push(`${cells[1]}: not dated`);
+    } else if (acceptance !== "pending" && !DATED.test(acceptance)) {
+      problems.push(`${cells[1]}: neither pending nor a dated acceptance`);
+    }
+  }
+  const dated = exceptions.filter((cells) => DATED.test(cells[5] ?? "")).length;
+  if (num("exceptions-accepted") !== dated) {
+    problems.push("exceptions-accepted differs from the dated acceptances");
+  }
+  // strict-clean (D-29): no phase pending the live UAT and every exception dated.
+  const pendingPhase = phases.some((row) => row.status === "pending-live-uat");
+  const strictClean = !pendingPhase && dated === exceptions.length;
+  const claimed = /^strict-clean: (true|false)$/m.exec(front)?.[1];
+  if (claimed !== String(strictClean)) {
+    problems.push("the strict-clean flag disagrees with the phase states and acceptances");
+  }
+  return problems;
+}
+
 run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
   const front = /^---\n([\s\S]*?)\n---/.exec(audit)?.[1] ?? "";
   const num = (key: string): number => Number(new RegExp(`^${key}: (\\d+)$`, "m").exec(front)?.[1]);
-  const closed = /^strict-clean: true$/m.test(front);
+  // Closed once Phases 07 and 08 are recorded. A later phase (Phase 9 joined the audit table in plan
+  // 09-21) may still be pending in the same record, so `strict-clean` is not the test of this.
+  const closed = ["07", "08"].every((phase) =>
+    (phaseRows().find((row) => row.phase === phase)?.status ?? "").startsWith("recorded"),
+  );
 
   interface PhaseRow {
     readonly phase: string;
@@ -1002,7 +1079,9 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
   }
 
   it("covers the ten milestone phases and agrees with the Phase 8 script's item count", () => {
-    expect(phaseRows().map((r) => r.phase)).toEqual([
+    // Ten milestone phases; Phase 9 joined the table in plan 09-21 as an eleventh row.
+    const phases = phaseRows().map((r) => r.phase);
+    expect(phases.slice(0, 10)).toEqual([
       "01",
       "02",
       "03",
@@ -1014,7 +1093,9 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
       "07",
       "08",
     ]);
-    expect(num("phases")).toBe(10);
+    expect([10, 11]).toContain(phases.length);
+    if (phases.length === 11) expect(phases[10]).toBe("09");
+    expect(num("phases")).toBe(phases.length);
     expect(num("not-recorded")).toBe(0);
     const total = Number(/^total: (\d+)$/m.exec(section(read("08-UAT.md"), "Summary"))?.[1]);
     expect(total).toBe(39);
@@ -1031,7 +1112,7 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
   });
 
   it("records phases 01 to 06 as recorded or recorded with exceptions, and 07 and 08 as pending the live UAT", () => {
-    for (const row of phaseRows().filter((r) => !["07", "08"].includes(r.phase))) {
+    for (const row of phaseRows().filter((r) => !["07", "08", "09"].includes(r.phase))) {
       expect(["recorded", "recorded-with-exceptions"], row.phase).toContain(row.status);
     }
     for (const phase of ["07", "08"]) {
@@ -1044,15 +1125,16 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
       }
     }
     if (!closed) expect(num("pending-live-uat")).toBe(2);
-    expect(num("recorded") + num("recorded-with-exceptions") + num("pending-live-uat")).toBe(10);
+    expect(num("recorded") + num("recorded-with-exceptions") + num("pending-live-uat")).toBe(
+      num("phases"),
+    );
   });
 
   it("lists the OD-7 exceptions awaiting the owner, and settles them only with a date once closed", () => {
-    const exceptions = section(audit, "Exceptions")
-      .split("\n")
-      .map(cellsOf)
-      .filter((cells) => /^\d\d(\.\d)?-/.test(cells[1] ?? ""));
-    expect(exceptions.length).toBe(num("exceptions"));
+    expect(auditExceptionProblems(audit)).toEqual([]);
+    const exceptions = auditTables(audit).exceptions.filter((cells) =>
+      /^0[1-8](\.\d)?-/.test(cells[1] ?? ""),
+    );
     expect(exceptions.length).toBe(9);
     for (const cells of exceptions) {
       expect(cells[4], cells[1]).toBe("OD-7");
@@ -1060,6 +1142,75 @@ run("regenerated SLICE-02 audit (Task 3, Test 5)", () => {
       else expect(cells[5], cells[1]).toBe("pending");
     }
     if (!closed) expect(num("exceptions-accepted")).toBe(0);
+  });
+
+  // The audit regenerated after the owner records item 17 as `accepted - not walked` gains the tenth
+  // exception `09-uat-17` and a Phase 09 row (FIX12 C2). Built in memory from the committed record;
+  // no regenerated audit is committed.
+  describe("a record regenerated with Phase 9's own exception (FIX12 C2)", () => {
+    // The record as it stood with the nine historical exceptions only, whether or not the committed
+    // copy already holds Phase 9's row and exception.
+    const historicalOnly = audit.replace(/^\| 09(?:-uat-\d+)? \|.*\n/gm, "");
+    const insertRow = (text: string, acceptance: string): string =>
+      text.replace(
+        /(\| 06-claude-ratified \|.*\|)\n/,
+        `$1\n| 09-uat-17 | 09 | Item 17 recorded as not walked | OD-7 | ${acceptance} |\n`,
+      );
+    // The counts of a regenerated record are derived from its own table, as the audit derives them,
+    // so a fixture is consistent whatever the committed record already holds.
+    const withCounts = (text: string): string => {
+      const { exceptions } = auditTables(text);
+      const dated = exceptions.filter((cells) =>
+        /^(?:accepted )?\d{4}-\d{2}-\d{2}$/.test(cells[5] ?? ""),
+      ).length;
+      return text
+        .replace(/^exceptions: \d+$/m, `exceptions: ${exceptions.length}`)
+        .replace(/^exceptions-accepted: \d+$/m, `exceptions-accepted: ${dated}`);
+    };
+    const regenerated = (acceptance: string, strictClean: string, phaseStatus: string): string =>
+      withCounts(
+        insertRow(
+          historicalOnly
+            .replace(/^phases: \d+$/m, "phases: 11")
+            .replace(/^exceptions: \d+$/m, "exceptions: 10")
+            .replace(/^strict-clean: \w+$/m, `strict-clean: ${strictClean}`)
+            .replace(
+              /^(\| 08 \|.*)$/m,
+              `$1\n| 09 | 1 file(s) | 18/19 | ${phaseStatus} | 09-x/09-UAT.md |`,
+            ),
+          acceptance,
+        ),
+      );
+
+    it("accepts the tenth exception pending, with Phase 9 pending and strict-clean false", () => {
+      const text = regenerated("pending", "false", "pending-live-uat");
+      expect(text).toContain("| 09-uat-17 |");
+      expect(text).toMatch(/^exceptions-accepted: 9$/m);
+      expect(auditExceptionProblems(text)).toEqual([]);
+    });
+
+    it("accepts it dated once the owner accepts it and Phase 9 is recorded, with strict-clean true", () => {
+      const text = regenerated("accepted 2026-11-02", "true", "recorded-with-exceptions");
+      expect(text).toMatch(/^exceptions-accepted: 10$/m);
+      expect(auditExceptionProblems(text)).toEqual([]);
+    });
+
+    it("refuses any other Phase 9 exception and a flag that disagrees with the states", () => {
+      const other = regenerated("pending", "false", "pending-live-uat").replace(
+        "09-uat-17",
+        "09-uat-3",
+      );
+      expect(auditExceptionProblems(other).join(" ")).toMatch(/unexpected Phase 9 exception/);
+      const flag = regenerated("pending", "true", "pending-live-uat");
+      expect(auditExceptionProblems(flag).join(" ")).toMatch(/strict-clean/);
+      const undated = regenerated("pending", "true", "recorded-with-exceptions");
+      expect(auditExceptionProblems(undated).join(" ")).toMatch(/strict-clean/);
+    });
+
+    it("keeps the nine historical exceptions at nine", () => {
+      const lost = audit.replace(/^\| 05-uat-6 \|.*\n/m, "");
+      expect(auditExceptionProblems(lost).join(" ")).toMatch(/nine|count/);
+    });
   });
 
   it("preserves the D-47 amendment and the owner's statement block", () => {

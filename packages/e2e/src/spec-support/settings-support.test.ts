@@ -227,6 +227,7 @@ describe("rendererReadSettings (Test 2)", () => {
       "Connection tokens",
       "Install secret in keychain",
       "Research key in keychain",
+      "Approval presence check",
       "Always allow",
     ]);
     const install = base.facts.find((fact) => fact.name === "Install secret in keychain");
@@ -236,6 +237,9 @@ describe("rendererReadSettings (Test 2)", () => {
     expect(research?.chips).toEqual([{ status: "setup-needed", word: "Needs setup" }]);
     expect(research?.code).toEqual(["node scripts/research-key-setup.mjs"]);
     expect(research?.buttons).toEqual(["Copy key setup command"]);
+    const presence = base.facts.find((fact) => fact.name === "Approval presence check");
+    expect(presence?.chips).toEqual([{ status: "failing", word: "Unavailable" }]);
+    expect(presence?.text).toContain("Approvals for connectors need Touch ID or your password");
     expect(base.facts.every((fact) => !fact.loading && !fact.unknown)).toBe(true);
     expect(base.facts.find((fact) => fact.name === "Always allow")?.text).toBe(
       "No always-allow control exists. Every consequential action asks you each time.",
@@ -1100,6 +1104,7 @@ describe("the Security and Schedules verdicts (Test 2, item 14)", () => {
       }),
       fact("Install secret in keychain", { chips: [chip("Present", "ok")] }),
       fact("Research key in keychain", { chips: [chip("Unknown", "unknown")] }),
+      fact("Approval presence check", { chips: [chip("Unavailable", "failing")] }),
       fact("Always allow", {
         text: "No always-allow control exists. Every consequential action asks you each time.",
       }),
@@ -1112,8 +1117,38 @@ describe("the Security and Schedules verdicts (Test 2, item 14)", () => {
     rows: [row("Transcript analysis", { kind: "switch", label: "Off", checked: false })],
   });
 
-  it("accepts the six facts, the Present install chip and an honest research chip", () => {
+  it("accepts the seven facts, the Present install chip, an honest research chip and an honest presence chip", () => {
     expect(checkSecurityFacts(security)).toEqual([]);
+    for (const word of ["Available", "Unavailable", "Unknown"]) {
+      const withWord = section({
+        ...security,
+        facts: security.facts.map((entry) =>
+          entry.name === "Approval presence check"
+            ? fact(entry.name, { chips: [chip(word, "x")] })
+            : entry,
+        ),
+      });
+      expect(checkSecurityFacts(withWord), word).toEqual([]);
+    }
+  });
+
+  it("flags a missing Approval presence check fact and a chip word outside Available, Unavailable and Unknown", () => {
+    const without = section({
+      ...security,
+      facts: security.facts.filter((entry) => entry.name !== "Approval presence check"),
+    });
+    expect(checkSecurityFacts(without).join(" ")).toContain("Approval presence check");
+    const odd = section({
+      ...security,
+      facts: security.facts.map((entry) =>
+        entry.name === "Approval presence check"
+          ? fact(entry.name, { chips: [chip("Present", "ok")] })
+          : entry,
+      ),
+    });
+    expect(checkSecurityFacts(odd).join(" ")).toContain(
+      'the Approval presence check chip reads "Present"',
+    );
   });
 
   it("flags a missing fact, a wrong chip and a research chip that claims more than the service said", () => {
@@ -1358,6 +1393,7 @@ describe("the service-away verdicts (Test 2, item 15)", () => {
       facts: [
         fact("Install secret in keychain", { chips: [unknownChip], lines: [AWAY] }),
         fact("Research key in keychain", { chips: [unknownChip], lines: [AWAY] }),
+        fact("Approval presence check", { chips: [unknownChip], lines: [AWAY] }),
       ],
       rows: [
         row("Transcript analysis", { kind: "switch", disabled: true, describedText: [AWAY] }),
@@ -1370,9 +1406,24 @@ describe("the service-away verdicts (Test 2, item 15)", () => {
       facts: [
         fact("Install secret in keychain", { chips: [{ status: "ok", word: "Present" }] }),
         secure.facts[1] as SettingsFactRead,
+        secure.facts[2] as SettingsFactRead,
       ],
     });
     expect(checkServiceAway("security", present).join(" ")).toContain("Present");
+    const availableAway = section({
+      ...secure,
+      facts: [
+        secure.facts[0] as SettingsFactRead,
+        secure.facts[1] as SettingsFactRead,
+        fact("Approval presence check", {
+          chips: [{ status: "ok", word: "Available" }],
+          lines: [AWAY],
+        }),
+      ],
+    });
+    expect(checkServiceAway("security", availableAway).join(" ")).toContain(
+      "Approval presence check still reads Available",
+    );
     const schedules = section({
       facts: [
         fact("Topic", { unknown: true, lines: ["Unknown", AWAY] }),

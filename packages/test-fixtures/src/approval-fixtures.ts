@@ -1,3 +1,4 @@
+import { createSign, generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,7 @@ import {
   type ExecuteContext,
   type ExecuteOutcome,
   type OperationDefinition,
+  type PresencePort,
   type ProposalId,
   type ProposalState,
   type ReconcileVerdict,
@@ -33,6 +35,7 @@ import {
   type ApprovalEngine,
   buildOperationRegistry,
   createApprovalEngine,
+  presenceMessage,
   type SubmitInput,
 } from "@ccc/service/approval";
 
@@ -52,6 +55,9 @@ export type Db = OperationalStore["db"];
 
 /** A fixed, round, millisecond-precision ISO 8601 UTC instant the suites start at. */
 export const FIXTURE_EPOCH = "2026-10-06T12:00:00.000Z";
+
+/** The fixed 32-byte decision-proof key every fixture engine signs with (09-17); tests verify under it. */
+export const PROOF_KEY: Buffer = Buffer.alloc(32, 3);
 
 // ---------------------------------------------------------------------------
 // Clock
@@ -293,6 +299,10 @@ export const FAKE_CONNECTOR_ROW: ClassificationRow = {
   maxApprovalAgeMs: 5 * 60_000,
   retry: "never",
   modifiable: false,
+  // A connector-class row (D-02): the engine asks the presence port before it decides an approve
+  // (09-14), so every rig that decides this row is given {@link PROVING_PRESENCE}. The service's
+  // own extended test table has a separate `connector.fake-send` row with `presence: "none"`.
+  presence: "required",
   summary: "send a fake message",
 };
 
@@ -489,6 +499,11 @@ export function createCrashInjector(): CrashInjector {
         decide: guard("decide", (...a: Parameters<ApprovalStorePort["decide"]>) =>
           store.decide(...a),
         ),
+        recordDecisionRefusal: guard(
+          "recordDecisionRefusal",
+          (...a: Parameters<ApprovalStorePort["recordDecisionRefusal"]>) =>
+            store.recordDecisionRefusal(...a),
+        ),
         claim(...a: Parameters<ApprovalStorePort["claim"]>) {
           if (fenced) throw new CrashSignal("claim (after the crash)");
           if (armed === "after-decision") {
@@ -568,6 +583,8 @@ export interface World {
   /** Every operation registered: the two enabled rows plus any extra. */
   readonly operations: readonly CountingOperation[];
   readonly table: ClassificationTable;
+  /** The presence port the engine asks for presence-required approvals; absent, the engine's fail-closed default. */
+  readonly presence: PresencePort | undefined;
   readonly log: RecordingLog;
   readonly injector: CrashInjector;
   /** A counter that keeps submitted subjects distinct across restarts. */
@@ -578,8 +595,35 @@ export interface WorldOptions {
   readonly extraOperations?: readonly CountingOperation[];
   /** An injected classification table. Defaults to the production table. */
   readonly table?: ClassificationTable;
+  /** Answers presence checks for a rig that decides a presence-required row (a stand-in, never a real proof). */
+  readonly presence?: PresencePort;
   readonly start?: string;
 }
+
+const PROVING_KEYS = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+
+/** The pin of {@link PROVING_PRESENCE}: base64 DER SPKI of a throwaway P-256 key made at import. */
+export const PROVING_PIN: string = PROVING_KEYS.publicKey
+  .export({ format: "der", type: "spki" })
+  .toString("base64");
+
+/**
+ * A presence port that always proves, with a REAL ECDSA P-256 signature over the canonical message made with
+ * a throwaway key (09-18): a test stand-in for the owner's gesture that the engine's verification accepts. It
+ * is never the real helper and reads no Keychain; the engine is given {@link PROVING_PIN} as its pin.
+ */
+export const PROVING_PRESENCE: PresencePort = {
+  async prove(request) {
+    const signature = createSign("sha256")
+      .update(presenceMessage(request), "utf8")
+      .sign({ key: PROVING_KEYS.privateKey, dsaEncoding: "der" })
+      .toString("base64");
+    return { kind: "proved", scheme: "p256", signature };
+  },
+  async availability() {
+    return "available";
+  },
+};
 
 export function createWorld(options: WorldOptions = {}): World {
   const diagnostic = createCountingOperation("diagnostic.test");
@@ -591,6 +635,7 @@ export function createWorld(options: WorldOptions = {}): World {
     terminate,
     operations: [diagnostic, terminate, ...(options.extraOperations ?? [])],
     table: options.table ?? CLASSIFICATION,
+    presence: options.presence,
     log: createRecordingLog(),
     injector: createCrashInjector(),
     nextSubject() {
@@ -650,6 +695,7 @@ export function openEngine(
     registry,
     clock: world.clock,
     log: world.log,
+    proofKey: PROOF_KEY,
     publisher: {
       publish(_event, payload) {
         published.push(payload.approval);
@@ -664,6 +710,8 @@ export function openEngine(
       ? {}
       : { claimFactsTimeoutMs: options.claimFactsTimeoutMs }),
     ...(options.projectName === undefined ? {} : { projectName: options.projectName }),
+    ...(world.presence === undefined ? {} : { presence: world.presence }),
+    readPin: async () => PROVING_PIN,
   });
 
   let closed = false;
@@ -704,7 +752,7 @@ export function openEngine(
         proposalId,
         decision,
         payloadHash: hashOf(proposalId),
-        via: "plugin",
+        channelHint: "plugin",
       });
     },
     get isClosed() {
@@ -857,7 +905,9 @@ export function diagnosticEffectRows(db: Db, proposalId: string): number {
 }
 
 /** The state each audit event leaves a request in. `retried-after-restart` keeps it `executing`. */
-const STATE_AFTER: Readonly<Record<ApprovalAuditEvent, ProposalState>> = {
+const STATE_AFTER: Readonly<
+  Record<Exclude<ApprovalAuditEvent, "presence-refused">, ProposalState>
+> = {
   requested: "pending",
   approved: "approved",
   denied: "denied",
@@ -892,6 +942,12 @@ export function auditPathProblems(
     if (index === 0) return;
     if (event === "requested") {
       problems.push(`step ${index + 1}: requested appears again`);
+      return;
+    }
+    if (event === "presence-refused") {
+      // Not a transition: the request stays pending (D-03), so it is legal only while pending.
+      if (current !== "pending")
+        problems.push(`step ${index + 1}: a presence refusal outside pending`);
       return;
     }
     const next = STATE_AFTER[event];

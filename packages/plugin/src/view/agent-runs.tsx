@@ -5,7 +5,7 @@
 import {
   isSessionListed,
   NOT_REPORTED,
-  RUN_STATE_DISPLAY,
+  presentRunState,
   type SessionView,
   sessionDisplayName,
 } from "@ccc/domain/session.js";
@@ -22,7 +22,11 @@ import { WidgetFooter } from "../widgets/footer.js";
 import type { CardPresentation, FooterModel } from "../widgets/presentation.js";
 import { resolveCardPresentation } from "../widgets/presentation.js";
 import { formatAbsoluteTime, formatRelativeTime } from "../widgets/relative-time.js";
-import { activeSessionsState, sessionsById } from "../widgets/session-signals.js";
+import {
+  activeSessionsState,
+  sessionQuietAfterMs,
+  sessionsById,
+} from "../widgets/session-signals.js";
 import { formatMonthDay, formatTimeOfDay } from "../widgets/usage-format.js";
 import { usageSummary } from "../widgets/usage-signals.js";
 import { DetailPane } from "./agent-runs-detail.js";
@@ -100,9 +104,10 @@ function durationText(session: SessionView, nowMs: number): string {
 
 /** `{glyph} {label}`, with running appending ` · Working`/` · Idle` (UI-SPEC
  * "Sessions table" column 2). */
-function stateCellText(session: SessionView): string {
-  const display = RUN_STATE_DISPLAY[session.state];
+function stateCellText(session: SessionView, nowMs: number, quietAfterMs: number): string {
+  const display = presentRunState(session, nowMs, quietAfterMs);
   const base = `${display.glyph} ${display.label}`;
+  if (display.quiet !== null) return base;
   if (session.state === "running" && session.activity !== null) {
     return `${base} · ${session.activity === "working" ? "Working" : "Idle"}`;
   }
@@ -150,6 +155,7 @@ function SessionsTable({
   selected,
   onSelect,
 }: SessionsTableProps): VNode {
+  const quietAfterMs = sessionQuietAfterMs.value;
   const visible = rows.slice(0, shown);
   const hidden = rows.length - visible.length;
 
@@ -203,7 +209,7 @@ function SessionsTable({
                     {name}
                   </button>
                 </th>
-                <td>{stateCellText(session)}</td>
+                <td>{stateCellText(session, nowMs, quietAfterMs)}</td>
                 <td data-priority="secondary">{session.projectName ?? "Unclassified"}</td>
                 <td data-priority="secondary">
                   <time dateTime={lastActivityIso} title={formatAbsoluteTime(lastActivityIso)}>
@@ -471,14 +477,22 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
   const dimmed = presentation.kind === "disconnected" ? "true" : undefined;
 
   const totalSessions = allSessions.length;
-  const runningCount = allSessions.filter((s) => s.state === "running").length;
+  // A quiet session is still `running` in the store (D-05) but is neither counted as active nor
+  // hidden: it gets its own `N quiet` segment so the caption agrees with the rows (R-04).
+  const quietCount = allSessions.filter(
+    (s) => presentRunState(s, now, sessionQuietAfterMs.value).quiet !== null,
+  ).length;
+  // The group is every non-terminal session (quiet ones are not ended); its heading names the
+  // quiet count in the caption's words so the two never disagree (FIX3B Q1).
+  const activeQuietSegment = quietCount > 0 ? ` · ${quietCount} quiet` : "";
+  const runningCount = allSessions.filter((s) => s.state === "running").length - quietCount;
   const waitingCount = allSessions.filter((s) => s.state === "waiting-for-approval").length;
   const unknownCount = allSessions.filter((s) => s.state === "stale").length;
   // Phase 5's three segments are untouched; the inbox adds its own distinct
   // phrase, omitted until the first snapshot and at zero (D-41 rule 3).
   const pendingRequests = pendingApprovalCount.value;
   const summaryLine =
-    `${runningCount} active · ${waitingCount} waiting for approval · ${unknownCount} unknown` +
+    `${runningCount} active${quietCount > 0 ? ` · ${quietCount} quiet` : ""} · ${waitingCount} waiting for approval · ${unknownCount} unknown` +
     (pendingRequests !== null && pendingRequests > 0
       ? ` · ${needsDecisionText(pendingRequests)}`
       : "");
@@ -539,7 +553,7 @@ export function AgentRuns({ now, onQuickAction, loadSessionUsage }: AgentRunsPro
         <div className="ccc-agent-runs-layout" data-dimmed={dimmed}>
           <div className="ccc-agent-runs-sessions">
             <section>
-              <h3>{`${GROUP_HEADING.active} (${groups.active.length})`}</h3>
+              <h3>{`${GROUP_HEADING.active} (${groups.active.length}${activeQuietSegment})`}</h3>
               <SessionsTable
                 group="active"
                 rows={groups.active}

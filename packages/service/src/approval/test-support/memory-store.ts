@@ -11,21 +11,27 @@ import {
   type ApprovalBucket,
   type ApprovalStorePort,
   type AuditRow,
+  CLASSIFICATION,
   type ClaimFacts,
   type ClaimResult,
-  classifyOperation,
+  type ClassificationTable,
   type DecideInput,
   type DecideResult,
+  type DecisionRefusalInput,
   type FinishInput,
   type NewProposal,
   type PendingCaps,
   PROPOSAL_TRANSITIONS,
   type ProposalId,
   type ProposalState,
+  presenceRefusalIsRecordable,
   type RetryResult,
   type StoredProposal,
   type SubmitResult,
 } from "@ccc/domain";
+
+/** The longest decision proof the SQL store accepts; this double mirrors it. */
+const MAX_DECISION_PROOF_CHARS = 2048;
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -41,13 +47,9 @@ function assertLegal(from: ProposalState, to: ProposalState): void {
   }
 }
 
-function isEnabledApprovalOperation(operation: string): boolean {
-  const classified = classifyOperation(operation);
-  return (
-    classified !== undefined &&
-    classified.row.class === "approval-required" &&
-    classified.row.status === "enabled"
-  );
+function isEnabledApprovalOperation(table: ClassificationTable, operation: string): boolean {
+  const row = Object.hasOwn(table, operation) ? table[operation] : undefined;
+  return row?.class === "approval-required" && row.status === "enabled";
 }
 
 export interface MemoryApprovalStore extends ApprovalStorePort {
@@ -59,13 +61,25 @@ export interface MemoryApprovalStore extends ApprovalStorePort {
   tamperPayloadJson(proposalId: ProposalId, payloadJson: string | null): void;
   /** Rewrites the stored reason behind the store's back. */
   tamperReason(proposalId: ProposalId, reason: string): void;
+  /** Rewrites the decision columns the proof covers behind the store's back (09-FIX8: a change during an await). */
+  tamperDecision(
+    proposalId: ProposalId,
+    patch: { readonly decidedVia?: StoredProposal["decidedVia"]; readonly approvedAt?: string },
+  ): void;
   /** Every audit event of a row, oldest first, with no cap. */
   auditEvents(proposalId: ProposalId): ApprovalAuditEvent[];
   /** The finish inputs the store was handed, in order. */
   readonly finishes: FinishInput[];
 }
 
-export function createMemoryApprovalStore(): MemoryApprovalStore {
+/**
+ * `table` is the classification the store decides against: the production table by default (the SQL
+ * store classifies through it and cannot be given another), or the extended table of a test that
+ * needs a connector-class row the production table does not have.
+ */
+export function createMemoryApprovalStore(
+  table: ClassificationTable = CLASSIFICATION,
+): MemoryApprovalStore {
   const rows = new Map<string, Row>();
   const audit = new Map<string, AuditRow[]>();
   const calls: string[] = [];
@@ -107,6 +121,7 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
     outcomeNote: row.outcomeNote,
     mirrorNoteId: row.mirrorNoteId,
     supersedes: row.supersedes,
+    decisionProof: row.decisionProof ?? null,
   });
 
   const change = (row: Row, to: ProposalState): void => {
@@ -132,6 +147,12 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
     tamperPayloadJson(proposalId, payloadJson) {
       const row = rows.get(proposalId);
       if (row) row.payloadJson = payloadJson;
+    },
+    tamperDecision(proposalId, patch) {
+      const row = rows.get(proposalId);
+      if (!row) return;
+      if (patch.decidedVia !== undefined) row.decidedVia = patch.decidedVia;
+      if (patch.approvedAt !== undefined) row.approvedAt = patch.approvedAt;
     },
     tamperReason(proposalId, reason) {
       const row = rows.get(proposalId);
@@ -187,6 +208,7 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
         outcomeNote: null,
         mirrorNoteId: proposal.mirrorNoteId,
         supersedes,
+        decisionProof: null,
         claimedAt: null,
         finishedAt: null,
         seq,
@@ -252,6 +274,18 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
 
     decide(input: DecideInput): DecideResult {
       calls.push("decide");
+      if (input.approvedAt !== undefined && input.approvedAt > input.now) {
+        throw new Error("invalid approval input: approvedAt");
+      }
+      // Mirrors the SQL store's input check: an opaque text of 1 to 2048 characters, or absent.
+      if (
+        input.decisionProof !== undefined &&
+        (typeof input.decisionProof !== "string" ||
+          input.decisionProof.length === 0 ||
+          input.decisionProof.length > MAX_DECISION_PROOF_CHARS)
+      ) {
+        throw new Error("invalid approval input: decisionProof");
+      }
       const row = rows.get(input.proposalId);
       if (!row) return { kind: "not-found" };
       if (row.state !== "pending") return { kind: "already-decided", state: row.state };
@@ -261,17 +295,37 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
         writeAudit(row.proposalId, "expired", input.now, null);
         return { kind: "expired", proposal: toStored(row) };
       }
-      if (!isEnabledApprovalOperation(row.operation)) return { kind: "operation-reserved" };
+      if (!isEnabledApprovalOperation(table, row.operation)) return { kind: "operation-reserved" };
       if (input.expectedHash !== row.payloadHash) return { kind: "hash-mismatch" };
       const approve = input.decision === "approve";
       change(row, approve ? "approved" : "denied");
-      row.approvedAt = approve ? input.now : null;
+      row.approvedAt = approve ? (input.approvedAt ?? input.now) : null;
       row.decidedAt = input.now;
       row.decidedVia = input.via;
+      row.decisionProof = approve ? (input.decisionProof ?? null) : null;
       writeAudit(row.proposalId, approve ? "approved" : "denied", input.now, null);
       return approve
         ? { kind: "approved", proposal: toStored(row) }
         : { kind: "denied", proposal: toStored(row) };
+    },
+
+    recordDecisionRefusal(input: DecisionRefusalInput) {
+      calls.push("recordDecisionRefusal");
+      const row = rows.get(input.proposalId);
+      if (row?.state !== "pending") return "not-pending";
+      const refusals = (audit.get(input.proposalId) ?? []).filter(
+        (entry) => entry.event === "presence-refused",
+      );
+      const sameReason = refusals.filter((entry) => entry.code === input.detail);
+      const lastSameReasonAt = sameReason.reduce<string | null>(
+        (latest, entry) => (latest === null || entry.at > latest ? entry.at : latest),
+        null,
+      );
+      if (!presenceRefusalIsRecordable({ total: refusals.length, lastSameReasonAt }, input.at)) {
+        return "suppressed";
+      }
+      writeAudit(input.proposalId, "presence-refused", input.at, input.detail);
+      return "recorded";
     },
 
     claim(proposalId: ProposalId, facts: ClaimFacts, now: string): ClaimResult {
@@ -393,7 +447,10 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
 
     auditFor(proposalId: ProposalId) {
       calls.push("auditFor");
-      return (audit.get(proposalId) ?? []).slice(-20).map((entry) => ({ ...entry }));
+      // Mirrors the SQL store: the first row (`requested`) always, then the newest rows up to the limit.
+      const rows = audit.get(proposalId) ?? [];
+      const kept = rows.length <= 20 ? rows : [rows[0], ...rows.slice(-19)];
+      return kept.flatMap((entry) => (entry === undefined ? [] : [{ ...entry }]));
     },
   };
   return store;

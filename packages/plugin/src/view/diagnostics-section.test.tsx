@@ -1089,7 +1089,7 @@ describe("Task 3, Test 6: headings, focus and keyboard", () => {
     }
   });
 
-  it("has exactly one live region in the whole destination and none of its own in the section", async () => {
+  it("has the destination's top live region and the bundle block's own, and nothing else in the section (D-09)", async () => {
     configure();
     requestSettingsSection("diagnostics");
     render(<Shell initialDestination="settings" />);
@@ -1098,12 +1098,13 @@ describe("Task 3, Test 6: headings, focus and keyboard", () => {
       document.querySelectorAll(
         '.ccc-settings [role="status"], .ccc-settings [aria-live]:not([aria-live="off"]), .ccc-settings [role="alert"]',
       ),
-    ).toHaveLength(1);
-    expect(
-      document.querySelectorAll(
-        ".ccc-settings-content [role='status'], .ccc-settings-content [aria-live]",
-      ),
-    ).toHaveLength(0);
+    ).toHaveLength(2);
+    // In the section itself the only live region is the bundle block's line, beside its buttons.
+    const own = document.querySelectorAll(
+      ".ccc-settings-content [role='status'], .ccc-settings-content [aria-live]",
+    );
+    expect(own).toHaveLength(1);
+    expect(own[0]?.getAttribute("data-status-region")).toBe("bundle");
   });
 
   it("tab order follows the keyboard contract: the toolbar button, then each row's action and details toggle; never native disabled, never a positive tabindex", async () => {

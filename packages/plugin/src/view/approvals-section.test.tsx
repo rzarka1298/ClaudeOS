@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SnapshotResponse } from "@ccc/domain";
 import type { ApprovalSummary, ApprovalsSnapshot, DecideResponse } from "@ccc/domain/approval.js";
 import type { ApprovalItemView } from "@ccc/domain/approval-view.js";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
@@ -11,6 +12,7 @@ import {
   type ApprovalsApi,
   configureApprovalsApi,
 } from "../approvals/api.js";
+import { adoptApprovalsFromSnapshot, applyApprovalServiceEvent } from "../approvals/events.js";
 import {
   adoptApprovalsSnapshot,
   applyApprovalSummary,
@@ -923,6 +925,162 @@ describe("Test 9 (provenance strip)", () => {
     ).toBeTruthy();
     await update(() => adoptApprovalsSnapshot(approvalsSnapshot({ pending: [summary(1)] })));
     expect(within(container.querySelector("footer") as HTMLElement).getByText("Live")).toBeTruthy();
+  });
+});
+
+/**
+ * Live run 2f7075a9, UAT 09 item 6: Approve once stayed withheld ("This list may be out of date.
+ * Refresh, then decide.") for a request that had just arrived. The section was open on Agent runs
+ * when the service stopped, so it marked the list stale; the owner moved to another destination, the
+ * service came back and its snapshot was adopted while the section was away; the section was opened
+ * again and still read the old mark, because only a mounted section looked for the snapshot that
+ * clears it (UI-SPEC: stale until a snapshot or an event arrives while the stream is live).
+ */
+/** What the service's stream delivers: the only arrivals that clear a stale mark (FIX15 m6). */
+function streamSnapshot(snapshot: ApprovalsSnapshot): void {
+  adoptApprovalsFromSnapshot({ state: { approvals: snapshot } } as unknown as SnapshotResponse);
+}
+
+function streamEvent(approval: ApprovalSummary): void {
+  applyApprovalServiceEvent({
+    id: 1,
+    type: "approval.upserted",
+    occurredAt: "2026-01-01T00:00:00.000Z",
+    payload: { approval },
+  });
+}
+
+describe("a stale mark and a section that was away (live run 2f7075a9)", () => {
+  const footerOf = (container: Element): HTMLElement =>
+    container.querySelector("footer") as HTMLElement;
+
+  it("is live, not stale, when the stream returned and a snapshot landed while the section was away", async () => {
+    const view = approvalView();
+    install({ detail: () => approvalDetail(view) });
+    hydrate([summaryOf(view)]);
+    const first = renderSection();
+    await update(() => {
+      connectionState.value = { kind: "disconnected", reason: "stream ended" };
+    });
+    first.unmount();
+    // Nobody is looking: the stream returns and the service's snapshot is adopted.
+    await update(() => {
+      connectionState.value = { kind: "live" };
+      streamSnapshot(approvalsSnapshot({ pending: [summaryOf(view)] }));
+    });
+
+    const { container } = renderSection();
+    expect(within(footerOf(container)).getByText("Live")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Refresh approvals" })).toBeNull();
+    fireEvent.click(rowButtons(container)[0] as HTMLElement);
+    const approve = await screen.findByRole("button", { name: /^Approve once/ });
+    await waitFor(() => expect(approve.getAttribute("aria-disabled")).toBeNull());
+    expect(screen.queryByText("This list may be out of date. Refresh, then decide.")).toBeNull();
+  });
+
+  it("is live after an event, not only a snapshot, arrived while the section was away", async () => {
+    install();
+    hydrate([summary(1)]);
+    const first = renderSection();
+    await update(() => {
+      connectionState.value = { kind: "disconnected", reason: "stream ended" };
+    });
+    first.unmount();
+    await update(() => {
+      connectionState.value = { kind: "live" };
+      streamEvent(summary(2));
+    });
+    const { container } = renderSection();
+    expect(within(footerOf(container)).getByText("Live")).toBeTruthy();
+  });
+
+  it("stays stale when the stream returned but nothing arrived while the section was away", async () => {
+    install();
+    hydrate([summary(1)]);
+    const first = renderSection();
+    await update(() => {
+      connectionState.value = { kind: "disconnected", reason: "stream ended" };
+    });
+    first.unmount();
+    await update(() => {
+      connectionState.value = { kind: "live" };
+    });
+    const { container } = renderSection();
+    expect(within(footerOf(container)).getByText("Stale")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Refresh approvals" })).toBeTruthy();
+    // The rule is the mounted one: the next snapshot clears it.
+    await update(() => streamSnapshot(approvalsSnapshot({ pending: [summary(1)] })));
+    expect(within(footerOf(container)).getByText("Live")).toBeTruthy();
+  });
+
+  it("FIX15 m6: a change applied from the HTTP side while the stream was down does not clear the mark; a stream event after it returns does", async () => {
+    install();
+    hydrate([summary(1)]);
+    const first = renderSection();
+    await update(() => {
+      connectionState.value = { kind: "disconnected", reason: "stream ended" };
+    });
+    first.unmount();
+    // A decide response or a single-request refetch lands while the stream is down.
+    await update(() => {
+      applyApprovalSummary(summary(2));
+    });
+    await update(() => {
+      connectionState.value = { kind: "live" };
+    });
+    const second = renderSection();
+    expect(within(footerOf(second.container)).getByText("Stale")).toBeTruthy();
+    second.unmount();
+    // Only the stream's own event or snapshot, delivered while it is live, clears it.
+    await update(() => {
+      streamEvent(summary(3));
+    });
+    const third = renderSection();
+    expect(within(footerOf(third.container)).getByText("Live")).toBeTruthy();
+  });
+
+  it("reads Unavailable while the service is still away, then Live once a snapshot lands", async () => {
+    install();
+    hydrate([summary(1)]);
+    const first = renderSection();
+    await update(() => {
+      connectionState.value = { kind: "disconnected", reason: "stream ended" };
+    });
+    first.unmount();
+    const { container } = renderSection();
+    expect(within(footerOf(container)).getByText("Unavailable")).toBeTruthy();
+    await update(() => {
+      connectionState.value = { kind: "live" };
+      streamSnapshot(approvalsSnapshot({ pending: [summary(1)] }));
+    });
+    expect(within(footerOf(container)).getByText("Live")).toBeTruthy();
+  });
+
+  it("marks a failed refresh against the list it failed to replace, so an arrival while away clears it", async () => {
+    const list = vi.fn(async (): Promise<ApprovalsSnapshot> => {
+      throw new Error("the list did not load");
+    });
+    install({ list });
+    hydrate([summary(1)]);
+    const first = renderSection();
+    await update(() => {
+      approvalsMissedSync.value = true;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh approvals" }));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    first.unmount();
+    expect(approvalsMissedSync.value).toBe(true);
+
+    // A visit that saw no arrival still reads stale ...
+    const second = renderSection();
+    expect(within(footerOf(second.container)).getByText("Stale")).toBeTruthy();
+    second.unmount();
+    // ... and one that follows an event reads live.
+    await update(() => {
+      streamEvent(summary(2));
+    });
+    const third = renderSection();
+    expect(within(footerOf(third.container)).getByText("Live")).toBeTruthy();
   });
 });
 

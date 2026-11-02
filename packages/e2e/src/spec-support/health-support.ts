@@ -90,8 +90,13 @@ export interface HealthRead {
   readonly heading: string;
   /** The label of the current item of the Settings section nav. */
   readonly navCurrent: string | null;
-  /** The destination's one status line. */
+  /** The destination's top status line (a setting, a copy of a command, the section's own checks). */
   readonly statusLine: string;
+  /**
+   * The diagnostic bundle block's own status line (D-09): the outcome of Copy bundle, Save bundle
+   * and the bundle's Run checks again. Empty when the block is not on the page.
+   */
+  readonly bundleStatusLine: string;
   readonly runChecks: {
     readonly label: string;
     readonly name: string | null;
@@ -143,6 +148,9 @@ export interface HealthDomConfig {
   readonly attrCurrent: string;
   readonly attrExpanded: string;
   readonly attrDisabled: string;
+  readonly attrStatusRegion: string;
+  /** The value of the status-region attribute on the bundle block's line. */
+  readonly bundleRegion: string;
   readonly notInVersion: string;
 }
 
@@ -177,6 +185,8 @@ export const HEALTH_DOM_CONFIG: HealthDomConfig = {
   attrCurrent: HEALTH_ATTRS.current,
   attrExpanded: HEALTH_ATTRS.expanded,
   attrDisabled: HEALTH_ATTRS.disabled,
+  attrStatusRegion: HEALTH_ATTRS.statusRegion,
+  bundleRegion: "bundle",
   notInVersion: HEALTH_TEXT.notInVersionScope,
 };
 
@@ -236,7 +246,10 @@ export function rendererReadHealth(c: HealthDomConfig): HealthRead {
   const list = document.querySelector(`.${c.list}`);
   const toolbar = document.querySelector(`.${c.toolbar}`);
   const nav = document.querySelector(`nav.${c.nav} [${c.attrCurrent}="page"]`);
-  const statusLine = document.querySelector(`.${c.status}`);
+  const statusLine = document.querySelector(
+    `.${c.status}:not([${c.attrStatusRegion}="${c.bundleRegion}"])`,
+  );
+  const bundleStatusLine = document.querySelector(`[${c.attrStatusRegion}="${c.bundleRegion}"]`);
   const heading = content === null ? null : content.querySelector("h3");
   const rows: HealthRowRead[] = [];
   if (list !== null) {
@@ -326,6 +339,7 @@ export function rendererReadHealth(c: HealthDomConfig): HealthRead {
     heading: text(heading),
     navCurrent: nav === null ? null : text(nav),
     statusLine: text(statusLine),
+    bundleStatusLine: text(bundleStatusLine),
     runChecks:
       runButton === null
         ? null
@@ -1285,7 +1299,9 @@ export async function rendererPressRunChecksTwice(c: HealthDomConfig): Promise<R
   const text = H[0] as (n: RNode | null) => string;
   const tick = H[1] as () => Promise<void>;
   const button = document.querySelector(`.${c.toolbar} button`);
-  const line = document.querySelector(`.${c.status}`);
+  const line = document.querySelector(
+    `.${c.status}:not([${c.attrStatusRegion}="${c.bundleRegion}"])`,
+  );
   if (button === null) return { found: false, first: null, second: null };
   const first: PressSnapshot[] = [];
   for (let press = 0; press < 2; press += 1) {

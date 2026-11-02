@@ -9,6 +9,7 @@ import {
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connectionState } from "../connection-state.js";
+import { routeServiceEvent } from "../service-event-router.js";
 import { Overview } from "../view/overview.js";
 import {
   type ActiveSessionsData,
@@ -16,6 +17,7 @@ import {
   activeSessionsWidget,
 } from "./active-sessions.js";
 import { applyClaudeServiceEvent } from "./claude-events.js";
+import { nowTick } from "./clock.js";
 import { formatDuration } from "./duration.js";
 import { WidgetFrame } from "./frame.js";
 import {
@@ -67,6 +69,7 @@ function resetSignals(): void {
   claudeIntegration.value = null;
   lastSessionEventAt.value = null;
   connectionState.value = { kind: "connecting" };
+  nowTick.value = Date.now();
 }
 
 beforeEach(resetSignals);
@@ -78,6 +81,9 @@ afterEach(() => {
 describe("Task 1 (tracer): a session.upserted event becomes a hero row in the same tick (Test 1, D-17, PERF-04)", () => {
   it("updates activeSessionsState synchronously and the rendered card shows the row text and glyph", () => {
     connectionState.value = { kind: "live" };
+    // The fixture instants are fixed; the row presentation reads the shared tick (a session this
+    // old against the real clock would correctly read quiet, D-05).
+    nowTick.value = Date.parse("2026-09-25T12:00:00.000Z");
     const event: ServiceEvent = {
       id: 1,
       type: "session.upserted",
@@ -575,5 +581,170 @@ describe("no leaked null/undefined/NaN across every presentation (Test 8)", () =
   it("the empty hero leaks nothing", () => {
     const { container } = renderHero({ sessions: [], nowMs: NOW_MS });
     expectNoLeak(container.textContent ?? "");
+  });
+});
+
+describe("Phase 9 Task 2 Test 3: a quiet session is not counted as active (R-04, SESS-19)", () => {
+  const NOW = Date.parse("2026-09-25T12:00:00.000Z");
+  const QUIET_AT = new Date(NOW - 41 * 60_000).toISOString();
+
+  it("excludes the quiet session from the numeral and says '1 quiet' in the caption and the sr label", () => {
+    const metric = activeSessionsMetric({
+      sessions: [
+        session({ runId: runId(1), state: "running" }),
+        session({ runId: runId(2), state: "running", activity: "idle", lastActivityAt: QUIET_AT }),
+      ],
+      nowMs: NOW,
+    });
+    expect(metric.value).toBe(1);
+    expect(metric.caption).toBe("0 waiting for approval · 1 quiet · 0 unknown");
+    expect(metric.srLabel).toBe("1 active sessions, running or waiting for approval, and 1 quiet");
+  });
+
+  it("a row for the quiet session starts with the quiet glyph and label", () => {
+    sessionsById.value = new Map([
+      [
+        runId(2),
+        session({ runId: runId(2), state: "running", activity: "idle", lastActivityAt: QUIET_AT }),
+      ],
+    ]);
+    connectionState.value = { kind: "live" };
+    nowTick.value = NOW;
+    const { container } = render(
+      <Overview
+        layout={{ entries: [{ widgetId: "active-sessions", size: "tall" }], skipped: [] }}
+        stateFor={() => activeSessionsState}
+        connection={{ kind: "live" }}
+        now={NOW}
+      />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("⋯ Idle — last event 41 min ago");
+    expect(text).not.toContain("▸ Running");
+  });
+
+  it("the quiet row states its age once: no second 'active N minutes ago' segment", () => {
+    sessionsById.value = new Map([
+      [
+        runId(2),
+        session({ runId: runId(2), state: "running", activity: "idle", lastActivityAt: QUIET_AT }),
+      ],
+    ]);
+    connectionState.value = { kind: "live" };
+    nowTick.value = NOW;
+    const { container } = render(
+      <Overview
+        layout={{ entries: [{ widgetId: "active-sessions", size: "tall" }], skipped: [] }}
+        stateFor={() => activeSessionsState}
+        connection={{ kind: "live" }}
+        now={NOW}
+      />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("⋯ Idle — last event 41 min ago");
+    expect(text).not.toMatch(/active \d+ minutes? ago/);
+    expect(text).not.toContain("active 41");
+  });
+
+  it("a non-quiet running row keeps its 'active ...' segment", () => {
+    sessionsById.value = new Map([
+      [
+        runId(2),
+        session({
+          runId: runId(2),
+          state: "running",
+          lastActivityAt: new Date(NOW - 20_000).toISOString(),
+        }),
+      ],
+    ]);
+    connectionState.value = { kind: "live" };
+    nowTick.value = NOW;
+    const { container } = render(
+      <Overview
+        layout={{ entries: [{ widgetId: "active-sessions", size: "tall" }], skipped: [] }}
+        stateFor={() => activeSessionsState}
+        connection={{ kind: "live" }}
+        now={NOW}
+      />,
+    );
+    expect(container.textContent ?? "").toMatch(/▸ Running.* · active /);
+  });
+});
+
+describe("quiet appears with the clock and disappears on a real event (FIX3B Q7)", () => {
+  const NOW = Date.parse("2026-09-25T12:00:00.000Z");
+  const MIN = 60_000;
+
+  function renderCard() {
+    return render(
+      <Overview
+        layout={{ entries: [{ widgetId: "active-sessions", size: "tall" }], skipped: [] }}
+        stateFor={() => activeSessionsState}
+        connection={{ kind: "live" }}
+        now={NOW}
+      />,
+    );
+  }
+
+  function seedIdle(lastActivityAgoMs: number): void {
+    sessionsById.value = new Map([
+      [
+        runId(2),
+        session({
+          runId: runId(2),
+          revision: 3,
+          state: "running",
+          activity: "idle",
+          lastActivityAt: new Date(NOW - lastActivityAgoMs).toISOString(),
+        }),
+      ],
+    ]);
+    connectionState.value = { kind: "live" };
+  }
+
+  it("a Running row turns quiet as the clock advances, with no new event", async () => {
+    seedIdle(20 * MIN);
+    nowTick.value = NOW;
+    const { container } = renderCard();
+    expect(container.textContent ?? "").toContain("▸ Running");
+    expect(container.textContent ?? "").not.toContain("⋯");
+
+    await act(() => {
+      nowTick.value = NOW + 15 * MIN;
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("⋯ Idle — last event 35 min ago");
+    expect(text).not.toContain("▸ Running");
+  });
+
+  it("a real session.upserted through the router revives the quiet row to Running", async () => {
+    seedIdle(41 * MIN);
+    nowTick.value = NOW;
+    const { container } = renderCard();
+    expect(container.textContent ?? "").toContain("⋯ Idle — last event 41 min ago");
+
+    const event: ServiceEvent = {
+      id: 7,
+      type: "session.upserted",
+      occurredAt: new Date(NOW - 5_000).toISOString(),
+      payload: {
+        session: session({
+          runId: runId(2),
+          revision: 4,
+          state: "running",
+          activity: "working",
+          lastActivityAt: new Date(NOW - 5_000).toISOString(),
+        }),
+      },
+    };
+    await act(() => {
+      routeServiceEvent(event);
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("▸ Running");
+    expect(text).not.toContain("⋯");
+    expect(text).not.toContain("Idle — last event");
   });
 });

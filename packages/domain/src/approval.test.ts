@@ -36,12 +36,15 @@ import {
   fitApprovalsSnapshotToBudget,
   normaliseDecidedVia,
   PAYLOAD_HASH_PATTERN,
+  PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL,
+  PRESENCE_REFUSAL_AUDIT_WINDOW_MS,
   PROPOSAL_ID_PATTERN,
   PROPOSAL_STATES,
   PROPOSAL_TRANSITIONS,
   type ProposalId,
   type ProposalState,
   payloadFingerprint,
+  presenceRefusalIsRecordable,
   REQUESTER_KINDS,
   RESTING_PROPOSAL_STATES,
   RequesterSchema,
@@ -544,6 +547,8 @@ describe("routes and schemas (Test 6)", () => {
         "hash-mismatch",
         "not-found",
         "operation-reserved",
+        "presence-denied",
+        "presence-unavailable",
       ].sort(),
     );
     const good: unknown[] = [
@@ -553,6 +558,8 @@ describe("routes and schemas (Test 6)", () => {
       { outcome: "already-decided", state: "denied" },
       { outcome: "not-found" },
       { outcome: "operation-reserved" },
+      { outcome: "presence-denied" },
+      { outcome: "presence-unavailable" },
     ];
     for (const body of good) {
       expect(DecideResponseSchema.safeParse(body).success, JSON.stringify(body)).toBe(true);
@@ -562,6 +569,8 @@ describe("routes and schemas (Test 6)", () => {
       { outcome: "decided" },
       { outcome: "already-decided", state: "nope" },
       { outcome: "hash-mismatch", detail: "x" },
+      { outcome: "presence-denied", reason: "x" },
+      { outcome: "presence-unavailable", reason: "x" },
       {},
     ]) {
       expect(DecideResponseSchema.safeParse(body).success, JSON.stringify(body)).toBe(false);
@@ -604,8 +613,10 @@ describe("routes and schemas (Test 6)", () => {
         "retried-after-restart",
         "reconciled-executed",
         "lapsed",
+        "presence-refused",
       ].sort(),
     );
+    expect(APPROVAL_AUDIT_EVENTS.at(-1)).toBe("presence-refused");
   });
 });
 
@@ -771,7 +782,9 @@ describe("summary and snapshot (Test 7)", () => {
 
 describe("decided via (Test 9)", () => {
   it("has the closed vocabulary plugin or other, and the header constant", () => {
-    expect([...DECIDED_VIA]).toEqual(["plugin", "other"]);
+    // `presence` is the verified channel (D-03); `plugin` and `other` stay unverified hints.
+    expect([...DECIDED_VIA]).toEqual(["plugin", "other", "presence"]);
+    expect((DECIDED_VIA as readonly string[]).includes("presence")).toBe(true);
     expect(DECIDED_VIA_PLUGIN).toBe("plugin");
     expect(DECIDED_VIA_HEADER).toMatch(/^X-[A-Za-z-]+$/);
   });
@@ -781,5 +794,45 @@ describe("decided via (Test 9)", () => {
     for (const value of [undefined, "", "Plugin", "other", "curl", "plugin ", "a".repeat(500)]) {
       expect(normaliseDecidedVia(value), String(value)).toBe("other");
     }
+  });
+
+  it("never lets a header claim the verified channel (T-09-22)", () => {
+    expect(normaliseDecidedVia("presence")).toBe("other");
+    expect(normaliseDecidedVia("Presence")).toBe("other");
+    expect(normaliseDecidedVia(" presence")).toBe("other");
+  });
+});
+
+describe("presenceRefusalIsRecordable (09-FIX6A, M1)", () => {
+  const T = "2026-10-06T10:00:00.000Z";
+  const later = (ms: number) => new Date(Date.parse(T) + ms).toISOString();
+  it("records the first refusal, suppresses a repeat inside the window, records one at the window's edge", () => {
+    expect(presenceRefusalIsRecordable({ total: 0, lastSameReasonAt: null }, T)).toBe(true);
+    expect(presenceRefusalIsRecordable({ total: 1, lastSameReasonAt: T }, later(1))).toBe(false);
+    expect(
+      presenceRefusalIsRecordable(
+        { total: 1, lastSameReasonAt: T },
+        later(PRESENCE_REFUSAL_AUDIT_WINDOW_MS - 1),
+      ),
+    ).toBe(false);
+    expect(
+      presenceRefusalIsRecordable(
+        { total: 1, lastSameReasonAt: T },
+        later(PRESENCE_REFUSAL_AUDIT_WINDOW_MS),
+      ),
+    ).toBe(true);
+  });
+  it("treats a refusal timestamped before the latest as inside the window (a stepped-back clock)", () => {
+    expect(presenceRefusalIsRecordable({ total: 1, lastSameReasonAt: T }, later(-5_000))).toBe(
+      false,
+    );
+  });
+  it("suppresses everything at the per-proposal cap", () => {
+    expect(
+      presenceRefusalIsRecordable(
+        { total: PRESENCE_REFUSAL_AUDIT_CAP_PER_PROPOSAL, lastSameReasonAt: null },
+        later(10 * PRESENCE_REFUSAL_AUDIT_WINDOW_MS),
+      ),
+    ).toBe(false);
   });
 });

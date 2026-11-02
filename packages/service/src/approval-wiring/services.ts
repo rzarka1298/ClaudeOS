@@ -3,6 +3,7 @@ import {
   CLASSIFICATION,
   type Clock,
   type MirrorPort,
+  type PresencePort,
   type ProposalId,
   ProposalIdSchema,
 } from "@ccc/domain";
@@ -49,8 +50,26 @@ export interface ApprovalRuntimeDeps {
   readonly getVaultRoot: () => string | null;
   readonly log: ApprovalLog;
   readonly env: NodeJS.ProcessEnv;
+  /**
+   * The approval decision-proof key, `approvalProofKey(installSecret)` (09-17, D-03). REQUIRED: every
+   * approval is signed with it and every approved or executing row is checked against it. It goes to the
+   * engine and nowhere else; it is never logged, stored or returned by a route.
+   */
+  readonly proofKey: Buffer;
   /** The display name of a registered project, or null. Display only. */
   readonly projectName?: (projectId: string) => string | null;
+  /**
+   * Verifies the owner's presence for presence-required approvals (D-01). Absent, the engine's
+   * default answers `unavailable`, so every such approval fails closed. `main.ts` builds the real helper adapter
+   * (`presencePortFromEnv`); every test and sandbox service gets the fail-closed port.
+   */
+  readonly presence?: PresencePort;
+  /**
+   * Reads the pin a presence signature is verified against (09-18, R-02): `main.ts` builds it with
+   * `pinReaderFromEnv`, guarded by `guardPinReader`. Absent, the engine's default answers null, so every
+   * presence-required approval and stored row fails closed.
+   */
+  readonly readPin?: () => Promise<string | null>;
   /** Replaces the vault mirror (tests only). */
   readonly mirror?: MirrorPort;
   /** Replaces the sweeper's timers (tests only). */
@@ -139,7 +158,10 @@ export function startApprovalServices(deps: ApprovalRuntimeDeps): ApprovalRuntim
     publisher,
     mirror,
     log,
+    proofKey: deps.proofKey,
     ...(projectName === undefined ? {} : { projectName }),
+    ...(deps.presence === undefined ? {} : { presence: deps.presence }),
+    ...(deps.readPin === undefined ? {} : { readPin: deps.readPin }),
   });
   const sweeper = createExpirySweeper({
     engine,

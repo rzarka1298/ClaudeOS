@@ -128,7 +128,7 @@ describe("expiry boundary (Task 1, Test 2)", () => {
       proposalId: id,
       decision: "approve",
       payloadHash: hash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(result).toEqual({ outcome: "expired" });
     await h.engine.settled();
@@ -149,7 +149,7 @@ describe("expiry boundary (Task 1, Test 2)", () => {
       proposalId: id,
       decision: "approve",
       payloadHash: hash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(result.outcome).toBe("decided");
     await h.engine.settled();
@@ -306,7 +306,7 @@ describe("re-proposal after expiry (Task 1, Test 5)", () => {
       proposalId: second.proposalId,
       decision: "approve",
       payloadHash: hash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     await h.engine.settled();
     expect(h.diagnostic.executeCalls).toHaveLength(1);
@@ -347,7 +347,7 @@ describe("lapse in the sweep (Task 1, Test 6)", () => {
       proposalId: id,
       decision: "approve",
       payloadHash: h.store.get(id)?.payloadHash ?? "",
-      via: "plugin",
+      channelHint: "plugin",
     });
     h.clock.advance(60 * MINUTE);
     expect(h.engine.sweepExpired()).toEqual({ expired: 0, lapsed: 0 });
@@ -366,9 +366,12 @@ describe("no notification path (Task 1, Test 7)", () => {
       "publisher",
       "mirror",
       "log",
+      "proofKey",
       "ids",
       "projectName",
       "claimFactsTimeoutMs",
+      "presence",
+      "readPin",
     ] as const;
     type Unlisted = Exclude<keyof ApprovalEngineDeps, (typeof ALLOWED)[number]>;
     // A new dependency (a notifier, say) makes this assignment a compile error.

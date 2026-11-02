@@ -3,13 +3,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServiceEvent, SessionView, SnapshotResponse } from "@ccc/domain";
 import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
+import { SESSION_QUIET_AFTER_MS } from "@ccc/domain/session.js";
 import { beforeEach, describe, expect, it } from "vitest";
 import { adoptClaudeSnapshot, applyClaudeServiceEvent } from "./claude-events.js";
 import {
+  activeSessionsState,
+  activeSessionsStateFor,
   applySessionUpserted,
   claudeIntegration,
   lastSessionEventAt,
   orderSessionRows,
+  sessionQuietAfterMs,
   sessionsById,
 } from "./session-signals.js";
 
@@ -61,6 +65,7 @@ function resetSignals(): void {
   sessionsById.value = new Map();
   claudeIntegration.value = null;
   lastSessionEventAt.value = null;
+  sessionQuietAfterMs.value = SESSION_QUIET_AFTER_MS;
 }
 
 beforeEach(resetSignals);
@@ -311,5 +316,29 @@ describe("orderSessionRows: fixed state order and the 60-minute terminal window 
     ];
 
     expect(orderSessionRows(sessions, NOW)).toEqual([]);
+  });
+});
+
+describe("sessionQuietAfterMs (Phase 9 Task 3, D-07)", () => {
+  it("defaults to the 30-minute constant", () => {
+    expect(sessionQuietAfterMs.value).toBe(SESSION_QUIET_AFTER_MS);
+  });
+
+  it("activeSessionsStateFor takes quietAfterMs from the signal, not the compiled default (FIX3B Q6)", () => {
+    const sessions = new Map([[runId(1), baseSession() as SessionView]]);
+    const read = (): number | undefined => {
+      const state = activeSessionsStateFor({ kind: "live" }, sessions, null, 0);
+      return state.kind === "ready" ? state.data.quietAfterMs : undefined;
+    };
+    expect(read()).toBe(SESSION_QUIET_AFTER_MS);
+    sessionQuietAfterMs.value = 120_000;
+    expect(read()).toBe(120_000);
+  });
+
+  it("the shared activeSessionsState follows the signal as it changes", () => {
+    sessionsById.value = new Map([[runId(1), baseSession() as SessionView]]);
+    sessionQuietAfterMs.value = 45_000;
+    const state = activeSessionsState.value;
+    expect(state.kind === "ready" ? state.data.quietAfterMs : undefined).toBe(45_000);
   });
 });

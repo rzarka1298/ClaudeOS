@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { HEALTH_PATH } from "./auth.js";
 import {
+  APPROVAL_PRESENCE_REASONS,
+  APPROVAL_PRESENCE_STATES,
   COLLECTORS_PART_IDS,
   COLLECTORS_PART_REASONS,
   COLLECTORS_PASSIVE_PART_IDS,
@@ -1059,5 +1061,67 @@ describe("FIX1A MINOR 4: service-side reasons are separate from the plugin-overl
 describe("FIX6A M1: the shared health staleness window", () => {
   it("is five minutes, one constant for the service and the plugin", () => {
     expect(HEALTH_STALE_AFTER_MS).toBe(5 * 60 * 1000);
+  });
+});
+
+describe("09-19 Task 1: the approval presence members of the health response (D-04)", () => {
+  it("Test 1: approvalPresence parses for each closed state; any other value is refused; absent still parses", () => {
+    for (const state of ["available", "unavailable", "unknown"]) {
+      const r = { ...freshInstall(), approvalPresence: state };
+      expect(DiagnosticsHealthResponseSchema.safeParse(r).success, state).toBe(true);
+    }
+    expect(DiagnosticsHealthResponseSchema.safeParse(freshInstall()).success).toBe(true);
+    for (const bad of ["Available", "yes", "", 1, null, true, "available "]) {
+      const r = { ...freshInstall(), approvalPresence: bad };
+      expect(DiagnosticsHealthResponseSchema.safeParse(r).success, String(bad)).toBe(false);
+    }
+  });
+
+  it("keeps the subsystem ids at six and the row tuple unchanged", () => {
+    expect(SUBSYSTEM_IDS).toEqual([
+      "service",
+      "vault",
+      "hooks",
+      "collectors",
+      "scheduler",
+      "launchers",
+    ]);
+    expect(APPROVAL_PRESENCE_STATES).toEqual(["available", "unavailable", "unknown"]);
+  });
+
+  it("Test 1b: the reason is one of the closed codes, never free text", () => {
+    for (const reason of APPROVAL_PRESENCE_REASONS) {
+      const r = {
+        ...freshInstall(),
+        approvalPresence: "unavailable",
+        approvalPresenceReason: reason,
+      };
+      expect(DiagnosticsHealthResponseSchema.safeParse(r).success, reason).toBe(true);
+    }
+    for (const bad of ["no touch id here", "", null, 3, "Not-Enrolled"]) {
+      const r = { ...freshInstall(), approvalPresence: "unavailable", approvalPresenceReason: bad };
+      expect(DiagnosticsHealthResponseSchema.safeParse(r).success, String(bad)).toBe(false);
+    }
+  });
+
+  it("Test 1c: the pin fingerprint is exactly eight lowercase hex characters", () => {
+    const ok = {
+      ...freshInstall(),
+      approvalPresence: "available",
+      approvalPresencePin: "0a1b2c3d",
+    };
+    expect(DiagnosticsHealthResponseSchema.safeParse(ok).success).toBe(true);
+    for (const bad of [
+      "0A1B2C3D",
+      "0a1b2c3",
+      "0a1b2c3d4",
+      "zzzzzzzz",
+      "MIIBIjAN",
+      null,
+      12345678,
+    ]) {
+      const r = { ...freshInstall(), approvalPresence: "available", approvalPresencePin: bad };
+      expect(DiagnosticsHealthResponseSchema.safeParse(r).success, String(bad)).toBe(false);
+    }
   });
 });

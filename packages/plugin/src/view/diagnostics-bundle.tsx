@@ -22,6 +22,7 @@ import {
 import { projectsSnapshot } from "../projects/projects-state.js";
 import { claudeIntegration } from "../widgets/session-signals.js";
 import { CHECKING_LINE, checkedLine, ERROR_HEADING } from "./diagnostics-copy.js";
+import { StatusLine } from "./settings-controls.js";
 import type { SettingsHost } from "./settings-host.js";
 import { useActionGate } from "./settings-pending.js";
 
@@ -94,7 +95,10 @@ export interface DiagnosticBundleBlockProps {
   readonly host: SettingsHost;
   readonly connection: ConnectionState;
   readonly now: number;
-  /** Posts an outcome to the destination's one status line. */
+  /**
+   * The destination's status-line poster. Kept for API stability; the block no longer calls it
+   * (D-09): its own outcomes are announced by the block's local status line, once.
+   */
   readonly notify: (message: string) => void;
   /**
    * The verifier. Defaults to the domain's `verifyAndSerialise`; a parameter only so a test can
@@ -102,6 +106,12 @@ export interface DiagnosticBundleBlockProps {
    */
   readonly verify?: VerifyAndSerialise | undefined;
 }
+
+/**
+ * The gap that makes an identical repeated message audible: the line is cleared, then set again a
+ * beat later (the same rule as the destination's top line, so Copy bundle pressed twice is heard twice).
+ */
+const REPEAT_GAP_MS = 60;
 
 const NUMBER = new Intl.NumberFormat("en");
 const PLURAL = new Intl.PluralRules("en");
@@ -146,7 +156,6 @@ export function DiagnosticBundleBlock({
   host,
   connection,
   now,
-  notify,
   verify,
 }: DiagnosticBundleBlockProps): VNode {
   const kind = connection.kind;
@@ -166,6 +175,17 @@ export function DiagnosticBundleBlock({
 
   const [open, setOpen] = useState(false);
   const [outcome, setOutcome] = useState<BundleOutcome | null>(null);
+  // The bundle actions' own announcer (D-09): mounted, empty, before its first message.
+  const [bundleStatus, setBundleStatus] = useState("");
+  const shownRef = useRef("");
+  const repeatTimerRef = useRef<number | null>(null);
+  // The bundle text a copy or save message described; null when the line holds nothing about a
+  // bundle (empty, or a checks line). A rebuild to different text or hiding the preview clears it.
+  const describedTextRef = useRef<string | null>(null);
+  // The preview's identity: bumped when the preview is hidden or its text changes, so a Copy or
+  // Save that finishes afterwards (FIX15) cannot describe a preview that is no longer on screen.
+  const previewEpochRef = useRef(0);
+  const shownTextRef = useRef<string | null>(null);
   const previewId = useId();
   const reasonId = useId();
   const saveReasonId = useId();
@@ -187,8 +207,45 @@ export function DiagnosticBundleBlock({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (repeatTimerRef.current !== null) window.clearTimeout(repeatTimerRef.current);
     };
   }, []);
+
+  /** The one way a bundle action speaks: its own line, beside its buttons (D-09). */
+  function announce(message: string): void {
+    // A press that finishes after unmount must not set a timer or touch state.
+    if (!mountedRef.current) return;
+    if (repeatTimerRef.current !== null) window.clearTimeout(repeatTimerRef.current);
+    repeatTimerRef.current = null;
+    if (message === shownRef.current && message !== "") {
+      shownRef.current = "";
+      setBundleStatus("");
+      repeatTimerRef.current = window.setTimeout(() => {
+        repeatTimerRef.current = null;
+        shownRef.current = message;
+        setBundleStatus(message);
+      }, REPEAT_GAP_MS);
+      return;
+    }
+    shownRef.current = message;
+    setBundleStatus(message);
+  }
+
+  /** A copy or save outcome: announced, and remembered as describing this exact bundle text. */
+  function announceAbout(epoch: number, bundleText: string, message: string): void {
+    if (!mountedRef.current || epoch !== previewEpochRef.current) return;
+    announce(message);
+    describedTextRef.current = bundleText;
+  }
+
+  /** Empties the bundle line (and any pending repeat) without announcing anything. */
+  function clearBundleLine(): void {
+    if (repeatTimerRef.current !== null) window.clearTimeout(repeatTimerRef.current);
+    repeatTimerRef.current = null;
+    describedTextRef.current = null;
+    shownRef.current = "";
+    setBundleStatus("");
+  }
 
   /** Builds from the values as they are at this moment (signals read with `peek`). */
   function build(): BundleOutcome | null {
@@ -230,7 +287,17 @@ export function DiagnosticBundleBlock({
   // so the preview never shows an older answer than the one the plugin holds. The string is replaced
   // as a whole: the preview, Copy and Save move together.
   useEffect(() => {
-    if (openRef.current) setOutcome(build());
+    if (!openRef.current) return;
+    const next = build();
+    const nextText = next?.kind === "offered" ? next.text : null;
+    if (nextText !== shownTextRef.current) previewEpochRef.current += 1;
+    shownTextRef.current = nextText;
+    setOutcome(next);
+    // A copy or save message is about one string; once the preview shows a different one it is stale.
+    const described = describedTextRef.current;
+    if (described !== null && (next?.kind !== "offered" || next.text !== described)) {
+      clearBundleLine();
+    }
   }, [
     response,
     phase,
@@ -256,8 +323,11 @@ export function DiagnosticBundleBlock({
   }, [outcome]);
 
   function close(): void {
+    previewEpochRef.current += 1;
+    shownTextRef.current = null;
     setOpen(false);
     setOutcome(null);
+    clearBundleLine();
   }
 
   function toggle(): void {
@@ -265,17 +335,24 @@ export function DiagnosticBundleBlock({
       close();
       return;
     }
-    setOutcome(build());
+    const built = build();
+    shownTextRef.current = built?.kind === "offered" ? built.text : null;
+    setOutcome(built);
     setOpen(true);
   }
 
   async function copy(): Promise<void> {
     if (outcome?.kind !== "offered" || !copyGate.begin()) return;
+    const epoch = previewEpochRef.current;
     try {
       await host.copyText(outcome.text);
-      notify("Bundle copied.");
+      announceAbout(epoch, outcome.text, "Bundle copied.");
     } catch {
-      notify("Couldn't copy the bundle. Select the text in the preview and copy it by hand.");
+      announceAbout(
+        epoch,
+        outcome.text,
+        "Couldn't copy the bundle. Select the text in the preview and copy it by hand.",
+      );
     } finally {
       copyGate.end();
     }
@@ -287,11 +364,12 @@ export function DiagnosticBundleBlock({
    */
   async function save(): Promise<void> {
     if (outcome?.kind !== "offered" || !saveAvailable || !saveGate.begin()) return;
+    const epoch = previewEpochRef.current;
     try {
       const result = await exporter.save(outcome.text, host.display.vaultBasePath, nowRef.current);
-      notify(SAVE_NOTICES[result.kind]);
+      announceAbout(epoch, outcome.text, SAVE_NOTICES[result.kind]);
     } catch {
-      notify(SAVE_FAILED);
+      announceAbout(epoch, outcome.text, SAVE_FAILED);
     } finally {
       saveGate.end();
     }
@@ -300,14 +378,15 @@ export function DiagnosticBundleBlock({
   /** `Run checks again` (stale line and refusal panel): the owner's press re-runs the read-only checks. */
   async function runChecks(): Promise<void> {
     if (!live || !checkGate.begin()) return;
-    notify(CHECKING_LINE);
+    describedTextRef.current = null;
+    announce(CHECKING_LINE);
     const result = await refreshHealth("gesture", { vaultBasePath: host.display.vaultBasePath });
     checkGate.end();
     if (!mountedRef.current) return;
-    if (result.kind === "ok") notify(checkedLine(result.timedOut));
+    if (result.kind === "ok") announce(checkedLine(result.timedOut));
     // An error, or a check the service going away cancelled with no newer fetch to take its place:
     // either way it did not finish, and the line must not stay on `Checking…`.
-    else notify(ERROR_HEADING);
+    else announce(ERROR_HEADING);
   }
 
   function onPreviewKeyDown(event: KeyboardEvent): void {
@@ -457,6 +536,7 @@ export function DiagnosticBundleBlock({
           {offered && !saveAvailable && <p id={saveReasonId}>{SAVE_UNAVAILABLE_REASON}</p>}
         </div>
       )}
+      <StatusLine message={bundleStatus} region="bundle" />
     </>
   );
 }

@@ -59,6 +59,13 @@ describe("the browser barrel (index.browser.ts)", () => {
     expect(Object.keys(browser)).not.toContain("HOSTILE_CORPUS");
   });
 
+  it("exports errnoOf from both barrels (plan 09-07)", () => {
+    expect(reExports("index.ts")).toContain("./errno.js");
+    expect(reExports("index.browser.ts")).toContain("./errno.js");
+    expect(Object.keys(full)).toContain("errnoOf");
+    expect(Object.keys(browser)).toContain("errnoOf");
+  });
+
   it("exports the diagnostics and display-path modules from both barrels (plan 08-01)", () => {
     for (const mod of ["./diagnostics.js", "./display-path.js"]) {
       expect(reExports("index.ts"), mod).toContain(mod);

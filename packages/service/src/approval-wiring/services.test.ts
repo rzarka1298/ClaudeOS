@@ -10,15 +10,27 @@ import type {
   OperationDefinition,
   ServiceEventType,
 } from "@ccc/domain";
-import { applyMigrations, type OperationalStore, openStore } from "@ccc/operational-store";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  applyMigrations,
+  createApprovalStore,
+  type OperationalStore,
+  openStore,
+} from "@ccc/operational-store";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import * as approvalEntry from "../approval/index.js";
 import {
   type ApprovalRuntimeDeps,
   resolveSweepIntervalMs,
   resolveTestLifetimeMs,
   startApprovalServices,
 } from "./services.js";
+
+// Passes every call through to the real engine, and records what it was built from.
+vi.mock("../approval/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../approval/index.js")>();
+  return { ...actual, createApprovalEngine: vi.fn(actual.createApprovalEngine) };
+});
 
 let base: string;
 let store: OperationalStore;
@@ -85,6 +97,9 @@ function fakeOperations(): FakeOps {
   return { definitions: [diagnostic, terminate], executed };
 }
 
+/** A fixed 32-byte proof key for the composed services (09-17). */
+const PROOF_KEY = Buffer.alloc(32, 5);
+
 interface Published {
   readonly type: ServiceEventType;
   readonly payload: unknown;
@@ -106,6 +121,7 @@ function baseDeps(ops: FakeOps, published: Published[] = []): ApprovalRuntimeDep
     getVaultRoot: () => null,
     log,
     env: {},
+    proofKey: PROOF_KEY,
   };
 }
 
@@ -141,7 +157,7 @@ describe("startApprovalServices: shutdown refuses late decisions (wave-5 review)
       proposalId: one.proposalId,
       decision: "approve",
       payloadHash: oneFound.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(ops.executed).toHaveLength(1);
 
@@ -157,7 +173,7 @@ describe("startApprovalServices: shutdown refuses late decisions (wave-5 review)
       proposalId: two.proposalId,
       decision: "approve",
       payloadHash: twoFound.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(late.outcome).not.toBe("decided");
     await runtime.settled();
@@ -254,7 +270,7 @@ describe("startApprovalServices: the test approval round trip (Task 1, Tests 1 a
       proposalId,
       decision: "approve",
       payloadHash: found.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(decided.outcome).toBe("decided");
     await runtime.settled();
@@ -264,7 +280,7 @@ describe("startApprovalServices: the test approval round trip (Task 1, Tests 1 a
       proposalId,
       decision: "approve",
       payloadHash: found.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(again.outcome).toBe("already-decided");
     await runtime.settled();
@@ -309,7 +325,7 @@ describe("startApprovalServices: the test approval round trip (Task 1, Tests 1 a
       proposalId: raised.proposalId,
       decision: "approve",
       payloadHash: flipOneCharacter(found.payloadHash),
-      via: "plugin",
+      channelHint: "plugin",
     });
     expect(result.outcome).toBe("hash-mismatch");
     await runtime.settled();
@@ -328,7 +344,7 @@ describe("startApprovalServices: the test approval round trip (Task 1, Tests 1 a
       proposalId: raised.proposalId,
       decision: "deny",
       payloadHash: found.payloadHash,
-      via: "other",
+      channelHint: "other",
     });
     const after = runtime.services.get(raised.proposalId);
     if (after.kind !== "found") throw new Error("expected found");
@@ -498,6 +514,139 @@ describe("the guarded test-lifetime override (Task 3, Test 5)", () => {
     expect(Date.parse(found.summary.expiresAt) - Date.parse(found.summary.createdAt)).toBe(
       15 * 60 * 1000,
     );
+    await runtime.stop();
+  });
+});
+
+describe("the presence port (09-14, Test 3)", () => {
+  const engineDeps = () =>
+    vi.mocked(approvalEntry.createApprovalEngine).mock.calls.at(-1)?.[0] as
+      | { presence?: unknown }
+      | undefined;
+
+  it("hands an optional presence port to the engine", () => {
+    const port = {
+      async prove() {
+        return { kind: "denied" } as const;
+      },
+      async availability() {
+        return "available" as const;
+      },
+    };
+    const runtime = startApprovalServices({ ...baseDeps(fakeOperations()), presence: port });
+    expect(engineDeps()?.presence).toBe(port);
+    void runtime.stop();
+  });
+
+  it("builds the engine with no port when none is given, so the engine's unavailable default stands", () => {
+    const runtime = startApprovalServices(baseDeps(fakeOperations()));
+    expect(engineDeps()).not.toHaveProperty("presence");
+    void runtime.stop();
+  });
+});
+
+describe("the pin reader (09-18 Task 3, Test 2)", () => {
+  // The production classification table has no enabled presence-required row, so an approve cannot be driven
+  // through these services to the port; the engine tests (engine-presence, recovery) prove what the engine does
+  // with them. What is pinned here is the wiring: both dependencies reach the engine, by identity.
+  const engineDeps = () =>
+    vi.mocked(approvalEntry.createApprovalEngine).mock.calls.at(-1)?.[0] as
+      | { presence?: unknown; readPin?: unknown }
+      | undefined;
+
+  it("hands the presence port and the pin reader to the engine", () => {
+    const port = {
+      async prove() {
+        return { kind: "denied" } as const;
+      },
+      async availability() {
+        return "available" as const;
+      },
+    };
+    const readPin = async () => null;
+    const runtime = startApprovalServices({
+      ...baseDeps(fakeOperations()),
+      presence: port,
+      readPin,
+    });
+    expect(engineDeps()?.presence).toBe(port);
+    expect(engineDeps()?.readPin).toBe(readPin);
+    void runtime.stop();
+  });
+
+  it("builds the engine with no pin reader when none is given, so presence-required rows fail closed", () => {
+    const runtime = startApprovalServices(baseDeps(fakeOperations()));
+    expect(engineDeps()).not.toHaveProperty("readPin");
+    void runtime.stop();
+  });
+});
+
+describe("the decision proof through the composed services (09-17 Task 1, Test 3, tracer)", () => {
+  it("does not compile without a proof key", () => {
+    const { proofKey: _omitted, ...withoutKey } = baseDeps(fakeOperations());
+    // @ts-expect-error proofKey is required: a construction site cannot skip the proof.
+    const attempt = () => startApprovalServices(withoutKey);
+    expect(typeof attempt).toBe("function");
+  });
+
+  it("an approve over the real migrated store leaves a verifying proof, a deny none, and the key is never logged", async () => {
+    const lines: string[] = [];
+    const record = (fields: object): void => void lines.push(JSON.stringify(fields));
+    const runtime = startApprovalServices({
+      ...baseDeps(fakeOperations()),
+      log: { info: record, warn: record, error: record },
+    });
+    await runtime.recover();
+    const sql = createApprovalStore(store.db);
+    const approvedId = (runtime.services.test({}) as { proposalId: string }).proposalId;
+    const approvedFound = runtime.services.get(approvedId);
+    if (approvedFound.kind !== "found") throw new Error("expected found");
+    const reply = await runtime.services.decide({
+      proposalId: approvedId,
+      decision: "approve",
+      payloadHash: approvedFound.payloadHash,
+      channelHint: "plugin",
+    });
+    expect(reply.outcome).toBe("decided");
+    await runtime.settled();
+
+    const row = sql.get(approvedId as never);
+    if (row === null) throw new Error("expected a row");
+    expect(row.decisionProof).toEqual(expect.any(String));
+    expect(
+      approvalEntry.verifyDecisionProof(PROOF_KEY, row, { presenceRequired: false, pin: null }),
+    ).toBe("valid");
+    expect(
+      approvalEntry.verifyDecisionProof(Buffer.alloc(32, 6), row, {
+        presenceRequired: false,
+        pin: null,
+      }),
+    ).toBe("invalid");
+
+    const second = runtime.engine.submit({
+      operation: "session.force-terminate",
+      subject: "run-1",
+      requester: { kind: "dashboard", label: "Agent runs" },
+      projectId: null,
+      runId: null,
+      reason: "r",
+      payload: { runId: "run-1" },
+    });
+    if (second.kind !== "proposed") throw new Error("expected proposed");
+    const secondFound = runtime.services.get(second.proposalId);
+    if (secondFound.kind !== "found") throw new Error("expected found");
+    await runtime.services.decide({
+      proposalId: second.proposalId,
+      decision: "deny",
+      payloadHash: secondFound.payloadHash,
+      channelHint: "plugin",
+    });
+    expect(sql.get(second.proposalId)?.decisionProof ?? null).toBeNull();
+
+    const logged = lines.join("\n");
+    expect(logged).not.toContain(PROOF_KEY.toString("hex"));
+    expect(logged).not.toContain(PROOF_KEY.toString("base64"));
+    expect(logged).not.toContain(row.decisionProof ?? "no-proof");
     await runtime.stop();
   });
 });

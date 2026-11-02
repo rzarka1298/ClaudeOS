@@ -6,7 +6,10 @@ import {
   isTerminalRunState,
   LAUNCH_SOURCES,
   NOT_REPORTED,
+  presentRunState,
+  QUIET_RUN_GLYPH,
   RUN_STATE_DISPLAY,
+  SESSION_QUIET_AFTER_MS,
   type SessionRun,
   type SessionView,
   SessionViewSchema,
@@ -80,7 +83,7 @@ describe("RUN_STATE_DISPLAY (Test 5, D-16, UI-SPEC Run-state vocabulary)", () =>
 
   it("declares the fixed unknown-state explanation and the not-reported string", () => {
     expect(STALE_RUN_EXPLANATION).toBe(
-      "No end event arrived and the process is gone. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.",
+      "No end event arrived, and the process is gone or couldn't be checked. It may have crashed, been killed, or lost its last event, so it's shown as unknown rather than guessed.",
     );
     expect(NOT_REPORTED).toBe("Not reported");
   });
@@ -274,4 +277,125 @@ describe("isSessionListed", () => {
       expect(isSessionListed({ state, hasConversation })).toBe(listed);
     },
   );
+});
+
+describe("SESSION_QUIET_AFTER_MS (Phase 9, D-07, R-04)", () => {
+  it("Test 3: is 30 minutes, the PID-less inactivity default", () => {
+    expect(SESSION_QUIET_AFTER_MS).toBe(30 * 60 * 1000);
+  });
+});
+
+describe("presentRunState (Phase 9, D-05, R-04, SESS-19)", () => {
+  const MIN = 60_000;
+  const NOW = Date.parse("2026-09-25T12:00:00.000Z");
+  const ago = (ms: number): string => new Date(NOW - ms).toISOString();
+  const view = (
+    overrides: Partial<
+      Pick<SessionView, "state" | "activity" | "lastActivityAt" | "startedAt">
+    > = {},
+  ): Pick<SessionView, "state" | "activity" | "lastActivityAt" | "startedAt"> => ({
+    state: "running",
+    activity: "idle",
+    lastActivityAt: ago(41 * MIN),
+    startedAt: ago(300 * MIN),
+    ...overrides,
+  });
+
+  it("Test 1 (tracer): the sitting's 41-minute idle session reads Idle with its age and the quiet glyph", () => {
+    const p = presentRunState(view(), NOW);
+    expect(p.quiet).toBe("idle");
+    expect(p.glyph).toBe("⋯");
+    expect(p.label).toBe("Idle — last event 41 min ago");
+    expect(p.group).toBe("active");
+  });
+
+  it("FIX15: a future-dated last event (clock skew) is not trusted as fresh; the age runs from the start", () => {
+    const p = presentRunState(
+      view({ lastActivityAt: new Date(NOW + 10 * MIN).toISOString(), startedAt: ago(300 * MIN) }),
+      NOW,
+    );
+    expect(p.quiet).toBe("idle");
+    expect(p.label).toBe("Idle — no events since start, 5 h");
+    // A small skew inside the tolerance is just now.
+    const near = presentRunState(
+      view({ lastActivityAt: new Date(NOW + 5_000).toISOString() }),
+      NOW,
+    );
+    expect(near.quiet).toBeNull();
+  });
+
+  it("Test 2: exactly at the threshold flips from Running to quiet", () => {
+    const q = 10 * MIN;
+    const before = presentRunState(view({ lastActivityAt: ago(q - 1) }), NOW, q);
+    expect(before).toEqual({ ...RUN_STATE_DISPLAY.running, quiet: null });
+    expect(presentRunState(view({ lastActivityAt: ago(q) }), NOW, q).quiet).toBe("idle");
+    expect(presentRunState(view({ lastActivityAt: ago(q + 1) }), NOW, q).quiet).toBe("idle");
+  });
+
+  it("Test 3: minutes floor, under a minute and hours are worded whole", () => {
+    expect(presentRunState(view({ lastActivityAt: ago(41 * MIN + 59_000) }), NOW).label).toBe(
+      "Idle — last event 41 min ago",
+    );
+    expect(presentRunState(view({ lastActivityAt: ago(59_000) }), NOW, 1000).label).toBe(
+      "Idle — last event less than a minute ago",
+    );
+    expect(presentRunState(view({ lastActivityAt: ago(60 * MIN) }), NOW).label).toBe(
+      "Idle — last event 1 h ago",
+    );
+    expect(presentRunState(view({ lastActivityAt: ago(125 * MIN) }), NOW).label).toBe(
+      "Idle — last event 2 h ago",
+    );
+  });
+
+  it("Test 4: wording follows the last activity signal; startedAt backs up a missing lastActivityAt; bad instants fall back", () => {
+    const working = presentRunState(view({ activity: "working" }), NOW);
+    expect(working.label).toBe("No events for 41 min");
+    expect(working.quiet).toBe("silent");
+    expect(presentRunState(view({ activity: null }), NOW).quiet).toBe("idle");
+    const fromStart = presentRunState(
+      view({ lastActivityAt: null, startedAt: ago(45 * MIN) }),
+      NOW,
+    );
+    // No event was ever seen, so the age is the time since start and the label must not claim one.
+    expect(fromStart.label).toBe("Idle — no events since start, 45 min");
+    expect(fromStart.label).not.toContain("last event");
+    const silentFromStart = presentRunState(
+      view({ activity: "working", lastActivityAt: null, startedAt: ago(45 * MIN) }),
+      NOW,
+    );
+    expect(silentFromStart.label).toBe("No events for 45 min");
+    const bad = presentRunState(view({ lastActivityAt: "not-a-date" }), NOW);
+    expect(bad).toEqual({ ...RUN_STATE_DISPLAY.running, quiet: null });
+    expect(bad.label).not.toContain("NaN");
+  });
+
+  it("Test 5: only a running session can be quiet", () => {
+    for (const state of [
+      "waiting-for-approval",
+      "stale",
+      "queued",
+      "starting",
+      "completed",
+      "failed",
+      "cancelled",
+    ] as const) {
+      expect(presentRunState(view({ state, lastActivityAt: ago(500 * MIN) }), NOW)).toEqual({
+        ...RUN_STATE_DISPLAY[state],
+        quiet: null,
+      });
+    }
+  });
+
+  it("Test 6: a fresh event revives the running presentation", () => {
+    const p = presentRunState(view({ lastActivityAt: ago(1000) }), NOW);
+    expect(p.quiet).toBeNull();
+    expect(`${p.glyph} ${p.label}`).toBe("▸ Running");
+  });
+
+  it("Test 7: the quiet glyph is distinct from every run-state and freshness glyph", () => {
+    expect(QUIET_RUN_GLYPH).toBe("⋯");
+    for (const entry of Object.values(RUN_STATE_DISPLAY))
+      expect(entry.glyph).not.toBe(QUIET_RUN_GLYPH);
+    expect(["●", "◐", "◷", "○"]).not.toContain(QUIET_RUN_GLYPH);
+  });
 });

@@ -12,8 +12,11 @@ import {
   SnapshotResponseSchema,
 } from "@ccc/domain";
 import { applyMigrations, type OperationalStore, openStore } from "@ccc/operational-store";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import pino from "pino";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { approvalRoutes } from "./approval-wiring/routes.js";
+import { startClaudeServices } from "./claude/services.js";
+import { createEventBus } from "./events/event-bus.js";
 import type { ProjectServices } from "./projects/project-routes.js";
 import {
   createFakeServices,
@@ -262,6 +265,100 @@ describe("the whole snapshot stays under the client cap (task 2 test 5, T-06-30)
     try {
       await getSnapshot(harness);
       expect(fake.snapshotBudgets).toEqual([APPROVAL_RESPONSE_BUDGET_BYTES]);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 09-10 (D-07, R-04): the snapshot carries the service's effective quiet threshold
+
+describe("snapshot state.sessionQuietAfterMs (09-10, D-07)", () => {
+  const saved = {
+    runtime: process.env.CCC_RUNTIME_DIR,
+    config: process.env.CLAUDE_CONFIG_DIR,
+    spool: process.env.CCC_SPOOL_PATH,
+  };
+  let runtimeDir: string;
+
+  beforeEach(() => {
+    // The Claude services resolve their spool paths at call time: keep them in a temp dir.
+    runtimeDir = mkdtempSync(join(baseDir, "quiet-"));
+    mkdirSync(join(runtimeDir, "claude", "projects"), { recursive: true });
+    process.env.CCC_RUNTIME_DIR = runtimeDir;
+    process.env.CLAUDE_CONFIG_DIR = join(runtimeDir, "claude");
+    delete process.env.CCC_SPOOL_PATH;
+  });
+
+  afterEach(() => {
+    for (const [key, value] of [
+      ["CCC_RUNTIME_DIR", saved.runtime],
+      ["CLAUDE_CONFIG_DIR", saved.config],
+      ["CCC_SPOOL_PATH", saved.spool],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  async function snapshotWithClaude(quietKnob: string | undefined) {
+    const claudeStore = openStore(join(runtimeDir, "claude-operational.db"));
+    applyMigrations(claudeStore.db);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      CCC_SPOOL_POLL_MS: "50",
+      CCC_LIVENESS_SWEEP_MS: "60000",
+    };
+    delete env.CCC_QUIET_THRESHOLD_MS;
+    if (quietKnob !== undefined) env.CCC_QUIET_THRESHOLD_MS = quietKnob;
+    const services = await startClaudeServices({
+      store: claudeStore,
+      bus: createEventBus(),
+      logger: pino({ level: "silent" }),
+      env,
+    });
+    const harness = await startRouteHarness(store, { claude: services.routeDeps });
+    try {
+      return await getSnapshot(harness);
+    } finally {
+      await harness.close();
+      await services.stop();
+      claudeStore.close();
+    }
+  }
+
+  it("carries CCC_QUIET_THRESHOLD_MS when the knob is set", async () => {
+    const reply = await snapshotWithClaude("120000");
+    expect(reply.status).toBe(200);
+    expect(reply.body.state.sessionQuietAfterMs).toBe(120_000);
+    expect(SnapshotResponseSchema.safeParse(reply.body).success).toBe(true);
+  });
+
+  it("carries the 30 minute default without the knob, and a bad knob falls back to it", async () => {
+    const unset = await snapshotWithClaude(undefined);
+    expect(unset.body.state.sessionQuietAfterMs).toBe(1_800_000);
+    const bad = await snapshotWithClaude("0");
+    expect(bad.body.state.sessionQuietAfterMs).toBe(1_800_000);
+    expect(SnapshotResponseSchema.safeParse(unset.body).success).toBe(true);
+  });
+
+  // L1 (FIX3A): a knob outside the schema's int / 1..86_400_000 range must not break the snapshot.
+  it("a fractional, oversized or non-finite knob still yields a parseable snapshot at the default", async () => {
+    for (const raw of ["1500.5", "0.5", "172800000", "1e300"]) {
+      const reply = await snapshotWithClaude(raw);
+      expect(reply.status).toBe(200);
+      expect(reply.body.state.sessionQuietAfterMs).toBe(1_800_000);
+      expect(SnapshotResponseSchema.safeParse(reply.body).success).toBe(true);
+    }
+  });
+
+  it("omits the member without Claude services, never inventing a threshold", async () => {
+    const harness = await startRouteHarness(store, {});
+    try {
+      const reply = await getSnapshot(harness);
+      expect("sessionQuietAfterMs" in reply.body.state).toBe(false);
+      expect(SnapshotResponseSchema.safeParse(reply.body).success).toBe(true);
     } finally {
       await harness.close();
     }

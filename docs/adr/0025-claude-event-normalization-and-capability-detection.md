@@ -21,6 +21,15 @@ source reads `unavailable — telemetry shape changed` until a valid record of
 that event arrives. This record completes ADR-06 and amends ADR-0010's
 subscription set and delivery rules.
 
+Amended 2026-10 (Phase 9): the stale-resolution rules now follow D-05, D-06 and
+D-07. A live, identity-matched process is never moved off `running` for quiet
+alone, a process that cannot be checked beyond the quiet threshold becomes
+`stale`, and the quiet threshold is one knob, `CCC_QUIET_THRESHOLD_MS`, that
+the snapshot also carries to the plugin. The knob accepts only a positive
+integer of at most 86,400,000 ms (the snapshot schema's bound); any other value
+falls back to the default so the snapshot always parses. Unknown identity counts
+only when it persists for the whole threshold (FIX3A).
+
 ## Subscription and delivery (amends ADR-0010)
 
 The installer subscribes 15 events. ADR-0010's set was `SessionStart`,
@@ -210,7 +219,38 @@ A missing lifecycle event never produces an invented terminal state
 - **Start timeout.** A `starting` Run with no `SessionStart` within 60 s moves
   to `stale`: never observed starting.
 - **PID-less fallback.** A Run without a PID falls back to an inactivity
-  threshold, starting at 30 minutes with no event while not idle.
+  threshold: 30 minutes with no event, whatever its last activity.
+- **Quiet presentation.** A pid-bearing Run whose process is alive and whose
+  identity matches stays `running` however long it is quiet (D-05). The state
+  never changes for quiet alone. After `CCC_QUIET_THRESHOLD_MS` (default
+  30 minutes) with no event, measured from `lastActivityAt`, the plugin labels
+  the Run idle or silent. The label is presentation only and never changes
+  state. The service reports its effective threshold as
+  `state.sessionQuietAfterMs` in the snapshot, so the plugin obeys the same knob
+  (D-07).
+- **Unknown identity.** A pid-bearing Run in `running` or `waiting-for-approval`
+  whose process identity cannot be checked (the `ps` read failed, so the
+  identity is unknown) moves to `stale` through the reducer evidence
+  `identity-unknown-timeout` (D-06) only when two things hold at once: the
+  identity has been unknown on every sweep for at least the quiet threshold
+  (the sweeper remembers the sweep that first saw it unknown, in memory, and any
+  `same`, `gone` or backfilled reading, or the Run leaving the candidate set,
+  restarts that clock), and its last event is at least the quiet threshold old
+  at the moment of applying. The sweeper's own checks against the database row
+  are only a cheap filter: the evidence carries the cutoff instant
+  (`quietBefore`, the sweep's time minus the threshold) and the reducer applies
+  it only when the Run, as the pipeline sees it inside its serialized apply
+  (activity the pipeline is still coalescing in memory included), has a last
+  activity at or before that cutoff. Newer activity makes the evidence a
+  no-op, so a hook that lands during the `ps` read, between the sweeper's
+  re-check and its apply, or that is held unflushed, always wins. One failed
+  `ps` read, which makes every pid
+  unknown at once, therefore starts the clock and stales nothing, and an
+  intermittently failing `ps` never flaps a Run between stale and running. The
+  kind is separate from the PID-less `inactivity-timeout` and never writes
+  `completed` or `failed`. A later sweep that reads the identity as the same
+  process revives the Run through `pid-alive`. Below the threshold an unknown
+  identity changes nothing.
 - **Restart recovery.** Before the socket opens, every non-terminal Run
   becomes `stale` (SVC-11) and its revision is bumped. The sweep then revives
   identity-verified live PIDs, and the spool drain applies queued endings.
@@ -232,6 +272,7 @@ owner's service runs with.
 | Grace before `pid-gone` | 10 s | `CCC_LIVENESS_GRACE_MS` | 05-11 |
 | Start timeout (queued or starting, no `SessionStart`) | 60 s | `CCC_START_TIMEOUT_MS` | 05-11 |
 | PID-less inactivity threshold | 30 min | `CCC_PIDLESS_INACTIVITY_MS` | 05-11 |
+| Quiet threshold (presentation and unknown-identity timeout) | 30 min | `CCC_QUIET_THRESHOLD_MS` | 09-10 |
 | Stale revival window after restart | 24 h | none | 05-11 |
 | Re-attribution window for ended Runs | 7 days | none | 05-11 |
 | Spool poll interval (at most) | 2 s | `CCC_SPOOL_POLL_MS` | 05-08 |
@@ -243,8 +284,8 @@ owner's service runs with.
 
 The sweep lands `pid-gone` within one sweep interval plus the grace, so a
 silently dead session reads as unknown within about 15 s. The PID-less
-threshold is a Claude's Discretion value: 30 minutes with no event while not
-idle. The measured PERF-04 path below (p50 34 to 35 ms, p95 37 to 40 ms over
+threshold is a Claude's Discretion value: 30 minutes with no event, whatever
+the last activity. The measured PERF-04 path below (p50 34 to 35 ms, p95 37 to 40 ms over
 three runs) sits far inside its 2 s p95 budget.
 
 ### Measured PERF-04 path

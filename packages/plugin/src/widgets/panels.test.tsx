@@ -92,7 +92,7 @@ afterEach(() => {
 const TASK_ID = (n: number): string => `0mfk1a2b3${n.toString(16).padStart(16, "0")}`;
 
 function todayTask(n: number, extra: Partial<TodayTask> = {}): TodayTask {
-  return { taskId: TASK_ID(n), title: `Task ${n}`, meta: `Due Oct ${n}`, ...extra };
+  return { taskId: TASK_ID(n), title: `Task ${n}`, meta: `Due Oct ${n}`, overdue: false, ...extra };
 }
 
 const NOW_MS = Date.parse(OBSERVED);
@@ -143,7 +143,7 @@ describe("Today: block order, rows and the always-present note (plan 08-14, UI-S
   it("renders the Due today heading, then rows with their meta, then the not-in-version note", () => {
     const { container } = todayCard(
       todayData({
-        rows: [todayTask(1, { meta: "Overdue since Oct 18" }), todayTask(2)],
+        rows: [todayTask(1, { meta: "Overdue since Oct 18", overdue: true }), todayTask(2)],
         nextOpen: null,
       }),
     );
@@ -151,7 +151,8 @@ describe("Today: block order, rows and the always-present note (plan 08-14, UI-S
     const headings = [...(body?.querySelectorAll(".ccc-today-section") ?? [])].map(
       (h) => h.textContent,
     );
-    expect(headings).toEqual(["Due today", "Automation"]);
+    // An overdue row among them: the heading says so (09-04, folded p8 polish item 2).
+    expect(headings).toEqual(["Due today and overdue", "Automation"]);
     expect([...container.querySelectorAll(".ccc-list-meta")].map((m) => m.textContent)).toEqual([
       "Overdue since Oct 18",
       "Due Oct 2",
@@ -224,6 +225,35 @@ describe("Today: the next open task (plan 08-14 Task 2, D-21, D-45)", () => {
     expect(getByRole("button", { name: "Open task: Task 7, Next due Oct 22" })).toBeTruthy();
     // Labelled as the next open task, never styled as due today.
     expect(container.querySelector('[data-focal="true"]')?.textContent).toBe("Next open task");
+  });
+
+  it("Test 2: the heading is `Due today` when no row is overdue and `Due today and overdue` when any is", () => {
+    const heading = (rows: ReturnType<typeof todayTask>[]): string | null | undefined =>
+      todayCard(todayData({ rows, nextOpen: null })).container.querySelector(".ccc-today-section")
+        ?.textContent;
+    expect(heading([todayTask(1), todayTask(2, { meta: "Scheduled 9:00 AM" })])).toBe("Due today");
+    expect(
+      heading([todayTask(1, { meta: "Overdue since Oct 18", overdue: true }), todayTask(2)]),
+    ).toBe("Due today and overdue");
+    expect(heading([todayTask(1), todayTask(2, { meta: "Overdue", overdue: true })])).toBe(
+      "Due today and overdue",
+    );
+    // A feed with no rows, or none at all, keeps the plain heading.
+    expect(heading([])).toBe("Due today");
+  });
+
+  it("FIX2A R5: the heading follows the row's overdue flag, never the words of its meta", () => {
+    const heading = (rows: ReturnType<typeof todayTask>[]): string | null | undefined =>
+      todayCard(todayData({ rows, nextOpen: null })).container.querySelector(".ccc-today-section")
+        ?.textContent;
+    // Flagged overdue with meta wording that does not start with `Overdue`.
+    expect(heading([todayTask(1, { meta: "Past due since Oct 18", overdue: true })])).toBe(
+      "Due today and overdue",
+    );
+    // Not flagged, whatever the meta says.
+    expect(heading([todayTask(1, { meta: "Overdue since Oct 18", overdue: false })])).toBe(
+      "Due today",
+    );
   });
 
   it("reads `Most recent open task` for an undated task", () => {

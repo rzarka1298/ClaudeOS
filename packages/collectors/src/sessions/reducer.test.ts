@@ -1,4 +1,4 @@
-import type { KnownHookEvent, RunId, SessionRun } from "@ccc/domain";
+import { type KnownHookEvent, RUN_STATES, type RunId, type SessionRun } from "@ccc/domain";
 import { describe, expect, it } from "vitest";
 import {
   at,
@@ -6,6 +6,7 @@ import {
   fixedRunId,
   hook,
   InMemoryRunIndex,
+  identityUnknownTimeout,
   inactivityTimeout,
   launchFailed,
   launchRegistered,
@@ -34,6 +35,7 @@ const NOW = at(100_000);
 
 const R1 = fixedRunId("runone");
 const R2 = fixedRunId("runtwo");
+const R3 = fixedRunId("runthree");
 
 interface Outcome {
   readonly index: InMemoryRunIndex;
@@ -633,6 +635,103 @@ describe("session reducer — endings, stale and terminate (D-18, D-19, D-20, PR
       },
     },
     {
+      name: "identity-unknown-timeout moves a running Run with a PID to stale",
+      initial: [seedRun({ runId: R1 })],
+      evidence: [identityUnknownTimeout(R1, at(1900))],
+      check: (o) => {
+        expect(o.only()).toMatchObject({ state: "stale", revision: 2 });
+      },
+    },
+    {
+      name: "identity-unknown-timeout moves a waiting-for-approval Run to stale",
+      initial: [seedRun({ runId: R1, state: "waiting-for-approval" })],
+      evidence: [identityUnknownTimeout(R1, at(1900))],
+      check: (o) => {
+        expect(o.only().state).toBe("stale");
+      },
+    },
+    {
+      name: "identity-unknown-timeout is a no-op for queued, starting and stale Runs",
+      initial: [
+        seedRun({ runId: R1, state: "queued" }),
+        seedRun({ runId: R2, state: "stale", claudeSessionId: SESSION_B, pid: PID_2 }),
+        seedRun({ runId: R3, state: "starting", claudeSessionId: SESSION_C, pid: null }),
+      ],
+      evidence: [
+        identityUnknownTimeout(R1, at(1900)),
+        identityUnknownTimeout(R2, at(1900)),
+        identityUnknownTimeout(R3, at(1900)),
+      ],
+      check: (o) => {
+        for (const result of o.results) expect(result).toEqual({ upserts: [], rejected: [] });
+        expect(o.run(R1).state).toBe("queued");
+        expect(o.run(R2).state).toBe("stale");
+        expect(o.run(R3).state).toBe("starting");
+      },
+    },
+    ...(["completed", "failed", "cancelled"] as const).map((state) => ({
+      name: `identity-unknown-timeout against a ${state} Run is rejected as terminal and upserts nothing`,
+      initial: [seedRun({ runId: R1, state })],
+      evidence: [identityUnknownTimeout(R1, at(1900))],
+      check: (o: Outcome) => {
+        expect(o.last.upserts).toEqual([]);
+        expect(o.last.rejected).toEqual([
+          { runId: R1, from: state, evidence: "identity-unknown-timeout", reason: "terminal" },
+        ]);
+        expect(o.only().state).toBe(state);
+        expect(o.only().revision).toBe(1);
+      },
+    })),
+    {
+      name: "identity-unknown-timeout never yields completed or failed, and a stale Run revives by PID alive",
+      initial: [seedRun({ runId: R1 })],
+      evidence: [identityUnknownTimeout(R1, at(1900)), pidAlive(R1, at(1905))],
+      check: (o) => {
+        expect(o.only().state).toBe("running");
+        expect(["completed", "failed"]).not.toContain(o.only().state);
+      },
+    },
+    {
+      // FIX3C: the cutoff is the instant the sweeper judged the Run quiet at; activity newer than
+      // it (a hook the sweeper's snapshot never saw, or one the pipeline is still coalescing) wins.
+      name: "identity-unknown-timeout with a cutoff before the Run's last activity is a no-op",
+      initial: [seedRun({ runId: R1, lastActivityAt: at(1000) })],
+      evidence: [identityUnknownTimeout(R1, at(1900), at(999))],
+      check: (o) => {
+        expect(o.only()).toMatchObject({ state: "running", revision: 1 });
+        expect(o.last).toEqual({ upserts: [], rejected: [] });
+      },
+    },
+    {
+      name: "identity-unknown-timeout with a cutoff equal to the Run's last activity applies",
+      initial: [seedRun({ runId: R1, lastActivityAt: at(1000) })],
+      evidence: [identityUnknownTimeout(R1, at(1900), at(1000))],
+      check: (o) => {
+        expect(o.only()).toMatchObject({ state: "stale", revision: 2 });
+      },
+    },
+    {
+      name: "identity-unknown-timeout judges a Run with no activity by its start time",
+      initial: [seedRun({ runId: R1, lastActivityAt: null, startedAt: at(500) })],
+      evidence: [
+        identityUnknownTimeout(R1, at(1900), at(499)),
+        identityUnknownTimeout(R1, at(1901), at(500)),
+      ],
+      check: (o) => {
+        expect(o.results[0]).toEqual({ upserts: [], rejected: [] });
+        expect(o.only().state).toBe("stale");
+      },
+    },
+    {
+      name: "identity-unknown-timeout with an unparsable cutoff is a no-op (fails closed)",
+      initial: [seedRun({ runId: R1, lastActivityAt: at(1000) })],
+      evidence: [identityUnknownTimeout(R1, at(1900), "not-a-date")],
+      check: (o) => {
+        expect(o.only().state).toBe("running");
+        expect(o.last).toEqual({ upserts: [], rejected: [] });
+      },
+    },
+    {
       name: "evidence naming a RunId the index does not know is rejected as unknown-run",
       initial: [],
       evidence: [pidGone(R2, at(1))],
@@ -650,6 +749,33 @@ describe("session reducer — endings, stale and terminate (D-18, D-19, D-20, PR
       check(play(initial, evidence), initial);
     },
   );
+
+  it("identity-unknown-timeout upserts only stale, and only from running or waiting-for-approval", () => {
+    const wrote: string[] = [];
+    for (const state of RUN_STATES) {
+      const o = play([seedRun({ runId: R1, state })], [identityUnknownTimeout(R1, at(1900))]);
+      for (const upsert of o.last.upserts) {
+        wrote.push(state);
+        expect(["running", "waiting-for-approval"]).toContain(state);
+        expect(upsert.state).toBe("stale");
+      }
+      if (state !== "running" && state !== "waiting-for-approval") {
+        expect(o.last.upserts).toEqual([]);
+      }
+    }
+    expect(wrote.sort()).toEqual(["running", "waiting-for-approval"]);
+  });
+
+  it("identity-unknown-timeout with a cutoff before the Run's activity upserts nothing in any state (FIX3C)", () => {
+    for (const state of RUN_STATES) {
+      const o = play(
+        [seedRun({ runId: R1, state, lastActivityAt: at(1000) })],
+        [identityUnknownTimeout(R1, at(1900), at(999))],
+      );
+      expect(o.last.upserts).toEqual([]);
+      expect(o.only().state).toBe(state);
+    }
+  });
 
   it("normalizes a SessionEnd reason outside the documented list to other", () => {
     expect(normalizeSessionEndReason("bypass_permissions_disabled")).toBe("other");
@@ -726,6 +852,7 @@ describe("session reducer — never completed by inference (property, SESS-06)",
     "pid-alive",
     "start-timeout",
     "inactivity-timeout",
+    "identity-unknown-timeout",
     "launch-registered",
     "launch-started",
     "terminate-requested",
@@ -770,6 +897,8 @@ describe("session reducer — never completed by inference (property, SESS-06)",
         return startTimeout(runId(), when);
       case "inactivity-timeout":
         return inactivityTimeout(runId(), when);
+      case "identity-unknown-timeout":
+        return identityUnknownTimeout(runId(), when);
       case "launch-registered":
         return launchRegistered(seededRunId(next), when, {
           claudeSessionId: next() < 0.5 ? null : seededPick(next, SESSIONS),

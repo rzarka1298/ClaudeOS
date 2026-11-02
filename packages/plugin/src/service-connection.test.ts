@@ -11,6 +11,7 @@ import { connectionState } from "./connection-state.js";
 import {
   attachEventClient,
   combineOnLive,
+  configureConnectionDisplayHome,
   refreshProjectsOnConnect,
   startServiceEventsOnLayoutReady,
 } from "./service-connection.js";
@@ -24,6 +25,7 @@ import {
 
 afterEach(() => {
   connectionState.value = { kind: "connecting" };
+  configureConnectionDisplayHome(null);
 });
 
 function fakeEventClient(): { client: EventClient; setState: (s: EventClientState) => void } {
@@ -158,5 +160,64 @@ describe("startServiceEventsOnLayoutReady (wave-7 codex finding: SSE at plugin l
     t.stop();
     t.fire();
     expect(t.subscribe).not.toHaveBeenCalled();
+  });
+});
+
+describe("the disconnect reason is scrubbed where the client's state becomes the plugin's state (D-11, DIAG-06)", () => {
+  const RAW = "connect ENOENT /Users/USERNAME/.claude-command-center/service.sock";
+
+  it("maps an absolute path under the home folder to ~/ form", () => {
+    configureConnectionDisplayHome("/Users/USERNAME");
+    const events = fakeEventClient();
+    attachEventClient(events.client);
+
+    events.setState({ kind: "disconnected", reason: RAW });
+
+    expect(connectionState.value).toEqual({
+      kind: "disconnected",
+      reason: "connect ENOENT ~/.claude-command-center/service.sock",
+    });
+  });
+
+  it("applies the outside rule when no home folder is configured, so no absolute path survives", () => {
+    const events = fakeEventClient();
+    attachEventClient(events.client);
+
+    events.setState({ kind: "disconnected", reason: RAW });
+
+    const state = connectionState.value;
+    if (state.kind !== "disconnected") throw new Error("expected disconnected");
+    expect(state.reason).not.toContain("/Users/");
+    expect(state.reason).not.toContain("USERNAME");
+  });
+
+  // Live run b54088bd, UAT 09 item 4: after a service stop the first disconnected state carries the
+  // transport's own reason, which names no path and stands until the first reconnect fails (about
+  // half a second); the reason after that names the socket, shown as a display path. The shape of
+  // the second reason is what the event client builds from a failed handshake, with the run's
+  // socket path as the sandbox has it. A reader of the banner must wait for the second.
+  it("reads the transport's reason first and the socket as a display path after the reconnect fails", () => {
+    configureConnectionDisplayHome("/Users/USERNAME");
+    const events = fakeEventClient();
+    attachEventClient(events.client);
+    const socket = "/private/tmp/ccc-uat.abc123/rt/svc.sock";
+    const reason = (): string => {
+      const state = connectionState.value;
+      if (state.kind !== "disconnected") throw new Error("expected disconnected");
+      return state.reason;
+    };
+
+    events.setState({ kind: "live" });
+    events.setState({ kind: "disconnected", reason: "stream ended" });
+    expect(reason()).toBe("stream ended");
+
+    events.setState({ kind: "connecting" });
+    events.setState({
+      kind: "disconnected",
+      reason: `Could not reach the service socket at ${socket}: connect ENOENT ${socket}`,
+    });
+    expect(reason()).toBe(
+      "Could not reach the service socket at …/rt/svc.sock: connect ENOENT …/rt/svc.sock",
+    );
   });
 });

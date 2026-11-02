@@ -7,6 +7,7 @@ import {
   toBoundedDisplayPath,
 } from "@ccc/domain";
 import { logger } from "../logging.js";
+import { type ApprovalPresencePort, createApprovalPresenceCheck } from "./approval-presence.js";
 import { type CollectorsProbePorts, probeCollectors } from "./collectors-probe.js";
 import type { HealthCounts } from "./counts.js";
 import { type HooksProbePorts, probeHooks } from "./hooks-probe.js";
@@ -80,6 +81,12 @@ export interface DiagnosticsPorts {
    * research key comes from the scheduler probe's presence read, never from here.
    */
   readonly keychain?: { readonly installSecret: "present" | "absent" | "unknown" } | undefined;
+  /**
+   * The approval presence port (plan 09-19, D-04): built by the composition root, because diagnostics never
+   * spawns (backstop rule 18). Absent: the response carries no `approvalPresence` member and the plugin reads
+   * `Unknown`.
+   */
+  readonly approvalPresence?: ApprovalPresencePort | undefined;
   /** The four counts for the bundle. A throw reads four nulls; a count that cannot be read is null itself. */
   readonly counts?: (() => HealthCounts) | undefined;
   readonly serviceFacts: DiagnosticsServiceFacts;
@@ -162,6 +169,11 @@ function countsOrNulls(port: (() => HealthCounts) | undefined): HealthCounts {
 export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsServices {
   const { serviceFacts } = ports;
   const log = ports.log ?? logProbe;
+  // One memory per service: a reconnect reads the last gesture's answer while it is young (09-19).
+  const presenceCheck =
+    ports.approvalPresence === undefined
+      ? undefined
+      : createApprovalPresenceCheck({ port: ports.approvalPresence });
   const cache = createHealthCache({ nowMs: ports.monotonicNowMs ?? (() => performance.now()) });
 
   // One salt per service process (D-36): a fingerprint observed in one process says nothing
@@ -217,6 +229,7 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
               probeTrigger,
             );
           });
+    const presenceRun = presenceCheck === undefined ? undefined : presenceCheck(trigger);
     const rows = await runProbes(
       [
         wired("vault", (signal) =>
@@ -255,6 +268,7 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
       trigger,
       { now: ports.now, log },
     );
+    const presence = presenceRun === undefined ? undefined : await presenceRun;
     // A path too long for the schema gets its last segment, not a failed response (FIX2A F9).
     const display = (path: string): string =>
       toBoundedDisplayPath(path, serviceFacts.homeDir) ?? "…/unknown";
@@ -272,6 +286,13 @@ export function createDiagnosticsServices(ports: DiagnosticsPorts): DiagnosticsS
         installSecret: ports.keychain?.installSecret ?? "unknown",
         researchKey: researchKeyPresence(observedKey),
       },
+      ...(presence === undefined
+        ? {}
+        : {
+            approvalPresence: presence.state,
+            ...(presence.reason === undefined ? {} : { approvalPresenceReason: presence.reason }),
+            ...(presence.pin === undefined ? {} : { approvalPresencePin: presence.pin }),
+          }),
       paths: {
         vault: root === null ? null : toBoundedDisplayPath(root, serviceFacts.homeDir),
         runtimeDir: display(serviceFacts.runtimeDir),

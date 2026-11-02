@@ -44,6 +44,13 @@ export interface ApprovalRow {
   readonly retry: "idempotent" | "never";
   /** A decision is approve or deny only. The payload is never editable by the approver. */
   readonly modifiable: false;
+  /**
+   * Whether approving this request needs the owner's verified presence (D-02): connector-class
+   * external writes do (`required`); reads, managed-vault writes and in-app actions such as
+   * force-terminate do not (`none`). Deny never needs it (R-03): a deny can only stop an operation.
+   * A required property, so a new row cannot forget to decide.
+   */
+  readonly presence: "required" | "none";
   /** A fixed phrase naming the action, used in templated sentences. */
   readonly summary: string;
 }
@@ -68,6 +75,7 @@ const RESERVED_POLICY = {
   retry: "never",
   modifiable: false,
 } as const;
+// `presence` is written on each reserved row below, not here, so a new row must state it.
 
 export const CLASSIFICATION = {
   // --- approval-required, enabled ------------------------------------------
@@ -78,6 +86,8 @@ export const CLASSIFICATION = {
     maxApprovalAgeMs: DEFAULT_MAX_APPROVAL_AGE_MS,
     retry: "idempotent",
     modifiable: false,
+    // D-02: force-terminate keeps its Phase 6 behaviour (an in-app action, no presence proof).
+    presence: "none",
     summary: "force-terminate a Claude session",
   },
   "diagnostic.test": {
@@ -87,23 +97,35 @@ export const CLASSIFICATION = {
     maxApprovalAgeMs: DEFAULT_MAX_APPROVAL_AGE_MS,
     retry: "idempotent",
     modifiable: false,
+    presence: "none",
     summary: "run a test that does nothing",
   },
 
   // --- approval-required, reserved (D-05, Codex finding 2) -----------------
-  "vault.delete": { ...RESERVED_POLICY, summary: "delete a note from the vault" },
+  "vault.delete": { ...RESERVED_POLICY, presence: "none", summary: "delete a note from the vault" },
   "vault.cross-scope-move": {
     ...RESERVED_POLICY,
+    presence: "none",
     summary: "move a note between knowledge scopes",
   },
-  "hooks.install": { ...RESERVED_POLICY, summary: "install a Claude Code hook" },
+  "hooks.install": { ...RESERVED_POLICY, presence: "none", summary: "install a Claude Code hook" },
   // Phase 05.1 (D-31): the one system-changing Codex action. Installing is an
   // owner-run script, so this row is a classification only and has no executor.
-  "codex.hooks.install": { ...RESERVED_POLICY, summary: "install a Codex hook" },
-  "automation.git-write": { ...RESERVED_POLICY, summary: "write to a Git repository" },
-  publish: { ...RESERVED_POLICY, summary: "publish content outside this machine" },
+  "codex.hooks.install": { ...RESERVED_POLICY, presence: "none", summary: "install a Codex hook" },
+  // D-02: the two reserved connector-class external writes need the owner's verified presence
+  // once a later phase enables them. None is enabled here, so no production row is both.
+  "automation.git-write": {
+    ...RESERVED_POLICY,
+    presence: "required",
+    summary: "write to a Git repository",
+  },
+  publish: {
+    ...RESERVED_POLICY,
+    presence: "required",
+    summary: "publish content outside this machine",
+  },
   // A skill can do anything, so it fails closed until the skills phase classifies it.
-  "skill.run": { ...RESERVED_POLICY, summary: "run a skill" },
+  "skill.run": { ...RESERVED_POLICY, presence: "none", summary: "run a skill" },
 
   // --- direct gestures: the owner's own click is the decision --------------
   "launch.antigravity": {

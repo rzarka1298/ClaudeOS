@@ -1,5 +1,5 @@
 import type { ServiceEvent, SnapshotResponse } from "@ccc/domain";
-import { EMPTY_PROJECTS_SNAPSHOT } from "@ccc/domain";
+import { EMPTY_PROJECTS_SNAPSHOT, SESSION_QUIET_AFTER_MS } from "@ccc/domain";
 import type { EventClient, EventClientState } from "@ccc/service-api-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { approvalsById, approvalsReady, resetApprovalsState } from "./approvals/signals.js";
@@ -13,6 +13,7 @@ import {
   SNAPSHOT_APPLIERS,
 } from "./service-event-router.js";
 import { approvalsSnapshot, summary } from "./test-support/approval-fixtures.js";
+import { sessionQuietAfterMs, sessionsById } from "./widgets/session-signals.js";
 
 /**
  * The appendable fan-out router (PR-09, D-50): `EVENT_HANDLERS` and
@@ -73,6 +74,63 @@ describe("applySnapshot", () => {
     applySnapshot(snapshotResponse());
     expect(projectsSnapshot.value).toEqual(EMPTY_PROJECTS_SNAPSHOT);
     expect(SNAPSHOT_APPLIERS.length).toBeGreaterThan(0);
+  });
+});
+
+describe("applySnapshot: the quiet threshold (Phase 9 Task 3 Test 1, D-07)", () => {
+  afterEach(() => {
+    sessionQuietAfterMs.value = SESSION_QUIET_AFTER_MS;
+  });
+
+  it("sets the signal from the snapshot member and resets it when a later snapshot omits it", () => {
+    const withMember = snapshotResponse();
+    applySnapshot({
+      ...withMember,
+      state: { ...withMember.state, sessionQuietAfterMs: 120_000 },
+    });
+    expect(sessionQuietAfterMs.value).toBe(120_000);
+
+    applySnapshot(snapshotResponse());
+    expect(sessionQuietAfterMs.value).toBe(SESSION_QUIET_AFTER_MS);
+  });
+});
+
+describe("applySnapshot: the threshold is applied FIRST (FIX3B Q4)", () => {
+  afterEach(() => {
+    sessionQuietAfterMs.value = SESSION_QUIET_AFTER_MS;
+    sessionsById.value = new Map();
+  });
+
+  it("sessions are adopted under the NEW threshold, never the previous one", () => {
+    sessionQuietAfterMs.value = SESSION_QUIET_AFTER_MS;
+    const seen: number[] = [];
+    const stop = sessionsById.subscribe(() => {
+      seen.push(sessionQuietAfterMs.value);
+    });
+    seen.length = 0; // drop the immediate subscription call
+    const base = snapshotResponse();
+    applySnapshot({
+      ...base,
+      state: { ...base.state, sessionQuietAfterMs: 120_000, sessions: [] },
+    });
+    stop();
+    expect(seen).toEqual([120_000]);
+  });
+
+  it("the threshold lands even when a later applier throws", () => {
+    const base = snapshotResponse();
+    const broken = {
+      ...base,
+      // No `projects`: applyProjectsSnapshot throws on it.
+      state: { serviceStartedAt: base.state.serviceStartedAt, sessionQuietAfterMs: 120_000 },
+    } as unknown as SnapshotResponse;
+    expect(() => applySnapshot(broken)).toThrow();
+    expect(sessionQuietAfterMs.value).toBe(120_000);
+  });
+
+  it("keeps the Codex applier last (the codex-events pin)", () => {
+    expect(SNAPSHOT_APPLIERS[0]?.name).toBe("adoptSessionQuietThreshold");
+    expect(SNAPSHOT_APPLIERS.at(-1)?.name).toBe("adoptCodexSnapshot");
   });
 });
 

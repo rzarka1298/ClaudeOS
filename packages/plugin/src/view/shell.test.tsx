@@ -1,4 +1,5 @@
 import { EMPTY_PROJECTS_SNAPSHOT, type ProjectId, type ProjectView } from "@ccc/domain";
+import type { EventClientState } from "@ccc/service-api-client";
 import { signal } from "@preact/signals";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,7 @@ import { connectionState, lastEvent } from "../connection-state.js";
 import { motionMode } from "../motion.js";
 import type { LaunchersActions } from "../projects/launchers-actions.js";
 import { projectsSnapshot, resetProjectsState } from "../projects/projects-state.js";
+import { attachEventClient, configureConnectionDisplayHome } from "../service-connection.js";
 import type { WidgetState } from "../widgets/contract.js";
 import type { WidgetId } from "../widgets/registry.js";
 import { widgetStateFor } from "../widgets/widget-data.js";
@@ -89,6 +91,34 @@ describe("Shell", () => {
     connectionState.value = { kind: "disconnected", reason: "connect ECONNREFUSED" };
     render(<Shell />);
     expect(screen.getByText(/Disconnected — connect ECONNREFUSED/)).toBeTruthy();
+  });
+
+  it("renders a disconnect reason that came through the event client with the socket path as ~/ (D-11, DIAG-06)", async () => {
+    configureConnectionDisplayHome("/Users/USERNAME");
+    try {
+      let emit: ((state: EventClientState) => void) | undefined;
+      attachEventClient({
+        subscribe(_onEvent, onStateChange) {
+          emit = onStateChange;
+        },
+        dispose: vi.fn(),
+      });
+      const { container } = render(<Shell />);
+      await act(async () => {
+        emit?.({
+          kind: "disconnected",
+          reason: "connect ENOENT /Users/USERNAME/.claude-command-center/service.sock",
+        });
+      });
+
+      expect(
+        screen.getByText("Disconnected — connect ENOENT ~/.claude-command-center/service.sock"),
+      ).toBeTruthy();
+      expect(container.innerHTML).not.toContain("/Users/");
+      expect(container.innerHTML).not.toContain("USERNAME");
+    } finally {
+      configureConnectionDisplayHome(null);
+    }
   });
 
   it("renders the live state as text", () => {

@@ -93,6 +93,7 @@ describe("startApprovalServices.stop (D-09)", () => {
       getVaultRoot: () => null,
       log,
       env: {},
+      proofKey: Buffer.alloc(32, 5),
     });
     await runtime.recover();
     const raised = runtime.services.test({}) as { proposalId: string };
@@ -102,7 +103,7 @@ describe("startApprovalServices.stop (D-09)", () => {
       proposalId: raised.proposalId,
       decision: "approve",
       payloadHash: found.payloadHash,
-      via: "plugin",
+      channelHint: "plugin",
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(started).toBe(true);

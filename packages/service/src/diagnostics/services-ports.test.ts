@@ -305,6 +305,7 @@ describe("Test 4 (type level): the ports the probes receive can only read", () =
       | "schedulerPorts"
       | "launchersPorts"
       | "keychain"
+      | "approvalPresence"
       | "counts"
       | "serviceFacts"
       | "now"
@@ -324,6 +325,7 @@ describe("Test 4 (type level): the ports the probes receive can only read", () =
       "schedulerPorts",
       "launchersPorts",
       "keychain",
+      "approvalPresence",
       "counts",
       "serviceFacts",
       "now",

@@ -309,3 +309,25 @@ describe("readRuntimeFacts", () => {
     });
   });
 });
+
+describe("09-19: the bundle allowlist is unchanged by the approval presence members (ADR 0031 section 8)", () => {
+  it("builds byte-identical bundle text whether or not the health response carries the presence members, and never names them", () => {
+    const plain = buildBundle(sources(), DENY);
+    const withPresence = buildBundle(
+      sources({
+        health: {
+          ...allOkHealth(),
+          approvalPresence: "unavailable",
+          approvalPresenceReason: "pin-changed",
+          approvalPresencePin: "deadbeef",
+        },
+      }),
+      DENY,
+    );
+    expect(plain.kind).toBe("offered");
+    expect(withPresence).toEqual(plain);
+    if (withPresence.kind === "offered") {
+      expect(withPresence.text).not.toMatch(/approvalPresence|deadbeef|pin-changed/);
+    }
+  });
+});

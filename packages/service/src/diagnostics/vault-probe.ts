@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { access, constants, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import type { ProbeOutcome } from "@ccc/domain";
+import { errnoOf, type ProbeOutcome } from "@ccc/domain";
 import { MANAGED_FOLDERS } from "@ccc/vault-repo";
 import { isForbiddenRoot } from "../vault-root-policy.js";
 
@@ -135,15 +135,6 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
       },
     );
   });
-}
-
-/** The `errno` code of a file-system error, or null. The message is never read. */
-function errnoOf(error: unknown): string | null {
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const code = (error as { code: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return null;
 }
 
 /** Maps a failed `stat` / `realpath` of the root (or `access` for read) to its closed outcome. */

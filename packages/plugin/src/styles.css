@@ -3485,6 +3485,12 @@ fieldset.ccc-template-rows > legend {
   outline-offset: calc(-1 * var(--ccc-focus-ring));
 }
 
+/* The radio's minimum target is taller than a text line, so on the baseline its circle floats
+ * above the label text; centring it on the line keeps circle and text level (folded p8 item 4). */
+.ccc-command-center .ccc-radio-group input[type="radio"] {
+  vertical-align: middle;
+}
+
 .ccc-template-rows {
   display: flex;
   flex-direction: column;
@@ -3625,8 +3631,9 @@ fieldset.ccc-template-rows > legend {
   color: var(--ccc-ink-muted);
 }
 
-/* The one polite status line: empty before its first message, Label size,
- * muted ink. It is the destination's only live region. */
+/* A polite status line: empty before its first message, Label size, muted
+ * ink. Two use it: the destination's top line, and the diagnostic bundle
+ * block's own line beside its buttons (data-status-region="bundle"). */
 .ccc-command-center .ccc-settings-status {
   min-block-size: var(--ccc-space-md);
   margin: 0;

@@ -7,6 +7,7 @@ import {
   LAST_EVENT_ID_HEADER,
   type ServiceEvent,
   ServiceEventSchema,
+  type ServiceEventType,
   SNAPSHOT_PATH,
   type SnapshotResponse,
   SnapshotResponseSchema,
@@ -52,6 +53,37 @@ export interface EventClient {
   dispose(): void;
 }
 
+/**
+ * How each event type relates to `GET /api/v1/snapshot`, which decides what the post-resync
+ * delivery floor may discard (FIX2B C1):
+ * - `snapshot-carried`: the snapshot holds the state this event describes, so an event at or
+ *   below the snapshot's `lastEventId` is already applied and is discarded.
+ * - `invalidation-only`: the event only tells consumers to ask again for a domain the snapshot
+ *   does NOT carry; discarding it would lose a change that happened between the consumer's
+ *   refresh and the snapshot, so it is always delivered.
+ * - `transport`: carries no domain state.
+ * A `Record` over every event type: a new type in `SERVICE_EVENT_TYPES` fails typecheck here
+ * until someone classifies it, so it cannot silently join the wrong set.
+ */
+export const EVENT_SNAPSHOT_COVERAGE: Readonly<
+  Record<ServiceEventType, "snapshot-carried" | "invalidation-only" | "transport">
+> = {
+  "service.heartbeat": "transport",
+  "connection.state": "transport",
+  "stream.resync": "transport",
+  "projects.updated": "snapshot-carried",
+  "session.upserted": "snapshot-carried",
+  "usage.updated": "snapshot-carried",
+  "claude-integration.updated": "snapshot-carried",
+  "approval.upserted": "snapshot-carried",
+  "tasks.changed": "invalidation-only",
+  "codex.sessions.updated": "snapshot-carried",
+  "codex.usage.updated": "snapshot-carried",
+  "codex.tokens.updated": "snapshot-carried",
+  "codex.integration.updated": "snapshot-carried",
+  "research.updated": "invalidation-only",
+};
+
 const INITIAL_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 30_000;
 // Kept well under the 100% growth a doubling backoff produces at each step,
@@ -90,6 +122,11 @@ export function createEventClient({
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
   let lastEventId: number | undefined;
+  // The id of the last snapshot this client adopted. Events at or below it are already contained
+  // in that snapshot, so they are neither delivered nor allowed to move the position back. Reset
+  // to 0 wherever `lastEventId` is forgotten: a restarted service restarts its ids (see
+  // SnapshotResponseSchema), and its first events must not be mistaken for old ones.
+  let deliveryFloor = 0;
   let parser = createEventStreamParser();
 
   // Liveness watchdog (#PLUG-04 UAT fix): a `launchctl bootout` SIGTERM
@@ -182,6 +219,7 @@ export function createEventClient({
                       return;
                     }
                     lastEventId = result.data.lastEventId;
+                    deliveryFloor = result.data.lastEventId;
                     onSnapshotCb?.(result.data);
                     resolve(true);
                   } catch (err) {
@@ -226,13 +264,25 @@ export function createEventClient({
           // for a full resync (the service answers a header-less connection
           // with `stream.resync`), and retry the whole flow from scratch.
           lastEventId = undefined;
+          deliveryFloor = 0;
           conn.end("snapshot fetch failed");
           return;
         }
         res.resume();
         continue;
       }
-      if (event.id > 0) lastEventId = event.id;
+      // Queued behind a resync in the same chunk, but already inside the snapshot just adopted.
+      // Only for state the snapshot actually carries: an invalidation-only event ("ask again")
+      // for a domain the snapshot does not represent is not contained in it, so it is delivered
+      // (position stays put: it is at or below the floor, and Math.max below never moves back).
+      if (
+        event.id > 0 &&
+        event.id <= deliveryFloor &&
+        EVENT_SNAPSHOT_COVERAGE[event.type] !== "invalidation-only"
+      ) {
+        continue;
+      }
+      if (event.id > 0) lastEventId = Math.max(lastEventId ?? 0, event.id);
       onEventCb?.(event);
     }
   }
