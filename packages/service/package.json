@@ -22,6 +22,10 @@
       "types": "./dist/research/summariser-entry.d.ts",
       "default": "./dist/research/summariser-entry.js"
     },
+    "./summariser-cli": {
+      "types": "./dist/summariser-cli/index.d.ts",
+      "default": "./dist/summariser-cli/index.js"
+    },
     "./research": {
       "types": "./dist/research/index.d.ts",
       "default": "./dist/research/index.js"
