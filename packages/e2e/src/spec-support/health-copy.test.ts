@@ -45,6 +45,23 @@ describe("the mirrored health copy", () => {
     expect(findCopyDrift(HEALTH_REASON_TABLE, realSource)).toEqual([]);
   });
 
+  it("10-03: mirrors one literal per claude-cli reason and the sign-in copy", () => {
+    for (const reason of [
+      "claude-cli-ready",
+      "claude-cli-signed-out",
+      "claude-cli-missing",
+      "claude-cli-check-failed",
+      "claude-cli-not-checked",
+    ]) {
+      expect(HEALTH_REASON_TABLE, reason).toHaveProperty([reason]);
+      expect(HEALTH_REASONS[reason], reason).toBeTruthy();
+    }
+    expect(HEALTH_TEXT.copySignIn).toBe("Copy sign-in command");
+    expect(HEALTH_TEXT.signInCommand).toBe("claude auth login");
+    expect(HEALTH_TEXT.signInCopied).toBe("Sign-in command copied. Run it in Terminal.");
+    expect(HEALTH_TEXT.partClaudeSignIn).toBe("Claude sign-in");
+  });
+
   it("names owner files that exist", () => {
     for (const table of [
       HEALTH_TEXT_TABLE,

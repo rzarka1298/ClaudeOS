@@ -466,7 +466,10 @@ describe("Test 3: the sources part", () => {
 describe("the row", () => {
   it("a fresh install reads setup-needed with the three parts in order, the sources part passive", async () => {
     const outcome = await probeScheduler(ports(status(), "absent"), SIGNAL, "gesture");
-    expect(partsOf(outcome).map((p) => p.partId)).toEqual([...SCHEDULER_PART_IDS]);
+    // The key route (10-03): the subscription route's `claude-cli` part arrives with the probe in 10-09.
+    expect(partsOf(outcome).map((p) => p.partId)).toEqual(
+      SCHEDULER_PART_IDS.filter((id) => id !== "claude-cli"),
+    );
     expect(outcome).toMatchObject({
       id: "scheduler",
       status: "setup-needed",

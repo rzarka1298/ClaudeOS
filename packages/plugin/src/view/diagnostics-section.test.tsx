@@ -498,6 +498,7 @@ describe("Task 2, Test 3: setup actions do exactly three things", () => {
     const allowed = [
       /^Copy install command$/,
       /^Copy key setup command$/,
+      /^Copy sign-in command$/,
       /^Set up vault$/,
       /^Go to (the .+ section|diagnostics)$/,
       /^Open the research view$/,
@@ -512,6 +513,54 @@ describe("Task 2, Test 3: setup actions do exactly three things", () => {
         ).toBe(true);
       }
     }
+  });
+});
+
+describe("10-03 Task 1 (tracer): a subscription scheduler row with a signed-out Claude part", () => {
+  const SIGN_IN = { kind: "copy-command", command: "claude-sign-in" } as const;
+
+  function signedOutHealth() {
+    return fixtureResponse({
+      scheduler: partsRow("scheduler", [
+        part("last-run", "never-run", { setupAction: GO_RESEARCH }),
+        part("claude-cli", "claude-cli-signed-out", { setupAction: SIGN_IN }),
+        part("sources", "sources-configured", { facts: { sourceCount: 5 } }),
+      ]),
+    });
+  }
+
+  it("Test 3: reads Claude sign-in with the signed-out reason, and copies claude auth login with its notice", async () => {
+    const copyText = vi.fn(() => Promise.resolve());
+    configure(() => Promise.resolve(signedOutHealth()));
+    const { notify } = renderSection({ host: hostWith({ copyText }) });
+    await settle();
+    const scheduler = rowNamed("Scheduler");
+    expect(chipOf(scheduler)).toContain("Needs setup");
+    fireEvent.click(
+      within(scheduler).getByRole("button", { name: "Show details for Scheduler: 3 parts" }),
+    );
+
+    const partNames = [...scheduler.querySelectorAll(".ccc-health-part .ccc-health-part-name")].map(
+      (name) => name.textContent,
+    );
+    expect(partNames).toEqual(["Last run", "Claude sign-in", "Sources"]);
+    const claude = scheduler.querySelector<HTMLElement>('[data-part="claude-cli"]');
+    expect(claude?.getAttribute("data-reason")).toBe("claude-cli-signed-out");
+    expect(within(claude as HTMLElement).getByText("Claude Code isn't signed in.")).toBeTruthy();
+    expect(
+      within(claude as HTMLElement).getByText(
+        "Run claude auth login in Terminal, then press Run checks again.",
+      ),
+    ).toBeTruthy();
+    expect(commandsIn(claude as HTMLElement)).toEqual(["claude auth login"]);
+
+    fireEvent.click(
+      within(claude as HTMLElement).getByRole("button", { name: "Copy sign-in command" }),
+    );
+    await settle();
+    expect(copyText).toHaveBeenCalledTimes(1);
+    expect(copyText).toHaveBeenCalledWith("claude auth login");
+    expect(notify).toHaveBeenCalledWith("Sign-in command copied. Run it in Terminal.");
   });
 });
 

@@ -302,6 +302,20 @@ export const REASON_COPY = {
   "research-key-not-checked": {
     reason: "The keychain hasn't been checked since the service started. Press Run checks again.",
   },
+  "claude-cli-ready": { reason: "Claude Code is signed in to your Claude subscription." },
+  "claude-cli-signed-out": {
+    reason: "Claude Code isn't signed in.",
+    nextStep: "Run claude auth login in Terminal, then press Run checks again.",
+  },
+  "claude-cli-missing": {
+    reason: "Claude Code wasn't found in the folders the command center looks in.",
+    nextStep: "Install Claude Code, then press Run checks again.",
+  },
+  "claude-cli-check-failed": { reason: "Claude Code's sign-in couldn't be checked." },
+  "claude-cli-not-checked": {
+    reason:
+      "Claude Code's sign-in hasn't been checked since the service started. Press Run checks again.",
+  },
   "sources-configured": {
     reason: ({ facts }) =>
       facts?.sourceCount === undefined
@@ -463,6 +477,7 @@ export const PART_NAMES: Readonly<Record<string, string>> = {
   "codex-doctor": "Codex doctor",
   "last-run": "Last run",
   "research-key": "Research key",
+  "claude-cli": "Claude sign-in",
   sources: "Sources",
   antigravity: "Antigravity",
   "claude-code": "Claude Code",
@@ -519,6 +534,8 @@ export const NOT_IN_VERSION_SENTENCE =
 // Setup actions: three closed kinds, text owned here (D-08, D-39, T-08-35)
 
 const RESEARCH_KEY_SETUP_COMMAND = "node scripts/research-key-setup.mjs";
+/** The Claude Code CLI's own sign-in command. The plugin only copies it; the owner runs it (D-08). */
+const CLAUDE_SIGN_IN_COMMAND = "claude auth login";
 
 /**
  * The action a row or part actually offers: exactly the one the service sent (FIX3A MINOR-7).
@@ -541,15 +558,21 @@ export const SETUP_COMMANDS: Readonly<Record<SetupCommandId, string>> = {
   "codex-hooks-install": CODEX_HOOKS_INSTALL_STEP,
   "codex-bridge-install": CODEX_BRIDGE_INSTALL_STEP,
   "research-key-setup": RESEARCH_KEY_SETUP_COMMAND,
+  "claude-sign-in": CLAUDE_SIGN_IN_COMMAND,
 };
 
 /** The visible label: a verb and a noun, with lowercase section references (R-F1). */
 export function setupActionLabel(action: SetupAction): string {
   switch (action.kind) {
     case "copy-command":
-      return action.command === "research-key-setup"
-        ? "Copy key setup command"
-        : "Copy install command";
+      switch (action.command) {
+        case "research-key-setup":
+          return "Copy key setup command";
+        case "claude-sign-in":
+          return "Copy sign-in command";
+        default:
+          return "Copy install command";
+      }
     case "run-plugin-command":
       return "Set up vault";
     case "go-to-section":
@@ -571,6 +594,7 @@ const COPIED_NOTICE: Readonly<Record<SetupCommandId, string>> = {
   "codex-hooks-install": CODEX_INSTALL_COPIED_NOTICE,
   "codex-bridge-install": CODEX_INSTALL_COPIED_NOTICE,
   "research-key-setup": "Key setup command copied. Run it in Terminal.",
+  "claude-sign-in": "Sign-in command copied. Run it in Terminal.",
 };
 
 export const SETUP_ACTION_COPY = {

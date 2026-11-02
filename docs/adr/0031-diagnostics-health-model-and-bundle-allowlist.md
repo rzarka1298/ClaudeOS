@@ -196,6 +196,38 @@ restart the plugin's Stale window, and would outlive a helper that was removed a
 is copied into the bundle, so the verifier and the corpus are untouched; the members exist only in the live health
 response and in Settings, under Security.
 
+### 9. Phase 10 amendment (2026-11): the scheduler row follows the summariser route (`10-03`, D-06, D-08)
+
+The summariser has two routes: an API key in the macOS keychain, or the owner's Claude subscription through the Claude Code
+CLI (the default, no paid key). A scheduler row that always reported the key part would read Needs setup for every owner on
+the subscription route, a false setup-needed. So the scheduler row's second part follows the summariser route: the row
+carries three parts, `last-run`, then the part for the route in use, then `sources`. The API-key route shows `research-key`;
+the subscription route shows `claude-cli`; the route that is not in use has no part. The four ids of `SCHEDULER_PART_IDS`
+are `last-run`, `research-key`, `claude-cli` and `sources`, and the row schema is one of two fixed tuples (like the launchers
+row), so every earlier scheduler row still parses and a row with both route parts, or neither, is refused. A fourth part
+shown on both routes was rejected: it would be an active part that is never set up for the unused route, and would lift a
+fresh install's Needs setup row to Working.
+
+The `claude-cli` part carries one of five closed reasons. An answer that was not obtained is `unknown`, never `ok`, and no
+part reports a number for it.
+
+<!-- claude-cli-reasons:begin -->
+| Reason | Status | Meaning |
+| --- | --- | --- |
+| `claude-cli-ready` | ok | The CLI was found and its sign-in check says it is signed in to the subscription |
+| `claude-cli-signed-out` | setup-needed | The CLI was found and is not signed in |
+| `claude-cli-missing` | setup-needed | The CLI was not found in the folders the command center looks in |
+| `claude-cli-check-failed` | unknown | The check ran and gave no usable answer |
+| `claude-cli-not-checked` | unknown | No owner gesture has checked since the service started |
+<!-- claude-cli-reasons:end -->
+
+The setup command ids gain `claude-sign-in`. As with every other command, the service sends the id and never the text: the
+plugin copies `claude auth login` and says so in its copied notice (`Sign-in command copied. Run it in Terminal.`); nothing
+is run for the owner. The readiness check (plan `10-09`) runs only on an owner gesture, like the research-key check, and a
+reconnect reads `claude-cli-not-checked`. It never reads the CLI's credentials: it asks the CLI whether it is signed in and
+keeps only the closed answer. The bundle allowlist needs no new rule: the part id and reason ids enter its closed vocabulary
+through `SCHEDULER_PART_REASONS`, and the command id and text stay out of the bundle as every setup action does.
+
 ## Consequences
 
 - A new subsystem state is a new reason code with a status in a table and a line of copy; the build fails until both exist.
