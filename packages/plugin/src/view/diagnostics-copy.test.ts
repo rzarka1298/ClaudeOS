@@ -194,6 +194,7 @@ describe("setup actions are three closed kinds (D-08, D-39, T-08-35)", () => {
     expect(SETUP_COMMANDS["codex-hooks-install"]).toBe("./scripts/codex-hooks/install.sh");
     expect(SETUP_COMMANDS["codex-bridge-install"]).toBe("node scripts/codex/install-user-kit.mjs");
     expect(SETUP_COMMANDS["research-key-setup"]).toBe("node scripts/research-key-setup.mjs");
+    expect(SETUP_COMMANDS["claude-sign-in"]).toBe("claude auth login");
     for (const command of Object.values(SETUP_COMMANDS)) {
       // Repository-relative, never absolute, never a home path.
       expect(command).not.toMatch(/(^|\s)\/|~|\$HOME/);
@@ -205,7 +206,11 @@ describe("setup actions are three closed kinds (D-08, D-39, T-08-35)", () => {
     for (const command of SETUP_COMMAND_IDS) {
       labels.add(setupActionLabel({ kind: "copy-command", command }));
     }
-    expect([...labels].sort()).toEqual(["Copy install command", "Copy key setup command"]);
+    expect([...labels].sort()).toEqual([
+      "Copy install command",
+      "Copy key setup command",
+      "Copy sign-in command",
+    ]);
     expect(setupActionLabel({ kind: "run-plugin-command", command: "vault-setup" })).toBe(
       "Set up vault",
     );
@@ -233,6 +238,35 @@ describe("setup actions are three closed kinds (D-08, D-39, T-08-35)", () => {
       expect(copy).toMatch(/copied\. Run it in Terminal\.$/);
     }
     expect(SETUP_ACTION_COPY.copyFailed).not.toMatch(/[/@~]/);
+  });
+
+  it("10-03: the sign-in command names its own copied notice", () => {
+    expect(SETUP_ACTION_COPY.copied({ command: "claude-sign-in" })).toBe(
+      "Sign-in command copied. Run it in Terminal.",
+    );
+  });
+});
+
+describe("10-03: the Claude sign-in part reads in the plugin's own words (D-08)", () => {
+  it("labels the part and gives each of the five reasons copy", () => {
+    expect(PART_NAMES["claude-cli"]).toBe("Claude sign-in");
+    expect(reasonText("claude-cli-ready", { now: NOW }).reason).toBe(
+      "Claude Code is signed in to your Claude subscription.",
+    );
+    expect(reasonText("claude-cli-signed-out", { now: NOW })).toEqual({
+      reason: "Claude Code isn't signed in.",
+      nextStep: "Run claude auth login in Terminal, then press Run checks again.",
+    });
+    const missing = reasonText("claude-cli-missing", { now: NOW });
+    expect(missing.reason).toBe(
+      "Claude Code wasn't found where the command center looks (~/.local/bin, /opt/homebrew/bin, /usr/local/bin).",
+    );
+    expect(reasonText("claude-cli-check-failed", { now: NOW }).reason).toBe(
+      "Claude Code's sign-in couldn't be checked.",
+    );
+    expect(reasonText("claude-cli-not-checked", { now: NOW }).reason).toBe(
+      "Claude Code's sign-in hasn't been checked since the service started. Press Run checks again.",
+    );
   });
 });
 

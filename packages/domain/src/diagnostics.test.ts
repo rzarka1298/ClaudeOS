@@ -3,6 +3,7 @@ import { HEALTH_PATH } from "./auth.js";
 import {
   APPROVAL_PRESENCE_REASONS,
   APPROVAL_PRESENCE_STATES,
+  CLAUDE_CLI_REASONS,
   COLLECTORS_PART_IDS,
   COLLECTORS_PART_REASONS,
   COLLECTORS_PASSIVE_PART_IDS,
@@ -26,6 +27,7 @@ import {
   rollupPartStatuses,
   rollupStatus,
   SCHEDULER_PART_IDS,
+  SCHEDULER_PART_REASONS,
   SCHEDULER_PASSIVE_PART_IDS,
   SCHEDULER_REASON_STATUS,
   SCHEDULER_REASONS,
@@ -248,6 +250,11 @@ const EXPECTED: Record<string, Record<string, SubsystemStatus>> = {
     "research-key-missing": "setup-needed",
     "research-key-check-failed": "unknown",
     "research-key-not-checked": "unknown",
+    "claude-cli-ready": "ok",
+    "claude-cli-signed-out": "setup-needed",
+    "claude-cli-missing": "setup-needed",
+    "claude-cli-check-failed": "unknown",
+    "claude-cli-not-checked": "unknown",
     "sources-configured": "ok",
     "sources-config-unusable": "degraded",
     ...SHARED,
@@ -386,7 +393,7 @@ describe("Task 2 Test 3 (parts)", () => {
       "codex-bridge",
       "codex-doctor",
     ]);
-    expect([...SCHEDULER_PART_IDS]).toEqual(["last-run", "research-key", "sources"]);
+    expect([...SCHEDULER_PART_IDS]).toEqual(["last-run", "research-key", "claude-cli", "sources"]);
     expect([...LAUNCHER_PART_IDS]).toEqual([
       "antigravity",
       "claude-code",
@@ -503,6 +510,7 @@ describe("Task 2 Test 5 (setup actions)", () => {
       "codex-hooks-install",
       "codex-bridge-install",
       "research-key-setup",
+      "claude-sign-in",
     ]);
     for (const section of [...SETTINGS_SECTION_IDS, "research"]) {
       expect(SetupActionSchema.safeParse({ kind: "go-to-section", section }).success).toBe(true);
@@ -1123,5 +1131,104 @@ describe("09-19 Task 1: the approval presence members of the health response (D-
       const r = { ...freshInstall(), approvalPresence: "available", approvalPresencePin: bad };
       expect(DiagnosticsHealthResponseSchema.safeParse(r).success, String(bad)).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 10-03 (D-06, D-08): the scheduler row's second part follows the summariser route
+
+describe("10-03 Task 1: the scheduler row follows the summariser route", () => {
+  const lastRun = { partId: "last-run", status: "setup-needed", reasonCode: "never-run" } as const;
+  const key = {
+    partId: "research-key",
+    status: "setup-needed",
+    reasonCode: "research-key-missing",
+  } as const;
+  const sources = { partId: "sources", status: "ok", reasonCode: "sources-configured" } as const;
+  const cli = (reasonCode: string, status: SubsystemStatus) => ({
+    partId: "claude-cli",
+    status,
+    reasonCode,
+  });
+
+  function schedulerResponse(parts: unknown[], reasonCode: string, status = "setup-needed") {
+    const response = freshInstall();
+    response.rows[3] = row("scheduler", reasonCode, { status, parts }) as never;
+    return response;
+  }
+
+  it("Test 1: a subscription row with a signed-out Claude part parses and rolls up setup-needed; the key route still parses", () => {
+    const subscription = schedulerResponse(
+      [lastRun, cli("claude-cli-signed-out", "setup-needed"), sources],
+      "never-run",
+    );
+    expect(DiagnosticsHealthResponseSchema.safeParse(subscription).success).toBe(true);
+    expect(
+      rollupPartStatuses(
+        [lastRun, cli("claude-cli-signed-out", "setup-needed"), sources],
+        SCHEDULER_PASSIVE_PART_IDS,
+      ),
+    ).toBe("setup-needed");
+
+    const keyRoute = schedulerResponse([lastRun, key, sources], "never-run");
+    expect(DiagnosticsHealthResponseSchema.safeParse(keyRoute).success).toBe(true);
+
+    // The unused route has no part: all four, or the wrong order, are refused.
+    const fourParts = schedulerResponse(
+      [lastRun, key, cli("claude-cli-signed-out", "setup-needed"), sources],
+      "never-run",
+    );
+    expect(DiagnosticsHealthResponseSchema.safeParse(fourParts).success).toBe(false);
+    const wrongOrder = schedulerResponse(
+      [cli("claude-cli-signed-out", "setup-needed"), lastRun, sources],
+      "never-run",
+    );
+    expect(DiagnosticsHealthResponseSchema.safeParse(wrongOrder).success).toBe(false);
+
+    // A claude-cli part may not carry a research-key reason, nor the reverse.
+    const crossed = schedulerResponse(
+      [
+        lastRun,
+        { partId: "claude-cli", status: "setup-needed", reasonCode: "research-key-missing" },
+        sources,
+      ],
+      "never-run",
+    );
+    expect(DiagnosticsHealthResponseSchema.safeParse(crossed).success).toBe(false);
+    const crossedBack = schedulerResponse(
+      [
+        lastRun,
+        { partId: "research-key", status: "setup-needed", reasonCode: "claude-cli-signed-out" },
+        sources,
+      ],
+      "never-run",
+    );
+    expect(DiagnosticsHealthResponseSchema.safeParse(crossedBack).success).toBe(false);
+  });
+
+  it("Test 2: the five reasons map to ok, setup-needed, setup-needed, unknown, unknown; an unobtained answer is never ok", () => {
+    expect(SCHEDULER_REASON_STATUS["claude-cli-ready"]).toBe("ok");
+    expect(SCHEDULER_REASON_STATUS["claude-cli-signed-out"]).toBe("setup-needed");
+    expect(SCHEDULER_REASON_STATUS["claude-cli-missing"]).toBe("setup-needed");
+    expect(SCHEDULER_REASON_STATUS["claude-cli-check-failed"]).toBe("unknown");
+    expect(SCHEDULER_REASON_STATUS["claude-cli-not-checked"]).toBe("unknown");
+    expect([...CLAUDE_CLI_REASONS]).toEqual([
+      "claude-cli-ready",
+      "claude-cli-signed-out",
+      "claude-cli-missing",
+      "claude-cli-check-failed",
+      "claude-cli-not-checked",
+    ]);
+    expect(SCHEDULER_PART_REASONS["claude-cli"]).toEqual(
+      expect.arrayContaining([...CLAUDE_CLI_REASONS, "probe-timeout"]),
+    );
+    expect(SETUP_COMMAND_IDS[SETUP_COMMAND_IDS.length - 1]).toBe("claude-sign-in");
+    // A not-checked Claude part rolls the row to unknown (never ok) when nothing is worse.
+    const notChecked = [
+      { partId: "last-run", status: "ok", reasonCode: "last-run-succeeded" } as const,
+      cli("claude-cli-not-checked", "unknown"),
+      sources,
+    ];
+    expect(rollupPartStatuses(notChecked, SCHEDULER_PASSIVE_PART_IDS)).toBe("unknown");
   });
 });
