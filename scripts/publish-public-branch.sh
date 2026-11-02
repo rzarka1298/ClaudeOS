@@ -145,7 +145,7 @@ if [ -z "$REVS" ]; then
 fi
 REV_BATCHES="$WORK/rev-batches"
 rm -rf "$REV_BATCHES" && mkdir -p "$REV_BATCHES"
-printf '%s\n' $REVS | split -l 200 - "$REV_BATCHES/revs."
+printf '%s\n' $REVS | split -l "${CCC_PUBLISH_GREP_BATCH:-200}" - "$REV_BATCHES/revs."
 
 # Failures name the denylist LINE NUMBER, never the pattern: the whole
 # reason the list is untracked is that the patterns are themselves the
