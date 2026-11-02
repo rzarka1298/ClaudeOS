@@ -231,6 +231,25 @@ export type SanitiseCounts = z.infer<typeof SanitiseCountsSchema>;
 export const SUMMARISER_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5"] as const;
 export type SummariserModel = (typeof SUMMARISER_MODELS)[number];
 
+/**
+ * Which call path makes the report (D-06, ADR 0033): `subscription` runs the owner's signed-in
+ * `claude` CLI, `api-key` calls the Messages API with the key in the Keychain. A closed enum of
+ * two members: the field never names a key, a path, a URL or any free text.
+ */
+export const SUMMARISER_ROUTES = ["subscription", "api-key"] as const;
+export type SummariserRoute = (typeof SUMMARISER_ROUTES)[number];
+
+/** The route a file without the field resolves to. Defined here only, so no consumer picks another. */
+export const DEFAULT_SUMMARISER_ROUTE: SummariserRoute = "subscription";
+
+/**
+ * The up-front answer to "can the subscription route summarise now" (D-08), shared by the
+ * service and diagnostics. Never a guess: `check-failed` means the check itself could not
+ * conclude, which is different from `signed-out` and from `missing`.
+ */
+export const CLAUDE_CLI_READINESS = ["ready", "signed-out", "missing", "check-failed"] as const;
+export type ClaudeCliReadiness = (typeof CLAUDE_CLI_READINESS)[number];
+
 /** The deterministic, model-free summariser (D-05) used by CI and the automated UAT. */
 export const EXTRACTIVE_SUMMARISER_ID = "extractive";
 
@@ -266,6 +285,11 @@ export type ResearchSourceEntry = z.infer<typeof ResearchSourceEntrySchema>;
 export const ResearchSourcesConfigSchema = z.strictObject({
   topicLabel: plainLineText(RESEARCH_LABEL_MAX_LENGTH),
   summariserModel: z.enum(SUMMARISER_MODELS),
+  /**
+   * Which route makes the report (D-06). Absent means the subscription route. The file stays
+   * hand-edited: there is no Settings control for this.
+   */
+  summariserRoute: z.enum(SUMMARISER_ROUTES).default(DEFAULT_SUMMARISER_ROUTE),
   sources: z.array(ResearchSourceEntrySchema).max(RESEARCH_SOURCES_MAX),
 });
 export type ResearchSourcesConfig = z.infer<typeof ResearchSourcesConfigSchema>;

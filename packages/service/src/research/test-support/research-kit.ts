@@ -137,6 +137,7 @@ export function createKit(options: KitOptions = {}): Kit {
     const config: ResearchSourcesConfig = {
       topicLabel: "Developer tooling",
       summariserModel: "claude-haiku-5-5",
+      summariserRoute: "api-key",
       sources: [...(options.sources ?? THREE)],
     };
     writeFileSync(sourcesPath, JSON.stringify(config), { mode: 0o600 });

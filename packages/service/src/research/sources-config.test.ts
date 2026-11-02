@@ -77,7 +77,10 @@ describe("Test 6 (allowlist file): seeding, permissions and refusal", () => {
   it("does not rewrite an existing valid file", () => {
     writeFileSync(file, JSON.stringify(VALID), { mode: 0o600 });
     const before = readFileSync(file, "utf8");
-    expect(loadResearchSources(dir)).toEqual({ ok: true, config: VALID });
+    expect(loadResearchSources(dir)).toEqual({
+      ok: true,
+      config: { ...VALID, summariserRoute: "subscription" },
+    });
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
@@ -333,7 +336,10 @@ describe("07-14 hardening (opus m9): reading the allowlist for display has no si
   it("leaves a loose mode as it found it and still reads the file", () => {
     writeFileSync(file, JSON.stringify(VALID), { mode: 0o644 });
     chmodSync(file, 0o644);
-    expect(peekResearchSources(dir)).toEqual({ ok: true, config: VALID });
+    expect(peekResearchSources(dir)).toEqual({
+      ok: true,
+      config: { ...VALID, summariserRoute: "subscription" },
+    });
     expect(mode(file)).toBe(0o644);
   });
 
@@ -409,9 +415,12 @@ describe("FIX3A MAJOR-1: the display read never resolves paths (no synchronous r
     writeFileSync(file, JSON.stringify(VALID), { mode: 0o600 });
     expect(peekResearchSources(dir, throwingRealpath(), { runtimeInsideVault: false })).toEqual({
       ok: true,
-      config: VALID,
+      config: { ...VALID, summariserRoute: "subscription" },
     });
-    expect(peekResearchSources(dir, throwingRealpath())).toEqual({ ok: true, config: VALID });
+    expect(peekResearchSources(dir, throwingRealpath())).toEqual({
+      ok: true,
+      config: { ...VALID, summariserRoute: "subscription" },
+    });
   });
 
   it("the peek source names no path resolution at all (source scan)", () => {
