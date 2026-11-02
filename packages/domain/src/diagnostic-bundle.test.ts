@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   BUNDLE_MAX_BYTES,
+  BUNDLE_VOCABULARY,
   buildDenylist,
   buildDiagnosticBundle,
   type DenylistInput,
@@ -508,5 +509,60 @@ describe("Test 4: the service is away", () => {
       service: { version: "0.1.0", startedAt: T0, storeSchemaVersion: null },
     });
     expect(buildDiagnosticBundle(input({ health: withNull })).versions.storeSchema).toBeNull();
+  });
+});
+
+describe("10-03: the subscription scheduler row in the bundle", () => {
+  const SUBSCRIPTION_PARTS = [
+    part("last-run", "never-run", "setup-needed"),
+    part("claude-cli", "claude-cli-signed-out", "setup-needed", {
+      setupAction: { kind: "copy-command", command: "claude-sign-in" },
+    }),
+    part("sources", "sources-configured", "ok", { facts: { sourceCount: 3 } }),
+  ];
+
+  function subscriptionInput(): DiagnosticBundleInput {
+    const base = input();
+    const rows = [...base.health.rows] as unknown as Record<string, unknown>[];
+    rows[3] = {
+      id: "scheduler",
+      status: "setup-needed",
+      reasonCode: "never-run",
+      checkedAt: T0,
+      freshness: "live",
+      setupAction: { kind: "go-to-section", section: "research" },
+      parts: SUBSCRIPTION_PARTS,
+    };
+    return { ...base, health: { ...base.health, rows } as unknown as DiagnosticsHealthResponse };
+  }
+
+  it("carries the part id and reason id and no free text, setup action or command", () => {
+    const bundle = buildDiagnosticBundle(subscriptionInput());
+    expect(DiagnosticBundleSchema.safeParse(bundle).success).toBe(true);
+    const scheduler = bundle.subsystems[4];
+    expect(scheduler?.parts).toContainEqual({
+      partId: "claude-cli",
+      status: "setup-needed",
+      reasonCode: "claude-cli-signed-out",
+    });
+    const text = serialiseBundle(bundle);
+    expect(text).not.toContain("claude auth login");
+    expect(text).not.toContain("claude-sign-in");
+    expect(text).not.toContain("setupAction");
+  });
+
+  it("holds the new ids in the closed vocabulary the verifier skips, and the verifier accepts the bundle", () => {
+    for (const token of [
+      "claude-cli",
+      "claude-cli-ready",
+      "claude-cli-signed-out",
+      "claude-cli-missing",
+      "claude-cli-check-failed",
+      "claude-cli-not-checked",
+    ]) {
+      expect(BUNDLE_VOCABULARY.has(token), token).toBe(true);
+    }
+    const bundle = buildDiagnosticBundle(subscriptionInput());
+    expect(verifyBundle(bundle, buildDenylist(emptyDenylist))).toEqual({ ok: true });
   });
 });

@@ -10,8 +10,12 @@ import { fileURLToPath } from "node:url";
 import {
   APPROVAL_AUDIT_EVENTS,
   CLASSIFICATION,
+  CLAUDE_CLI_REASONS,
   PROPOSAL_STATES,
   PROPOSAL_TRANSITIONS,
+  SCHEDULER_PART_IDS,
+  SCHEDULER_REASON_STATUS,
+  SETUP_COMMAND_IDS,
   TASK_FILTER_SORTS,
   TASK_FILTERS,
   TASK_PRIORITIES,
@@ -1265,5 +1269,43 @@ describe("09-20 Task 2: the Phase 6 records point at the hardening", () => {
     expect(approvalAdr().text).not.toMatch(HOME_PATH);
     expect(parseAdr(adrFileContaining(HANDSHAKE_LAST_LINE)).text).not.toMatch(HOME_PATH);
     expect(presenceAdr().text).not.toMatch(HOME_PATH);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 10-03: the diagnostics record names the route-aware scheduler vocabulary (09-13 pattern)
+
+describe("10-03: ADR 0031 names the scheduler parts, the Claude sign-in reasons and the sign-in command", () => {
+  const health = (): Adr => adrByTitle("Health is five statuses derived from closed reason codes");
+  const amendment = (): string => section(health(), "### 9. Phase 10 amendment");
+
+  it("names every scheduler part id, and says the row follows the summariser route", () => {
+    const text = amendment();
+    for (const id of SCHEDULER_PART_IDS) expect(text, id).toContain(`\`${id}\``);
+    expect(flat(text)).toMatch(/second part follows the summariser route/);
+    expect(flat(text)).toMatch(/route that is not in use has no part/);
+  });
+
+  it("lists exactly the five claude-cli reasons with the domain's statuses", () => {
+    const rows = markedTable(health(), "claude-cli-reasons");
+    expect(rows.map((row) => row[0])).toEqual([...CLAUDE_CLI_REASONS]);
+    for (const row of rows) {
+      const reason = row[0] as keyof typeof SCHEDULER_REASON_STATUS;
+      expect(row[1], `${reason} status`).toBe(SCHEDULER_REASON_STATUS[reason]);
+    }
+  });
+
+  it("names the sign-in command id and the command it copies, and that the check runs only on an owner gesture", () => {
+    const text = flat(amendment());
+    expect(SETUP_COMMAND_IDS).toContain("claude-sign-in");
+    expect(text).toContain("`claude-sign-in`");
+    expect(text).toContain("claude auth login");
+    expect(text).toMatch(/only on an owner gesture/);
+    expect(text).toMatch(/never reads the CLI's credentials/);
+  });
+
+  it("keeps the earlier amendments and holds no real home directory", () => {
+    expect(health().text).toContain("### 8. Phase 9 amendment");
+    expect(health().text).not.toMatch(HOME_PATH);
   });
 });
