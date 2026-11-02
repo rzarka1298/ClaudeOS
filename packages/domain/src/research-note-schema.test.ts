@@ -451,6 +451,7 @@ describe("Test 6 (key order)", () => {
       "sourceRefs",
       "sourceHandling",
       "items",
+      "summariserRoute",
     ]);
     expect([...RAW_SOURCE_FRONTMATTER_KEY_ORDER].slice(12)).toEqual([
       "type",

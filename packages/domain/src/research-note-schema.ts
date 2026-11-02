@@ -11,6 +11,7 @@ import {
   SANITISE_COUNT_KEYS,
   SanitiseCountsSchema,
   SourceFailureCodeSchema,
+  SUMMARISER_ROUTES,
   SummariserIdSchema,
 } from "./research.js";
 import { RUN_ID_PATTERN } from "./run.js";
@@ -171,6 +172,13 @@ export const ReportFrontmatterSchema = NoteFrontmatterSchema.extend({
   sourceRefs: z.array(SourceReferenceSchema).max(RESEARCH_SOURCES_MAX),
   sourceHandling: z.array(SourceHandlingSchema).max(RESEARCH_SOURCES_MAX),
   items: z.array(ReportItemSchema).max(REPORT_ITEMS_MAX),
+  /**
+   * Which route produced the report (D-07): the subscription CLI or the API key. Absent on
+   * reports made before Phase 10 and on the extractive double. `summariser` keeps meaning the
+   * model id or `extractive`. Not part of the report digest, so a published report's
+   * verified-quote binding (ADR 0030) is unchanged.
+   */
+  summariserRoute: z.enum(SUMMARISER_ROUTES).optional(),
 }).superRefine((report, ctx) => {
   const known = new Set(report.sourceRefs.map((ref) => ref.id));
   if (known.size !== report.sourceRefs.length) {
@@ -292,6 +300,7 @@ export const REPORT_FRONTMATTER_KEY_ORDER = [
   "sourceRefs",
   "sourceHandling",
   "items",
+  "summariserRoute",
 ] as const satisfies readonly (keyof ReportFrontmatter)[];
 
 /** The on-disk key order of a raw source note. */

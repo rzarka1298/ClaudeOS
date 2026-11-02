@@ -9,6 +9,8 @@ import {
   RunErrorCodeSchema,
   SanitiseCountsSchema,
   SourceFailureCodeSchema,
+  SUMMARISER_MODELS,
+  SUMMARISER_ROUTES,
   SummariserIdSchema,
 } from "./research.js";
 import { REPORT_CITED_IDS_MAX, REPORT_ITEMS_MAX } from "./research-note-schema.js";
@@ -282,6 +284,17 @@ export const ResearchStatusResponseSchema = z.strictObject({
     .max(RESEARCH_SOURCES_MAX)
     .nullable(),
   topicLabel: plainLineText(80).nullable(),
+  /**
+   * The route and model the next run will use, read from the owner's file (D-06). Null when the
+   * file is unusable; absent on older fixtures. Read-only: never a control.
+   */
+  summariser: z
+    .strictObject({
+      route: z.enum(SUMMARISER_ROUTES),
+      model: z.enum(SUMMARISER_MODELS),
+    })
+    .nullable()
+    .optional(),
 });
 export type ResearchStatusResponse = z.infer<typeof ResearchStatusResponseSchema>;
 

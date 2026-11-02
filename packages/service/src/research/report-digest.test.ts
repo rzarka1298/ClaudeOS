@@ -1,7 +1,7 @@
 import {
+  RESEARCH_JOB_ID,
   type ReportFrontmatter,
   ReportFrontmatterSchema,
-  RESEARCH_JOB_ID,
   rawSnapshotPathFor,
 } from "@ccc/domain";
 import { readReportNote } from "@ccc/vault-repo";
