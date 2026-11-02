@@ -46,6 +46,19 @@ function parsedSources(dir: string) {
   );
 }
 
+describe("10-01 Task 1 Test 4: the runner fixture pins the API-key route", () => {
+  it("writes summariserRoute api-key so the Phase 7 and 8 items keep testing the key route", () => {
+    const dir = runtimeDir();
+    const prepared = prepareResearchUat(dir, { installAccount: INSTALL_ACCOUNT, base: BASE });
+    expect(parsedSources(dir).summariserRoute).toBe("api-key");
+    expect(
+      JSON.parse(readFileSync(join(dir, "research-sources.json"), "utf8")).summariserRoute,
+    ).toBe("api-key");
+    prepared.select("hostile");
+    expect(parsedSources(dir).summariserRoute).toBe("api-key");
+  });
+});
+
 describe("prepareResearchUat writes the allowlist, the fixture directory and the guard environment", () => {
   it("writes research-sources.json with the three synthetic sources and the UAT topic", () => {
     const dir = runtimeDir();

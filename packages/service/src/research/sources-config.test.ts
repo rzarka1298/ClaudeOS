@@ -461,3 +461,32 @@ describe("wave 3 A16: duplicate sources in the allowlist are refused", () => {
     expect(loadResearchSources(dir).ok).toBe(true);
   });
 });
+
+describe("10-01 Task 1 Test 3 (tracer): the summariser route resolves from the owner's file", () => {
+  it("resolves a pre-phase file (no summariserRoute) to subscription and leaves its bytes unchanged", () => {
+    writeFileSync(file, JSON.stringify(VALID), { mode: 0o600 });
+    const before = readFileSync(file, "utf8");
+    const loaded = loadResearchSources(dir);
+    expect(loaded.ok && loaded.config.summariserRoute).toBe("subscription");
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("keeps an explicit api-key route", () => {
+    writeFileSync(file, JSON.stringify({ ...VALID, summariserRoute: "api-key" }), { mode: 0o600 });
+    const loaded = loadResearchSources(dir);
+    expect(loaded.ok && loaded.config.summariserRoute).toBe("api-key");
+  });
+
+  it("refuses a route outside the closed enum without rewriting the file", () => {
+    const content = JSON.stringify({ ...VALID, summariserRoute: "cli" });
+    writeFileSync(file, content, { mode: 0o600 });
+    expect(loadResearchSources(dir)).toEqual({ ok: false, code: "invalid" });
+    expect(readFileSync(file, "utf8")).toBe(content);
+  });
+
+  it("seeds summariserRoute subscription on a fresh runtime directory", () => {
+    expect(loadResearchSources(dir).ok).toBe(true);
+    expect(JSON.parse(readFileSync(file, "utf8")).summariserRoute).toBe("subscription");
+    expect(DEFAULT_RESEARCH_CONFIG.summariserRoute).toBe("subscription");
+  });
+});
