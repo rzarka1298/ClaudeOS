@@ -586,3 +586,22 @@ describe("Test 7 (limits)", () => {
     expect(REPORT_ITEMS_MAX).toBe(25);
   });
 });
+
+describe("10-01 Task 2 Test 1 (summariserRoute on the report, D-07)", () => {
+  it("parses without the key (every report written before Phase 10) and with either route", () => {
+    expect(reportParses()).toBe(true);
+    expect(reportParses({ summariserRoute: "subscription" })).toBe(true);
+    expect(reportParses({ summariserRoute: "api-key" })).toBe(true);
+  });
+
+  it("refuses any other value", () => {
+    for (const bad of ["cli", "Subscription", "", 1, null, "extractive"]) {
+      expect(reportParses({ summariserRoute: bad }), String(bad)).toBe(false);
+    }
+  });
+
+  it("puts the key last in the on-disk key order", () => {
+    expect(REPORT_FRONTMATTER_KEY_ORDER.at(-1)).toBe("summariserRoute");
+    expect(REPORT_FRONTMATTER_KEY_ORDER.at(-2)).toBe("items");
+  });
+});

@@ -1,4 +1,9 @@
-import type { ReportFrontmatter } from "@ccc/domain";
+import {
+  type ReportFrontmatter,
+  ReportFrontmatterSchema,
+  RESEARCH_JOB_ID,
+  rawSnapshotPathFor,
+} from "@ccc/domain";
 import { readReportNote } from "@ccc/vault-repo";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { reportContentDigest } from "./report-digest.js";
@@ -113,5 +118,88 @@ describe("reportContentDigest", () => {
     for (const [name, variant] of Object.entries(variants)) {
       expect(reportContentDigest(variant), name).not.toBe(base);
     }
+  });
+});
+
+/**
+ * 10-01 Task 2 Test 2 (D-07, ADR 0030, T-10-11): the summariser route is recorded in the report
+ * note but is not part of the digest, so a report published before this phase keeps the digest the
+ * provenance store holds for it.
+ */
+describe("reportContentDigest and the summariser route", () => {
+  const RUN = "zyxwvutsr9876543210fedcba";
+  const SOURCE_ID = "0123456789abcdef0123456789abcdef";
+  const HASH = `ab${"b".repeat(62)}`;
+
+  function fixed(extra: Record<string, unknown> = {}): ReportFrontmatter {
+    return ReportFrontmatterSchema.parse({
+      id: "abcdefghi0123456789abcdef",
+      scope: "global",
+      stage: "output",
+      created: "2026-10-13T09:05:00Z",
+      updated: "2026-10-13T09:06:00Z",
+      generatedBy: { model: "claude-haiku-5-5", automation: RESEARCH_JOB_ID, runId: RUN },
+      aiGenerated: true,
+      claimType: "summary",
+      sources: [SOURCE_ID],
+      confidence: "unverified",
+      lastReviewed: null,
+      type: "report",
+      topicLabel: "Developer tooling",
+      generatedAt: "2026-10-13T09:05:00Z",
+      jobRunId: RUN,
+      summariser: "claude-haiku-5-5",
+      partial: false,
+      sourceTotal: 1,
+      unavailableSources: [],
+      sourceRefs: [
+        {
+          sourceType: "feed-entry",
+          id: SOURCE_ID,
+          title: "Release one",
+          canonicalUrl: "https://one.example.invalid/a",
+          author: null,
+          publishedAt: "2026-10-12T08:00:00Z",
+          retrievedAt: "2026-10-13T09:00:00Z",
+          contentHash: HASH,
+          snapshotPath: rawSnapshotPathFor(SOURCE_ID, HASH),
+          accessClass: "public",
+        },
+      ],
+      sourceHandling: [
+        {
+          sourceId: SOURCE_ID,
+          counts: {
+            scripts: 0,
+            styles: 0,
+            comments: 0,
+            hiddenBlocks: 0,
+            mediaDropped: 0,
+            linksDropped: 0,
+            controlChars: 0,
+            commandLikeLines: 0,
+          },
+        },
+      ],
+      items: [
+        {
+          kind: "source-fact",
+          text: "Faster.",
+          quote: "the parser is faster",
+          citedSourceIds: [SOURCE_ID],
+        },
+      ],
+      ...extra,
+    });
+  }
+
+  /** Captured from report-digest.ts as it was before the route key existed (plan 10-01 RED step). */
+  const PINNED_DIGEST = "b59903d0c562843e5779cc1634bc35bc56b8a19578c58ffc68760fc112d39070";
+
+  it("is the same with and without summariserRoute, and equal to the digest pinned before the key existed", () => {
+    const without = reportContentDigest(fixed());
+    expect(reportContentDigest(fixed({ summariserRoute: "subscription" }))).toBe(without);
+    expect(reportContentDigest(fixed({ summariserRoute: "api-key" }))).toBe(without);
+    expect(without).toBe(PINNED_DIGEST);
   });
 });
