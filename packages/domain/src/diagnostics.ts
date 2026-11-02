@@ -361,7 +361,12 @@ export const COLLECTORS_REASON_STATUS = {
 
 // -- Scheduler ---------------------------------------------------------------
 
-export const SCHEDULER_PART_IDS = ["last-run", "research-key", "sources"] as const;
+/**
+ * Every scheduler part id (plan 10-03, D-06, D-08). A row carries three of the four, in this order:
+ * `last-run`, then the part for the summariser route in use (`research-key` for the API-key route,
+ * `claude-cli` for the subscription route), then `sources`. The route that is not in use has no part.
+ */
+export const SCHEDULER_PART_IDS = ["last-run", "research-key", "claude-cli", "sources"] as const;
 export type SchedulerPartId = (typeof SCHEDULER_PART_IDS)[number];
 
 /**
@@ -415,17 +420,30 @@ const RESEARCH_KEY_REASONS = [
   "research-key-check-failed",
   "research-key-not-checked",
 ] as const;
+/**
+ * The subscription route's readiness (plan 10-03, D-08). `ready` only ever follows a check that
+ * obtained a signed-in answer; an answer that was not obtained is `unknown`, never ok.
+ */
+export const CLAUDE_CLI_REASONS = [
+  "claude-cli-ready",
+  "claude-cli-signed-out",
+  "claude-cli-missing",
+  "claude-cli-check-failed",
+  "claude-cli-not-checked",
+] as const;
 const SOURCES_REASONS = ["sources-configured", "sources-config-unusable"] as const;
 
 export const SCHEDULER_PART_REASONS = {
   "last-run": [...LAST_RUN_REASONS, ...PART_PROBE_REASONS],
   "research-key": [...RESEARCH_KEY_REASONS, ...PART_PROBE_REASONS],
+  "claude-cli": [...CLAUDE_CLI_REASONS, ...PART_PROBE_REASONS],
   sources: [...SOURCES_REASONS, ...PART_PROBE_REASONS],
 } as const satisfies Record<SchedulerPartId, readonly [string, ...string[]]>;
 
 export const SCHEDULER_REASONS = [
   ...LAST_RUN_REASONS,
   ...RESEARCH_KEY_REASONS,
+  ...CLAUDE_CLI_REASONS,
   ...SOURCES_REASONS,
   ...SHARED_REASONS,
 ] as const;
@@ -440,6 +458,12 @@ export const SCHEDULER_REASON_STATUS = {
   "research-key-check-failed": "unknown",
   // No owner gesture has checked the key since the service started (ADR-0017 amendment, plan 08-07 A1).
   "research-key-not-checked": "unknown",
+  "claude-cli-ready": "ok",
+  "claude-cli-signed-out": "setup-needed",
+  "claude-cli-missing": "setup-needed",
+  // The CLI's sign-in could not be checked, or has not been since the service started: unknown, never ok.
+  "claude-cli-check-failed": "unknown",
+  "claude-cli-not-checked": "unknown",
   "sources-configured": "ok",
   "sources-config-unusable": "degraded",
   ...SHARED_REASON_STATUS,
@@ -510,6 +534,7 @@ export const SETUP_COMMAND_IDS = [
   "codex-hooks-install",
   "codex-bridge-install",
   "research-key-setup",
+  "claude-sign-in",
 ] as const;
 export type SetupCommandId = (typeof SETUP_COMMAND_IDS)[number];
 
@@ -728,10 +753,15 @@ export const CollectorsRowSchema = serviceSideRowWithParts(
 const schedulerPart = <Id extends SchedulerPartId>(id: Id) =>
   partSchema(id, SCHEDULER_PART_REASONS[id], SCHEDULER_REASON_STATUS);
 
-export const SchedulerPartsSchema = z.tuple([
-  schedulerPart("last-run"),
-  schedulerPart("research-key"),
-  schedulerPart("sources"),
+/**
+ * The scheduler row's parts follow the summariser route (plan 10-03, D-06): the API-key route
+ * shows `research-key`, the subscription route shows `claude-cli`, never both. A fourth part
+ * present on both routes would be an active part that is never set up for the unused route and
+ * would lift a fresh install's Needs setup row to Working, so the unused route has no part.
+ */
+export const SchedulerPartsSchema = z.union([
+  z.tuple([schedulerPart("last-run"), schedulerPart("research-key"), schedulerPart("sources")]),
+  z.tuple([schedulerPart("last-run"), schedulerPart("claude-cli"), schedulerPart("sources")]),
 ]);
 export const SchedulerRowSchema = serviceSideRowWithParts(
   "scheduler",

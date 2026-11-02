@@ -250,21 +250,21 @@ describe("setup actions are three closed kinds (D-08, D-39, T-08-35)", () => {
 describe("10-03: the Claude sign-in part reads in the plugin's own words (D-08)", () => {
   it("labels the part and gives each of the five reasons copy", () => {
     expect(PART_NAMES["claude-cli"]).toBe("Claude sign-in");
-    expect(reasonText("claude-cli-ready", { now: NOW }).reason).toBe(
+    expect(reasonText("claude-cli-ready", { facts: undefined, now: NOW }).reason).toBe(
       "Claude Code is signed in to your Claude subscription.",
     );
-    expect(reasonText("claude-cli-signed-out", { now: NOW })).toEqual({
+    expect(reasonText("claude-cli-signed-out", { facts: undefined, now: NOW })).toEqual({
       reason: "Claude Code isn't signed in.",
       nextStep: "Run claude auth login in Terminal, then press Run checks again.",
     });
-    const missing = reasonText("claude-cli-missing", { now: NOW });
-    expect(missing.reason).toBe(
-      "Claude Code wasn't found where the command center looks (~/.local/bin, /opt/homebrew/bin, /usr/local/bin).",
-    );
-    expect(reasonText("claude-cli-check-failed", { now: NOW }).reason).toBe(
+    expect(reasonText("claude-cli-missing", { facts: undefined, now: NOW })).toEqual({
+      reason: "Claude Code wasn't found in the folders the command center looks in.",
+      nextStep: "Install Claude Code, then press Run checks again.",
+    });
+    expect(reasonText("claude-cli-check-failed", { facts: undefined, now: NOW }).reason).toBe(
       "Claude Code's sign-in couldn't be checked.",
     );
-    expect(reasonText("claude-cli-not-checked", { now: NOW }).reason).toBe(
+    expect(reasonText("claude-cli-not-checked", { facts: undefined, now: NOW }).reason).toBe(
       "Claude Code's sign-in hasn't been checked since the service started. Press Run checks again.",
     );
   });

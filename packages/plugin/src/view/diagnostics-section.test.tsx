@@ -522,9 +522,7 @@ describe("10-03 Task 1 (tracer): a subscription scheduler row with a signed-out 
   function signedOutHealth() {
     return fixtureResponse({
       scheduler: partsRow("scheduler", [
-        part("last-run", "last-run-succeeded", {
-          facts: { lastSuccessAt: "2026-10-22T08:00:00.000Z" },
-        }),
+        part("last-run", "never-run", { setupAction: GO_RESEARCH }),
         part("claude-cli", "claude-cli-signed-out", { setupAction: SIGN_IN }),
         part("sources", "sources-configured", { facts: { sourceCount: 5 } }),
       ]),
@@ -538,21 +536,27 @@ describe("10-03 Task 1 (tracer): a subscription scheduler row with a signed-out 
     await settle();
     const scheduler = rowNamed("Scheduler");
     expect(chipOf(scheduler)).toContain("Needs setup");
-    expect(scheduler.querySelector('[data-reason="claude-cli-signed-out"]')).not.toBeNull();
-    expect(within(scheduler).getByText("Claude Code isn't signed in.")).toBeTruthy();
-    expect(
-      within(scheduler).getByText(
-        "Run claude auth login in Terminal, then press Run checks again.",
-      ),
-    ).toBeTruthy();
-    expect(commandsIn(scheduler)).toEqual(["claude auth login"]);
+    fireEvent.click(
+      within(scheduler).getByRole("button", { name: "Show details for Scheduler: 3 parts" }),
+    );
 
     const partNames = [...scheduler.querySelectorAll(".ccc-health-part .ccc-health-part-name")].map(
       (name) => name.textContent,
     );
     expect(partNames).toEqual(["Last run", "Claude sign-in", "Sources"]);
+    const claude = scheduler.querySelector<HTMLElement>('[data-part="claude-cli"]');
+    expect(claude?.getAttribute("data-reason")).toBe("claude-cli-signed-out");
+    expect(within(claude as HTMLElement).getByText("Claude Code isn't signed in.")).toBeTruthy();
+    expect(
+      within(claude as HTMLElement).getByText(
+        "Run claude auth login in Terminal, then press Run checks again.",
+      ),
+    ).toBeTruthy();
+    expect(commandsIn(claude as HTMLElement)).toEqual(["claude auth login"]);
 
-    fireEvent.click(within(scheduler).getByRole("button", { name: "Copy sign-in command" }));
+    fireEvent.click(
+      within(claude as HTMLElement).getByRole("button", { name: "Copy sign-in command" }),
+    );
     await settle();
     expect(copyText).toHaveBeenCalledTimes(1);
     expect(copyText).toHaveBeenCalledWith("claude auth login");
