@@ -523,6 +523,7 @@ describe("10-03: the subscription scheduler row in the bundle", () => {
 
   function subscriptionInput(): DiagnosticBundleInput {
     const base = input();
+    if (base.health === null) throw new Error("fixture: the input carries a health response");
     const rows = [...base.health.rows] as unknown as Record<string, unknown>[];
     rows[3] = {
       id: "scheduler",

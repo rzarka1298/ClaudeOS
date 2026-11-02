@@ -71,6 +71,7 @@ export const HEALTH_TEXT_TABLE = {
   // Setup action labels and what they copy.
   copyInstall: ["Copy install command", DIAG, "literal"],
   copyKeySetup: ["Copy key setup command", DIAG, "literal"],
+  copySignIn: ["Copy sign-in command", DIAG, "literal"],
   setUpVault: ["Set up vault", DIAG, "literal"],
   goToPrefix: ["Go to the ", DIAG, "fragment"],
   goToSuffix: [" section", DIAG, "fragment"],
@@ -82,6 +83,9 @@ export const HEALTH_TEXT_TABLE = {
   claudeInstallCopied: ["Install command copied. Run it in Terminal.", MODEL, "literal"],
   keySetupCommand: ["node scripts/research-key-setup.mjs", DIAG, "literal"],
   keySetupCopied: ["Key setup command copied. Run it in Terminal.", DIAG, "literal"],
+  signInCommand: ["claude auth login", DIAG, "literal"],
+  signInCopied: ["Sign-in command copied. Run it in Terminal.", DIAG, "literal"],
+  partClaudeSignIn: ["Claude sign-in", DIAG, "literal"],
   // The existing vault setup confirmation.
   vaultSetupTitle: ["Set up managed vault", SETUP, "literal"],
   confirm: ["Confirm", SETUP, "literal"],
@@ -233,6 +237,19 @@ export const HEALTH_REASON_TABLE = {
   "never-run": ["No research run yet. Runs start only when you press Run now.", DIAG, "literal"],
   "research-key-present": ["A research key is in the macOS keychain.", DIAG, "literal"],
   "research-key-missing": ["No research key is stored in the macOS keychain.", DIAG, "literal"],
+  "claude-cli-ready": ["Claude Code is signed in to your Claude subscription.", DIAG, "literal"],
+  "claude-cli-signed-out": ["Claude Code isn't signed in.", DIAG, "literal"],
+  "claude-cli-missing": [
+    "Claude Code wasn't found in the folders the command center looks in.",
+    DIAG,
+    "literal",
+  ],
+  "claude-cli-check-failed": ["Claude Code's sign-in couldn't be checked.", DIAG, "literal"],
+  "claude-cli-not-checked": [
+    "Claude Code's sign-in hasn't been checked since the service started. Press Run checks again.",
+    DIAG,
+    "literal",
+  ],
   "run-interrupted": [
     "The last run ended without reporting, so its result is unknown.",
     DIAG,
