@@ -197,9 +197,12 @@ run("front matter and results (Test 2)", () => {
     const summary = section(text, "Summary");
     expect(summary).toMatch(new RegExp(`^total: ${TOTAL}$`, "m"));
     const count = (key: string) => Number(new RegExp(`^${key}: (\\d+)$`, "m").exec(summary)?.[1]);
-    const keys = ["passed", "issues", "pending", "skipped", "blocked"];
-    for (const key of keys) expect(Number.isInteger(count(key)), key).toBe(true);
-    expect(keys.reduce((sum, key) => sum + count(key), 0)).toBe(TOTAL);
+    // `accepted` is the owner's "accepted -" result form (items 13, 17 and 18 of the closed script); the untouched
+    // script has no such line, so a missing key counts as 0.
+    const keys = ["passed", "accepted", "issues", "pending", "skipped", "blocked"];
+    const countOrZero = (key: string) => (key === "accepted" && Number.isNaN(count(key)) ? 0 : count(key));
+    for (const key of keys) expect(Number.isInteger(countOrZero(key)), key).toBe(true);
+    expect(keys.reduce((sum, key) => sum + countOrZero(key), 0)).toBe(TOTAL);
     if (untouched) {
       expect(count("pending")).toBe(TOTAL);
       expect(count("auto-passed")).toBe(0);
