@@ -233,6 +233,30 @@ describe("Test 3 (responses)", () => {
       ).toBe(true);
     });
 
+    it("10-01 Task 2 Test 3: the optional summariser member is absent, null or a strict route and model", () => {
+      expect(parses(full)).toBe(true);
+      expect(parses({ ...full, summariser: null })).toBe(true);
+      expect(
+        parses({ ...full, summariser: { route: "subscription", model: "claude-haiku-5-5" } }),
+      ).toBe(true);
+      expect(
+        parses({ ...full, summariser: { route: "api-key", model: "claude-sonnet-5-5" } }),
+      ).toBe(true);
+      expect(
+        parses({
+          ...full,
+          summariser: { route: "subscription", model: "claude-haiku-5-5", extra: 1 },
+        }),
+      ).toBe(false);
+      expect(parses({ ...full, summariser: { route: "subscription", model: "gpt-9" } })).toBe(
+        false,
+      );
+      expect(parses({ ...full, summariser: { route: "cli", model: "claude-haiku-5-5" } })).toBe(
+        false,
+      );
+      expect(parses({ ...full, summariser: { route: "subscription" } })).toBe(false);
+    });
+
     it("requires every member to be present, each nullable on its own", () => {
       for (const key of Object.keys(full)) {
         const { [key]: _drop, ...without } = full as Record<string, unknown>;

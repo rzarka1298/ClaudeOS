@@ -77,7 +77,10 @@ describe("Test 6 (allowlist file): seeding, permissions and refusal", () => {
   it("does not rewrite an existing valid file", () => {
     writeFileSync(file, JSON.stringify(VALID), { mode: 0o600 });
     const before = readFileSync(file, "utf8");
-    expect(loadResearchSources(dir)).toEqual({ ok: true, config: VALID });
+    expect(loadResearchSources(dir)).toEqual({
+      ok: true,
+      config: { ...VALID, summariserRoute: "subscription" },
+    });
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
@@ -333,7 +336,10 @@ describe("07-14 hardening (opus m9): reading the allowlist for display has no si
   it("leaves a loose mode as it found it and still reads the file", () => {
     writeFileSync(file, JSON.stringify(VALID), { mode: 0o644 });
     chmodSync(file, 0o644);
-    expect(peekResearchSources(dir)).toEqual({ ok: true, config: VALID });
+    expect(peekResearchSources(dir)).toEqual({
+      ok: true,
+      config: { ...VALID, summariserRoute: "subscription" },
+    });
     expect(mode(file)).toBe(0o644);
   });
 
@@ -409,9 +415,12 @@ describe("FIX3A MAJOR-1: the display read never resolves paths (no synchronous r
     writeFileSync(file, JSON.stringify(VALID), { mode: 0o600 });
     expect(peekResearchSources(dir, throwingRealpath(), { runtimeInsideVault: false })).toEqual({
       ok: true,
-      config: VALID,
+      config: { ...VALID, summariserRoute: "subscription" },
     });
-    expect(peekResearchSources(dir, throwingRealpath())).toEqual({ ok: true, config: VALID });
+    expect(peekResearchSources(dir, throwingRealpath())).toEqual({
+      ok: true,
+      config: { ...VALID, summariserRoute: "subscription" },
+    });
   });
 
   it("the peek source names no path resolution at all (source scan)", () => {
@@ -459,5 +468,34 @@ describe("wave 3 A16: duplicate sources in the allowlist are refused", () => {
     }));
     writeFileSync(file, JSON.stringify({ ...VALID, sources: many }), { mode: 0o600 });
     expect(loadResearchSources(dir).ok).toBe(true);
+  });
+});
+
+describe("10-01 Task 1 Test 3 (tracer): the summariser route resolves from the owner's file", () => {
+  it("resolves a pre-phase file (no summariserRoute) to subscription and leaves its bytes unchanged", () => {
+    writeFileSync(file, JSON.stringify(VALID), { mode: 0o600 });
+    const before = readFileSync(file, "utf8");
+    const loaded = loadResearchSources(dir);
+    expect(loaded.ok && loaded.config.summariserRoute).toBe("subscription");
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("keeps an explicit api-key route", () => {
+    writeFileSync(file, JSON.stringify({ ...VALID, summariserRoute: "api-key" }), { mode: 0o600 });
+    const loaded = loadResearchSources(dir);
+    expect(loaded.ok && loaded.config.summariserRoute).toBe("api-key");
+  });
+
+  it("refuses a route outside the closed enum without rewriting the file", () => {
+    const content = JSON.stringify({ ...VALID, summariserRoute: "cli" });
+    writeFileSync(file, content, { mode: 0o600 });
+    expect(loadResearchSources(dir)).toEqual({ ok: false, code: "invalid" });
+    expect(readFileSync(file, "utf8")).toBe(content);
+  });
+
+  it("seeds summariserRoute subscription on a fresh runtime directory", () => {
+    expect(loadResearchSources(dir).ok).toBe(true);
+    expect(JSON.parse(readFileSync(file, "utf8")).summariserRoute).toBe("subscription");
+    expect(DEFAULT_RESEARCH_CONFIG.summariserRoute).toBe("subscription");
   });
 });

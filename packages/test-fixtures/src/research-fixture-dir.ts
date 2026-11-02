@@ -139,6 +139,7 @@ export function writeResearchSourcesFile(
   const config: ResearchSourcesConfig = {
     topicLabel,
     summariserModel: "claude-haiku-5-5",
+    summariserRoute: "api-key",
     sources: [...sources],
   };
   const path = join(runtimeDir, "research-sources.json");

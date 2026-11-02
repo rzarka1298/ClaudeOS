@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CLAIM_TYPES, LIFECYCLE_STAGES } from "./note-schema.js";
 import {
+  CLAUDE_CLI_READINESS,
+  DEFAULT_SUMMARISER_ROUTE,
   EXTRACTIVE_SUMMARISER_ID,
   JOB_RUN_OUTCOMES,
   REPORT_ITEM_KIND_CONFIDENCE,
@@ -25,6 +27,7 @@ import {
   SOURCE_FAILURE_CODES,
   SOURCE_FAILURE_DISPLAY,
   SUMMARISER_MODELS,
+  SUMMARISER_ROUTES,
 } from "./research.js";
 
 describe("Test 3b (failure, error and outcome vocabularies)", () => {
@@ -287,5 +290,38 @@ describe("Node-free", () => {
     const source = readFileSync(join(here, "research.ts"), "utf8");
     expect(source).not.toMatch(/from\s+["']node:/);
     expect(source).not.toMatch(/import\(\s*["']node:/);
+  });
+});
+
+describe("10-01 Task 1 (summariser route, D-06, D-08)", () => {
+  const base = {
+    topicLabel: "Topic",
+    summariserModel: "claude-haiku-5-5",
+    sources: [],
+  };
+
+  it("Test 1: defaults the route to subscription, accepts api-key, refuses anything else", () => {
+    const parsed = ResearchSourcesConfigSchema.parse(base);
+    expect(parsed.summariserRoute).toBe("subscription");
+    expect(
+      ResearchSourcesConfigSchema.parse({ ...base, summariserRoute: "api-key" }).summariserRoute,
+    ).toBe("api-key");
+    expect(
+      ResearchSourcesConfigSchema.parse({ ...base, summariserRoute: "subscription" })
+        .summariserRoute,
+    ).toBe("subscription");
+    for (const bad of ["Subscription", "cli", "", 1, null]) {
+      expect(
+        ResearchSourcesConfigSchema.safeParse({ ...base, summariserRoute: bad }).success,
+        String(bad),
+      ).toBe(false);
+    }
+    expect(ResearchSourcesConfigSchema.safeParse({ ...base, extra: 1 }).success).toBe(false);
+  });
+
+  it("Test 2: the route and readiness vocabularies are the pinned literals", () => {
+    expect([...SUMMARISER_ROUTES]).toEqual(["subscription", "api-key"]);
+    expect(DEFAULT_SUMMARISER_ROUTE).toBe("subscription");
+    expect([...CLAUDE_CLI_READINESS]).toEqual(["ready", "signed-out", "missing", "check-failed"]);
   });
 });

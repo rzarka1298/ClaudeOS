@@ -423,6 +423,7 @@ export function prepareResearchUat(
     const config: ResearchSourcesConfig = {
       topicLabel: RESEARCH_UAT_TOPIC,
       summariserModel: SUMMARISER_MODEL,
+      summariserRoute: "api-key",
       sources: scenarioSources(scenario),
     };
     writeAtomic(sourcesPath, `${JSON.stringify(config, null, 2)}\n`, 0o600);

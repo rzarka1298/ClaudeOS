@@ -1,4 +1,4 @@
-import type { ResearchSourcesConfig } from "@ccc/domain";
+import { DEFAULT_SUMMARISER_ROUTE, type ResearchSourcesConfig } from "@ccc/domain";
 
 /**
  * The allowlist the first run seeds into `<runtimeDir>/research-sources.json` (OD-2, D-07): the
@@ -10,6 +10,7 @@ import type { ResearchSourcesConfig } from "@ccc/domain";
 export const DEFAULT_RESEARCH_CONFIG: ResearchSourcesConfig = {
   topicLabel: "Developer tooling and open-source releases",
   summariserModel: "claude-haiku-5-5",
+  summariserRoute: DEFAULT_SUMMARISER_ROUTE,
   sources: [
     { label: "Node.js releases", url: "https://nodejs.org/en/feed/releases.xml", kind: "feed" },
     { label: "Rust blog", url: "https://blog.rust-lang.org/feed.xml", kind: "feed" },

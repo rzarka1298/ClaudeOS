@@ -20,6 +20,7 @@ const FAKE: TextTransport = { complete: async () => "{}" };
 const CONFIG = {
   topicLabel: "Topic",
   summariserModel: "claude-haiku-5-5" as const,
+  summariserRoute: "api-key" as const,
   sources: [...THREE],
 };
 

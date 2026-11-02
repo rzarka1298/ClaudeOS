@@ -187,6 +187,7 @@ export function createResearchHarness(options: ResearchHarnessOptions = {}): Res
   const config: ResearchSourcesConfig = {
     topicLabel: options.topicLabel ?? "Developer tooling",
     summariserModel: "claude-haiku-5-5",
+    summariserRoute: "api-key",
     sources: [...(options.sources ?? THREE_SOURCES)],
   };
   const writeSources = (value: unknown): void => {
